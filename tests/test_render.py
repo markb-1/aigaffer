@@ -182,6 +182,7 @@ def gaffer(
     justification: str = "",
     adjustments: list[dict] | None = None,
     searches: int = 3,
+    unapplied: list[dict] | None = None,
 ) -> ManagerDecision:
     """One manager decision, as the report is handed one."""
     return ManagerDecision(
@@ -195,6 +196,7 @@ def gaffer(
         adjustments=ADJUSTMENTS if adjustments is None else adjustments,
         searches=searches,
         source=source,
+        unapplied=unapplied or [],
     )
 
 
@@ -471,6 +473,52 @@ def test_a_chip_argument_cannot_forge_one_either():
     )
 
     assert report(view=forged).count("\n## Watchlist\n") == 1
+
+
+NOT_APPLIED = "Noted but not applied (no re-solve followed):"
+
+
+def test_the_minutes_he_never_re_solved_on_are_marked_as_such():
+    # He wrote it down and then finalized without asking the solver again, so
+    # the number beside the decision is still the one the projection had. A
+    # report that listed it with the rest would claim a week nobody solved.
+    noted = [{"player_id": 3, "expected_minutes": 0.0, "reason": "late doubt"}]
+
+    view = section(report(view=gaffer(unapplied=noted)), "The Gaffer's view")
+
+    assert NOT_APPLIED in view
+    assert view[view.index(NOT_APPLIED) + 1] == "- Costa at 0 mins — late doubt"
+    assert "- Set Gale to 0 mins — hamstring (BBC, Friday)" in view
+
+
+def test_a_week_where_nothing_reached_a_resolve_says_only_that():
+    noted = [{"player_id": 7, "expected_minutes": 0.0, "reason": "hamstring"}]
+
+    view = section(report(view=gaffer(adjustments=[], unapplied=noted)), "The Gaffer's view")
+
+    assert "Minutes he overruled:" not in view
+    assert NOT_APPLIED in view
+
+
+def test_a_player_whose_last_word_was_applied_is_not_also_listed_as_noted():
+    # He said 20 minutes, re-solved, then said 0 and re-solved again: the 20 is
+    # a superseded line in the record, not something the solver ignored.
+    view = section(
+        report(
+            view=gaffer(
+                adjustments=[
+                    {"player_id": 7, "expected_minutes": 0.0, "reason": "ruled out"}
+                ],
+                unapplied=[
+                    {"player_id": 7, "expected_minutes": 20.0, "reason": "a doubt"}
+                ],
+            )
+        ),
+        "The Gaffer's view",
+    )
+
+    assert "- Set Gale to 0 mins — ruled out" in view
+    assert NOT_APPLIED not in view
 
 
 def test_a_week_he_changed_nothing_in_lists_nothing():

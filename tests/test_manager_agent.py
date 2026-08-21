@@ -488,6 +488,73 @@ def test_the_adjustments_reach_the_resolver_and_the_decision():
     ]
 
 
+def test_the_adjustments_a_resolve_spent_are_the_ones_it_reports():
+    _, decision = converse(
+        [
+            reply(use("adjust_players", adjust(7, 0.0, "out for a month"))),
+            reply(use("resolve", {})),
+            reply(use("finalize_decision", finalize(plan_id=2))),
+        ]
+    )
+
+    assert decision.adjustments == [
+        {"player_id": 7, "expected_minutes": 0.0, "reason": "out for a month"}
+    ]
+    assert decision.unapplied == []
+
+
+def test_an_adjustment_made_after_the_last_resolve_is_not_claimed_as_applied():
+    # The minutes he set after the last re-solve were never projected on: the
+    # plan he finalized was costed before he said it, and a report that listed
+    # it beside the decision would claim a squad that was never solved.
+    _, decision = converse(
+        [
+            reply(use("adjust_players", adjust(7, 0.0, "out for a month"))),
+            reply(use("resolve", {})),
+            reply(use("adjust_players", adjust(4, 60.0, "rested, said the paper"))),
+            reply(use("finalize_decision", finalize(plan_id=2))),
+        ]
+    )
+
+    assert [record["player_id"] for record in decision.adjustments] == [7]
+    assert decision.unapplied == [
+        {"player_id": 4, "expected_minutes": 60.0, "reason": "rested, said the paper"}
+    ]
+
+
+def test_adjustments_with_no_resolve_behind_them_changed_nothing_at_all():
+    # He adjusted and then finalized without re-solving, so the plan, the
+    # eleven and every number on them are the solver's own — and all he did was
+    # write something down.
+    _, decision = converse(
+        [
+            reply(use("adjust_players", adjust(7, 0.0, "out for a month"))),
+            reply(use("finalize_decision", finalize(plan_id=0))),
+        ]
+    )
+
+    assert decision.adjustments == []
+    assert [record["player_id"] for record in decision.unapplied] == [7]
+    assert decision.plan is SWAP
+    assert decision.projections is XP
+    assert decision.lineup.xi == XI_SWAP
+
+
+def test_a_resolve_that_failed_spends_none_of_his_adjustments():
+    resolver = FakeResolver(error=RuntimeError("no legal squad"))
+    _, decision = converse(
+        [
+            reply(use("adjust_players", adjust(7, 0.0, "out for a month"))),
+            reply(use("resolve", {})),
+            reply(use("finalize_decision", finalize(plan_id=0))),
+        ],
+        resolver,
+    )
+
+    assert decision.adjustments == []
+    assert [record["player_id"] for record in decision.unapplied] == [7]
+
+
 def test_a_resolve_presents_its_plans_with_ids_that_go_on_counting():
     client, _ = converse(
         [

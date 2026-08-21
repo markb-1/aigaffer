@@ -239,12 +239,14 @@ def run_pipeline(
         "chip_baseline": _baseline_label(solved),
     }
     if gaffer is not None:
-        # The adjustments go in whole, superseded entries and all: this is the
-        # record of what he did, and the report is where it is read tidily.
+        # Both halves of the record go in, superseded entries and all: the ones
+        # a re-solve spent, and the ones he only wrote down. This is what
+        # happened, and the report is where it is read tidily.
         decision.update(
             decision_source=gaffer.source,
             rationale=gaffer.rationale,
             adjustments=gaffer.adjustments,
+            unapplied=gaffer.unapplied,
             chip=gaffer.chip,
             chip_justification=gaffer.chip_justification,
             searches=gaffer.searches,

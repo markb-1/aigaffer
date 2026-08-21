@@ -30,7 +30,7 @@ cannot be reached is not a reason to miss one.
 """
 
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from time import monotonic
 from typing import TYPE_CHECKING, Any
 
@@ -125,6 +125,14 @@ class ManagerDecision:
     written on them, so that the eleven it prints and the numbers beside it
     describe the same week. None on a fallback: that is the solver's own week
     and the pipeline already holds the projections it was solved on.
+
+    ``adjustments`` and ``unapplied`` are the two halves of the record he kept,
+    and the line between them is the last ``resolve``. Only what that re-solve
+    was run on reached the projections this decision is costed against;
+    anything he wrote down after it — or never re-solved on at all — changed
+    nothing, and saying otherwise would be a report claiming a minutes model it
+    did not use. Both halves are kept because both happened: one is what he
+    did, the other is what he only said.
     """
 
     plan: Plan
@@ -138,6 +146,7 @@ class ManagerDecision:
     searches: int
     source: str
     projections: dict[int, PlayerProjection] | None = None
+    unapplied: list[dict] = field(default_factory=list)
 
 
 def run_manager(
@@ -253,6 +262,10 @@ class _Conversation:
         # loop is up to a dozen turns and every one of them resends it.
         self.messages: list[dict] = [{"role": "user", "content": [_cached(briefing)]}]
         self.adjustments: dict[int, float] = {}
+        # What the last re-solve was actually run on, as it stood then. The
+        # accumulated adjustments above go on changing after it; this does not,
+        # which is what makes it the answer to "which of these took effect?".
+        self.spent: dict[int, float] = {}
         self.record: list[dict] = []
         self.searches = 0
 
@@ -430,8 +443,9 @@ class _Conversation:
         that knows how a plan reads, and the one place that sanitizes the names
         it reads them with.
         """
+        overrides = dict(self.adjustments)
         try:
-            solved, projections = self.resolver(dict(self.adjustments))
+            solved, projections = self.resolver(overrides)
         except Exception as error:  # the solver's bad week, not the manager's
             raise ToolError(
                 f"The re-solve failed ({type(error).__name__}) and nothing"
@@ -446,6 +460,11 @@ class _Conversation:
             )
 
         self.projections = projections
+        # Spent, now that it has worked: these minutes are in the projections
+        # every plan below is costed on, and a decision taken from here is
+        # taken on them. A re-solve that raised or reached nothing gets no
+        # further than the guards above and spends nothing.
+        self.spent = overrides
         first = len(self.registry)
         fresh = [(first + offset, plan) for offset, plan in enumerate(solved.plans)]
         self.registry.update(fresh)
@@ -475,6 +494,7 @@ class _Conversation:
             args, self.registry, lambda plan: self._lineup(plan).xi
         )
         lineup = self._lineup(final.plan)
+        applied, unapplied = self._split()
         return ManagerDecision(
             plan=final.plan,
             lineup=replace(lineup, captain=final.captain, vice=final.vice),
@@ -483,7 +503,8 @@ class _Conversation:
             chip=final.chip,
             chip_justification=final.chip_justification,
             rationale=final.rationale,
-            adjustments=list(self.record),
+            adjustments=applied,
+            unapplied=unapplied,
             searches=self.searches,
             source=MANAGER,
             # The ones in force: the re-solve's if he re-solved, the
@@ -491,6 +512,28 @@ class _Conversation:
             # and the report is written on them.
             projections=self.projections,
         )
+
+    def _split(self) -> tuple[list[dict], list[dict]]:
+        """His record, cut into what took effect and what did not.
+
+        An adjustment does nothing on its own — it is spent by the next
+        ``resolve`` — so the only ones the decision is costed on are the ones
+        the *last* re-solve was run on. Everything else is a note: minutes he
+        wrote down after that re-solve, minutes a failed re-solve never
+        reached, minutes he superseded before one, and every minute at all if
+        he finalized without ever asking the solver again.
+
+        An entry counts as applied when the re-solve was run with that player
+        at that number. Both halves keep the order he made them in, and
+        together they are the whole record.
+        """
+        applied: list[dict] = []
+        unapplied: list[dict] = []
+        for record in self.record:
+            spent = self.spent.get(record["player_id"])
+            side = applied if spent == record["expected_minutes"] else unapplied
+            side.append(record)
+        return applied, unapplied
 
     def _lineup(self, plan: Plan) -> Lineup:
         """The eleven ``plan`` fields next gameweek, on the projections in force."""

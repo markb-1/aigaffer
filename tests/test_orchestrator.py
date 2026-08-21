@@ -643,6 +643,21 @@ def test_the_report_prints_the_minutes_he_settled_on(monkeypatch, tmp_path):
     ]
 
 
+def test_what_he_only_wrote_down_is_kept_and_marked_as_such(monkeypatch, tmp_path):
+    # Minutes he set after the last re-solve changed nothing, so the report
+    # says so and the record keeps them anyway: it is what happened.
+    noted = [{"player_id": FERRER, "expected_minutes": 90.0, "reason": "fit, he says"}]
+
+    def late(consult: Consult) -> ManagerDecision:
+        return replace(decided(consult), unapplied=noted)
+
+    report, store, _ = gaffer_run(monkeypatch, tmp_path, decide=late, send=False)
+
+    assert store.last_runs(1)[0]["decision"]["unapplied"] == noted
+    assert "Noted but not applied (no re-solve followed):" in report
+    assert "- Ferrer at 90 mins — fit, he says" in report
+
+
 def test_the_kill_switch_leaves_the_solver_to_it(monkeypatch, tmp_path, scout_run):
     # A key in the environment and AIGAFFER_MANAGER=0: the one way to turn the
     # manager off on a machine that could perfectly well reach him.

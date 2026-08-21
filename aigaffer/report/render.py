@@ -57,6 +57,12 @@ DEADLINE_FORMAT = "%a %d %b %Y %H:%M UTC"
 DECIDED = "manager"
 NO_CHIP = "none"
 
+# The two headings the minute lists carry. An adjustment only reaches the
+# projections through a re-solve, so the second list is what he wrote down and
+# never spent — a note about the week, not a part of the decision under it.
+OVERRULED = "Minutes he overruled:"
+NOT_APPLIED = "Noted but not applied (no re-solve followed):"
+
 # What the shortlist says when the manager's own plan is not on it: he adjusted
 # somebody's minutes and solved again, and what came back was a fifteen this
 # list never reached.
@@ -150,13 +156,19 @@ def _recommendation(
 def _gaffer(gaffer: "ManagerDecision", players: dict[int, Player]) -> str:
     """The manager's week in his own words, and whose week it actually is.
 
-    Four things, in the order they are worth reading: what he decided and why,
+    Five things, in the order they are worth reading: what he decided and why,
     the chip he is spending if he is spending one, the minutes he overruled to
-    get there, and — last, because it qualifies everything above it — how much
-    research it cost and whether the manager reached a decision at all. A
-    failed conversation prints this section too: a report that quietly reverts
-    to the solver is a report that has told the reader something untrue about
-    where its recommendation came from.
+    get there, the minutes he only wrote down, and — last, because it qualifies
+    everything above it — how much research it cost and whether the manager
+    reached a decision at all. A failed conversation prints this section too: a
+    report that quietly reverts to the solver is a report that has told the
+    reader something untrue about where its recommendation came from.
+
+    The two minute lists are not one list. An adjustment reaches the numbers
+    only through a re-solve, so anything he said after the last one — or never
+    re-solved on at all — is a note beside this decision rather than a part of
+    it, and printing the two together would credit the recommendation with a
+    minutes model it was never costed on.
     """
     lines = ["## The Gaffer's view", "", _prose(gaffer.rationale)]
 
@@ -164,14 +176,24 @@ def _gaffer(gaffer: "ManagerDecision", players: dict[int, Player]) -> str:
         spoken = gaffer.chip.replace("_", " ")
         lines += ["", f"Playing the {spoken}. {_prose(gaffer.chip_justification)}"]
 
-    adjustments = _settled(gaffer.adjustments)
-    if adjustments:
-        lines += ["", "Minutes he overruled:", ""]
+    applied = _settled(gaffer.adjustments)
+    if applied:
+        lines += ["", OVERRULED, ""]
         lines += [
             f"- Set {_who(record['player_id'], players)}"
             f" to {record['expected_minutes']:.0f} mins"
             f" — {_one_line(record['reason'])}"
-            for record in adjustments
+            for record in applied
+        ]
+
+    noted = _noted(gaffer.unapplied, applied)
+    if noted:
+        lines += ["", NOT_APPLIED, ""]
+        lines += [
+            f"- {_who(record['player_id'], players)}"
+            f" at {record['expected_minutes']:.0f} mins"
+            f" — {_one_line(record['reason'])}"
+            for record in noted
         ]
 
     lines += ["", f"{_searches(gaffer.searches)}. {_source(gaffer.source)}"]
@@ -183,6 +205,23 @@ def _searches(count: int) -> str:
     s and would make it "web searchs"; a noun that pluralizes differently is
     spelled out where it is used rather than taught to the vocabulary."""
     return f"{count} web search" if count == 1 else f"{count} web searches"
+
+
+def _noted(unapplied: list[dict], applied: list[dict]) -> list[dict]:
+    """The minutes that changed nothing, one line per player.
+
+    A player who was adjusted, re-solved on, and then adjusted again is not a
+    player the solver ignored: his last word is in ``applied`` and the earlier
+    one is a superseded line of the record, so he is listed once, above. What
+    is left here is the players whose latest number never reached a re-solve at
+    all, which is the only thing the heading claims.
+    """
+    settled = {record["player_id"] for record in applied}
+    return [
+        record
+        for record in _settled(unapplied)
+        if record["player_id"] not in settled
+    ]
 
 
 def _settled(adjustments: list[dict]) -> list[dict]:
