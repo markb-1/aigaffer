@@ -45,7 +45,9 @@ from aigaffer.manager.tools import played_chips
 from aigaffer.model.xp import PlayerProjection
 from aigaffer.report.render import (
     POSITIONS,
+    carries_a_path,
     deadline,
+    hits_taken,
     horizon_of,
     plural,
     price,
@@ -103,6 +105,19 @@ CHIP_UNITS = (
     " horizon number: the decayed total of the best squad fifteen free"
     " transfers could reach, against the plan in hand. It is not comparable"
     " with the other three."
+)
+# What the two totals on a plan line are measured over, said once above the
+# list. They are the window's — every gameweek in it, decayed, with the captain
+# counted and with every gameweek's hits already taken off — while the
+# transfers and the hit count beside them are the coming gameweek's alone. A
+# model that reads the four numbers as one arithmetic finds a net that is four
+# points short of its own total and argues its way to the wrong transfer.
+# Printed only when the board came off the window, like the guard below it.
+WINDOW_UNITS = (
+    "The xP and the net on every line are the whole window: decayed, with the"
+    " captain counted, and every gameweek's hits already taken off. The"
+    " transfers and the hit count are this gameweek's unless the line says"
+    " otherwise."
 )
 # What a path on a plan line is, said once above the list. He is choosing
 # between openings on the strength of where they lead, so he has to know that
@@ -237,6 +252,12 @@ def format_plans(
     rather than assumed to be plan 0, so a shortlist that reaches no roll at
     all still reads honestly.
 
+    The hits are the coming gameweek's, and on a plan that pays more of them
+    later the cell says so — :func:`~aigaffer.report.render.hits_taken` prints
+    both numbers, because the totals beside them are the window's and have
+    every gameweek's hits already inside them. The caption above the list
+    (:data:`WINDOW_UNITS`) says the same thing once for the whole board.
+
     A plan off the multi-week planner carries the gameweeks after this one, and
     they ride the end of its line as a compact path. It is not a parameter: a
     plan either was planned over a window or was not, and a caller that had to
@@ -263,7 +284,7 @@ def format_plans(
         lines.append(
             f"plan {plan_id}: {_moves(plan, board)}"
             f" | {plan.xp_total:.1f} xP"
-            f" | {plural(plan.hits, 'hit')}"
+            f" | {hits_taken(plan)}"
             f" | {plan.objective:.1f} net"
             f" | {against}"
             f"{_path(plan, board)}"
@@ -417,10 +438,12 @@ def _team_sheet(lineup: Lineup, board: _Board, event: int, pick: int | None) -> 
 def _candidates(plans: list[tuple[int, Plan]], board: _Board, pick: int | None) -> str:
     """The shortlist, numbered, with the boundary the manager may not cross.
 
-    And, when the plans came off the window, what the path on the end of each
-    line is. Told nothing, a model reading "GW4 +Pike -Byrne" beside a plan it
-    is being asked to commit to would reasonably read it as part of the
-    commitment.
+    And, when the plans came off the window, what the numbers on each line are
+    measured over and what the path on the end of it is. Told nothing, a model
+    reading "GW4 +Pike -Byrne" beside a plan it is being asked to commit to
+    would reasonably read it as part of the commitment — and reading "0 hits"
+    beside a net that four points of them have already come out of would take
+    the pair of them for an error.
     """
     lines = [
         "## Candidate plans",
@@ -429,8 +452,8 @@ def _candidates(plans: list[tuple[int, Plan]], board: _Board, pick: int | None) 
         " checked for budget, club quotas and the hit cap; a squad that is"
         " not on this list is not reachable.",
     ]
-    if any(plan.path is not None and plan.path.moves for _, plan in plans):
-        lines += ["", PATH_GUARD]
+    if any(carries_a_path(plan) for _, plan in plans):
+        lines += ["", WINDOW_UNITS, "", PATH_GUARD]
     lines += [
         "",
         format_plans(plans, board.players, board.clubs, board.projections, pick),

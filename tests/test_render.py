@@ -185,6 +185,10 @@ AHEAD = with_path(ONE, [FIRST, SECOND])
 
 ADVISORY = "Advisory — re-planned every run; only this week's moves are ever made."
 SINGLE_WEEK = "Single-week engine (multi-week solve unavailable this run)."
+WINDOW_UNITS = (
+    "xP and net are the whole window, decayed and with the armband in;"
+    " transfers and hits shown are this week's unless the row says otherwise."
+)
 
 
 # The gaffer's own week, as the manager loop hands it over. His plan and his
@@ -234,12 +238,18 @@ def report(
     event: Event = EVENT,
     view: ManagerDecision | None = None,
     engine_expected: bool = False,
+    plans: list[Plan] | None = None,
 ) -> str:
-    """The report as Task 12 will ask for it."""
+    """The report as Task 12 will ask for it.
+
+    ``plans`` is the board, and it defaults to the canned single-week one: a
+    run off the window hands over a board whose every row carries a path, and
+    the rows are measured differently when it does.
+    """
     return render_report(
         "scout",
         event,
-        PLANS,
+        PLANS if plans is None else plans,
         choice,
         LINEUP,
         CHIPS,
@@ -410,6 +420,58 @@ def test_a_pick_the_shortlist_never_had_says_where_it_came_from():
 
 def test_a_report_with_no_manager_never_explains_a_re_solve():
     assert "re-solved" not in report()
+
+
+# --- what the numbers on a row are measured over ---------------------------
+#
+# A row off the window prints this gameweek's transfers beside two totals for
+# the whole window, and the window's totals have every gameweek's hits already
+# taken off them. A hit the plan pays in GW4 is therefore inside the net and
+# nowhere else on the line, and the row does not add up until it says so.
+
+
+def test_a_row_whose_path_pays_hits_says_when_they_fall():
+    board = [AHEAD, TWO, ROLL]
+
+    assert bullets(report(plans=board, choice=AHEAD), "Candidate plans")[0] == (
+        "- 1 transfer | 0 hits now, 1 over the window"
+        " | 255.5 xP | 255.5 net  <- recommended"
+    )
+
+
+def test_a_row_counts_this_weeks_hits_in_the_window_total():
+    # Two hits over the window, one of them taken now: the first number is a
+    # part of the second and not a rival to it.
+    later = with_path(TWO, [SECOND])
+
+    assert bullets(report(plans=[later], choice=later), "Candidate plans")[0] == (
+        "- 2 transfers | 1 hit now, 2 over the window"
+        " | 259.0 xP | 255.0 net  <- recommended"
+    )
+
+
+def test_a_path_that_pays_no_hits_leaves_the_cell_as_it_was():
+    # The two numbers would be the same number, and a row that prints it twice
+    # reads as a row with something to explain.
+    free = with_path(ONE, [FIRST])
+    rows = bullets(report(plans=[free, TWO, ROLL], choice=free), "Candidate plans")
+
+    assert rows[0].startswith("- 1 transfer | 0 hits | 255.5 xP")
+
+
+def test_a_board_off_the_window_says_what_its_totals_cover():
+    lines = section(report(plans=[AHEAD, TWO, ROLL], choice=AHEAD), "Candidate plans")
+
+    assert lines[0] == WINDOW_UNITS
+
+
+def test_a_single_week_board_is_measured_as_it_always_was():
+    # No window behind these rows, so there is no window to caption: the
+    # section is the one this printed before the planner existed.
+    plain = report()
+
+    assert WINDOW_UNITS not in plain
+    assert "over the window" not in plain
 
 
 # --- the road ahead --------------------------------------------------------

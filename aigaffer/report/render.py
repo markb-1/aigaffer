@@ -24,11 +24,14 @@ recommendation off the single-week solver has no such thing to print, and when
 the window was configured on and could not answer, the shortlist says so: which
 engine drew a list up is part of what the list means.
 
-:func:`deadline`, :func:`price` and :func:`plural` are public because they are
-the house vocabulary rather than this module's private business: the manager's
-briefing (:mod:`aigaffer.manager.briefing`) says the same things to a different
-reader and must say them the same way. The deadline especially — reading a
-naive timestamp as the runner's local clock is a mistake worth making once.
+:func:`deadline`, :func:`price`, :func:`plural`, :func:`hits_taken` and
+:func:`carries_a_path` are public because they are the house vocabulary rather
+than this module's private business: the manager's briefing
+(:mod:`aigaffer.manager.briefing`) says the same things to a different reader
+and must say them the same way. The deadline especially — reading a naive
+timestamp as the runner's local clock is a mistake worth making once — and the
+hits, where the report and the briefing are printing this gameweek's number
+beside a total for several.
 """
 
 from collections import defaultdict
@@ -92,6 +95,17 @@ RESOLVED_ELSEWHERE = (
 # a run that asked for the single-week solver got what it asked for, and a
 # report that apologised for it every week would be crying wolf.
 SINGLE_WEEK = "Single-week engine (multi-week solve unavailable this run)."
+
+# What a row on a window's board is measured in, said once above the list.
+# Every number on it is honest and two of them are counted over different
+# stretches of time: the transfers are this Saturday's, and the two totals are
+# the whole window's with every gameweek's hits already taken off. Printed only
+# when the board came off the window — a single-week row has one stretch of
+# time in it and nothing to explain.
+WINDOW_UNITS = (
+    "xP and net are the whole window, decayed and with the armband in;"
+    " transfers and hits shown are this week's unless the row says otherwise."
+)
 
 # The line under the path, every week. The gameweeks after this one are solved
 # on a projection of a projection and re-planned from scratch on the next run;
@@ -398,6 +412,12 @@ def _candidates(
     recommendation above it with no list behind it is a report that has
     stopped explaining itself.
 
+    A board off the window is captioned, because its rows mix two stretches of
+    time — see :data:`WINDOW_UNITS`, and :func:`hits_taken` for the one cell
+    that carries both. The caption is read off the rows rather than off the
+    recommendation, since it is the rows it is explaining: a single-week board
+    prints the section exactly as it printed before there was a window at all.
+
     ``fell_back`` says the window was asked and had nothing to say about the
     plan being recommended, which in the ordinary run is a fact about this
     whole list: the caller reads it off that plan, and that plan is one of
@@ -409,11 +429,13 @@ def _candidates(
     """
     pick = _pick(plans, choice)
     lines = ["## Candidate plans", ""]
+    if any(carries_a_path(plan) for plan in plans):
+        lines += [WINDOW_UNITS, ""]
     for index, plan in enumerate(plans):
         recommended = "  <- recommended" if index == pick else ""
         lines.append(
             f"- {plural(len(plan.transfers_in), 'transfer')}"
-            f" | {plural(plan.hits, 'hit')}"
+            f" | {hits_taken(plan)}"
             f" | {plan.xp_total:.1f} xP"
             f" | {plan.objective:.1f} net{recommended}"
         )
@@ -422,6 +444,46 @@ def _candidates(
     if decided and pick is None:
         lines += ["", RESOLVED_ELSEWHERE]
     return "\n".join(lines)
+
+
+def hits_taken(plan: Plan) -> str:
+    """``0 hits``, or ``0 hits now, 1 over the window``.
+
+    The hit cell on a plan line, and the one place the two stretches of time a
+    window's row is measured over are reconciled. ``xp_total`` and ``objective``
+    are the whole window's and the objective has every gameweek's hits taken
+    off it; ``hits`` is this gameweek's alone. Printed as one number beside the
+    other two, a plan that pays four points in three weeks' time is a row whose
+    net is four short of its total for no reason the reader can see — and the
+    reader is being asked to make this week's transfer on the strength of it.
+
+    So a path that pays hits puts both numbers on the line and says which week
+    each of them belongs to. A path that pays none does not: the two would be
+    the same number, and a row that prints it twice reads as a row with
+    something to explain. A plan with no path at all is a single gameweek from
+    end to end and prints exactly what it always printed.
+
+    Public because the briefing prints the same cell to a different reader, and
+    a number that means one thing in the report and another in the briefing is
+    worse than a number nobody prints.
+    """
+    now = plural(plan.hits, "hit")
+    if plan.path is None:
+        return now
+    later = sum(move.hits for move in plan.path.moves)
+    return now if not later else f"{now} now, {plan.hits + later} over the window"
+
+
+def carries_a_path(plan: Plan) -> bool:
+    """Whether this plan has gameweeks after this one to speak for it.
+
+    A path with no moves in it is a window that means to do nothing further,
+    and everything that reads a path treats it as no path at all: there is no
+    road to print, no notation to explain and nothing on the line to caption.
+    Public, and one line, so that the two documents cannot come to disagree
+    about what counts as a plan off the window.
+    """
+    return plan.path is not None and bool(plan.path.moves)
 
 
 def _pick(plans: list[Plan], choice: Plan) -> int | None:

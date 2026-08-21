@@ -233,6 +233,13 @@ PLANNED = [
 AHEAD = with_path(ONE, PLANNED)
 NO_CHIPS = ChipEvs(bench_boost=0.0, triple_captain=0.0, free_hit=0.0, wildcard=0.0)
 
+WINDOW_UNITS = (
+    "The xP and the net on every line are the whole window: decayed, with the"
+    " captain counted, and every gameweek's hits already taken off. The"
+    " transfers and the hit count are this gameweek's unless the line says"
+    " otherwise."
+)
+
 
 def squad_held(bank: int = 28) -> Squad:
     """The fifteen we hold, as the picks endpoint hands them over."""
@@ -512,6 +519,46 @@ def test_a_briefing_with_no_paths_never_explains_one():
     # A guardrail about something nobody was shown is a line of noise in a
     # document that is already long.
     assert "path" not in " ".join(section(briefing(), "Candidate plans"))
+
+
+# --- what the numbers on a plan line are measured over ---------------------
+#
+# The xP and the net are the whole window's and have every gameweek's hits
+# already taken off them; the transfers and the hit count are this gameweek's.
+# A model that reads the two as one arithmetic will argue for the wrong plan.
+
+
+def test_a_plan_whose_path_pays_hits_says_when_they_fall():
+    line = format_plans([(0, AHEAD)], PLAYERS, CLUBS, XP).splitlines()[0]
+
+    assert " | 0 hits now, 1 over the window | " in line
+
+
+def test_a_plan_counts_this_weeks_hits_in_the_window_total():
+    # One hit now and one in GW4: the first number is a part of the second.
+    later = with_path(TWO, [PLANNED[1]])
+    line = format_plans([(0, later)], PLAYERS, CLUBS, XP).splitlines()[0]
+
+    assert " | 1 hit now, 2 over the window | " in line
+
+
+def test_a_path_that_pays_no_hits_leaves_the_hit_column_alone():
+    free = with_path(ONE, [PLANNED[0]])
+
+    assert " | 0 hits | " in format_plans([(0, free)], PLAYERS, CLUBS, XP)
+
+
+def test_a_board_off_the_window_says_what_its_totals_cover():
+    text = briefing(solve=solved(plans=[AHEAD, TWO, ROLL], choice=AHEAD))
+    lines = section(text, "Candidate plans")
+    prose = " ".join(line for line in lines if not line.startswith("plan "))
+
+    assert WINDOW_UNITS in prose
+
+
+def test_a_briefing_with_no_window_never_captions_one():
+    assert WINDOW_UNITS not in briefing()
+    assert "over the window" not in briefing()
 
 
 def test_a_path_cannot_forge_a_line_of_its_own():
