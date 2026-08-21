@@ -973,6 +973,7 @@ def test_a_turn_that_ends_without_a_decision_is_nudged_once_and_then_forced():
 
 def test_a_nudged_conversation_never_ends_on_an_assistant_turn():
     # A trailing assistant message is a prefill, and this model rejects those.
+    # A resumed pause_turn is the one exception, and it is not one of these.
     client, _ = converse(
         [
             reply(text(), stop="end_turn"),
@@ -1015,22 +1016,39 @@ def test_forcing_the_decision_is_one_turn_of_insistence_and_not_a_mode():
     assert decision.source == "manager"
 
 
-def test_a_paused_turn_is_sent_again_unchanged():
+def test_a_paused_turn_is_resumed_rather_than_started_again():
+    # The server stopped part-way through a turn it means to finish, so what it
+    # has already produced goes into the conversation and the next request
+    # continues from there. Sending the same request again would buy the same
+    # pause and run its searches twice.
+    paused = reply(text("Half a search in."), searched(), stop="pause_turn")
+    client, decision = converse(
+        [paused, reply(use("finalize_decision", finalize()))]
+    )
+    messages = client.requests[1]["messages"]
+
+    assert messages[0] == {"role": "user", "content": BRIEFING}
+    assert messages[-1] == {"role": "assistant", "content": paused.content}
+    assert decision.source == "manager"
+
+
+def test_the_work_a_paused_turn_had_already_done_is_counted():
     client, decision = converse(
         [
-            reply(text(), stop="pause_turn"),
-            reply(use("finalize_decision", finalize())),
+            reply(searched(), stop="pause_turn"),
+            reply(searched(), use("finalize_decision", finalize())),
         ]
     )
 
-    assert client.requests[1]["messages"] == client.requests[0]["messages"]
-    assert decision.source == "manager"
+    assert len(client.requests) == 2
+    assert decision.searches == 2
 
 
 def test_a_turn_that_will_not_come_back_is_given_up_on():
     client, decision = converse([reply(text(), stop="pause_turn")] * 6)
 
     assert len(client.requests) == 4, "one turn and three resumptions"
+    assert len(client.requests[3]["messages"]) == 4, "the briefing and three pauses"
     assert decision.source == "solver-fallback: pause_turn"
 
 

@@ -57,8 +57,8 @@ if TYPE_CHECKING:  # the orchestrator imports the manager, so never the reverse
 # rather than hoping for it.
 MAX_TURNS = 12
 
-# A turn the server pauses is re-sent, and three times is generous: a fourth
-# identical pause is a turn that is not coming back.
+# A turn the server pauses is resumed, and three times is generous: a fourth
+# pause on the same turn is a turn that is not coming back.
 MAX_RESUMPTIONS = 3
 
 # Non-streaming, so the ceiling stays under the SDK's HTTP timeout. Effort is
@@ -264,12 +264,29 @@ class _Conversation:
         )
 
     def _ask(self, forced: bool) -> Any:
-        """One assistant turn, resumed if the server pauses it. None if it stays
-        paused: a turn that will not come back is not a turn to keep paying for."""
+        """One assistant turn, resumed as often as the server pauses it.
+
+        A pause is not a failure and not a fresh start: the server has stopped
+        part-way through a turn it means to finish, and the way to finish it is
+        to put what it has already produced into the conversation and ask
+        again. Sending the same request again instead would only buy the same
+        pause, at the price of running its searches twice.
+
+        So the paused content is appended — searches counted, because they were
+        run and paid for — and the next request continues from it. This is the
+        one place a request may end on an assistant turn, and the only one: for
+        a paused turn the API reads that as the continuation it is, rather than
+        as the prefill this model refuses.
+
+        None if it is still paused after :data:`MAX_RESUMPTIONS`: a turn that
+        will not come back is not a turn to keep paying for.
+        """
         for _ in range(MAX_RESUMPTIONS + 1):
             response = self.client.messages.create(**self._request(forced))
             if getattr(response, "stop_reason", None) != "pause_turn":
                 return response
+            self._count(response)
+            self._append(response)
         return None
 
     def _request(self, forced: bool) -> dict:
@@ -306,13 +323,11 @@ class _Conversation:
         will ever read, and running it would let a re-solve rewrite the
         projections the decision was just built on.
         """
+        self._count(response)
+
         results: list[dict] = []
         for block in getattr(response, "content", None) or []:
-            kind = getattr(block, "type", None)
-            if kind == "web_search_tool_result":
-                # The server ran it and paid for it; we only count it.
-                self.searches += 1
-            if kind != "tool_use":
+            if getattr(block, "type", None) != "tool_use":
                 continue
 
             name = getattr(block, "name", "")
@@ -434,6 +449,14 @@ class _Conversation:
             for pid, projection in self.projections.items()
         }
         return pick_lineup(plan.squad, self.positions, gw_xp)
+
+    def _count(self, response: Any) -> None:
+        """Note the searches in one turn. The server ran them and billed them;
+        counting the results rather than the requests counts the ones that came
+        back, which is what the report means by a search."""
+        for block in getattr(response, "content", None) or []:
+            if getattr(block, "type", None) == "web_search_tool_result":
+                self.searches += 1
 
     def _append(self, response: Any) -> None:
         """Put his turn into the record, unless he said nothing at all: an empty
