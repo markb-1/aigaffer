@@ -2,7 +2,7 @@
 
 Every optimum below is worked out with a pencil in the comment above the test,
 so a failure says which arithmetic the model disagrees with rather than only
-that it disagrees. Three boards are used.
+that it disagrees. Four boards are used.
 
 **The spine** (:func:`spine`) is a fifteen where nothing is worth buying: two
 keepers, five defenders, five midfielders, three forwards, all at 50, each on
@@ -38,14 +38,23 @@ gameweek is worth 55.0 started, 6.0 for the captain and 0.1 x 5.4 benched:
 the first gameweek of the window and 20.0 in every one after it — the reason
 a plan waits, and, when there are five of them, the reason it cannot wait.
 
+**The six** (:func:`six_arrivals`) is the same idea with a forward on the end
+of it, because six is one more than a free-transfer bank can ever hold.
+
 **The double** (:func:`double_gameweek`) is its own board and draws its own
 table, below :func:`double_gameweek`.
+
+:func:`assert_legal_path` replays a plan and its path gameweek by gameweek and
+checks the squad, the bank, the free transfers and the hits against the game's
+rules rather than against the solver's own arithmetic, and hands back the
+free-transfer bank standing at each deadline.
 """
 
 from collections import Counter
 
 import pytest
 
+from aigaffer.data.free_transfers import MAX_FREE_TRANSFERS
 from aigaffer.data.models import Player
 from aigaffer.model.xp import PlayerProjection, decayed_total
 from aigaffer.solver.multiweek import (
@@ -136,20 +145,21 @@ def spine(
 
 
 def blooming(
-    events: list[int], count: int, bloom: float = 20.0
+    events: list[int], count: int, bloom: float = 20.0, early: float = 0.0
 ) -> tuple[dict[int, Player], dict[int, PlayerProjection]]:
     """The fifteen plus ``count`` midfielders who arrive a gameweek late.
 
-    Each is worth nothing in ``events[0]`` and ``bloom`` in every gameweek
-    after it, and each costs 50 like everyone else, so no transfer here is ever
-    a question of money.
+    Each is worth ``bloom`` in every gameweek after ``events[0]`` and nothing
+    in ``events[0]`` itself — except the first of them, 16, who is worth
+    ``early`` there: the one it costs least to sign a gameweek ahead of time.
+    Everyone costs 50, so no transfer on this board is a question of money.
     """
     rows = [
         (pid, position, 50, {event: points for event in events})
         for pid, position, points in SPINE
     ]
     for index in range(count):
-        arrival = {events[0]: 0.0}
+        arrival = {events[0]: early if index == 0 else 0.0}
         arrival.update({event: bloom for event in events[1:]})
         rows.append((16 + index, MID, 50, arrival))
     return _build(rows)
@@ -157,6 +167,30 @@ def blooming(
 
 def bloomers(count: int) -> list[int]:
     return list(range(16, 16 + count))
+
+
+SIX = ((16, MID), (17, MID), (18, MID), (19, MID), (20, MID), (21, FWD))
+
+
+def six_arrivals(
+    events: list[int], opening: float = 0.0
+) -> tuple[dict[int, Player], dict[int, PlayerProjection]]:
+    """The fifteen plus six arrivals: five midfielders and a forward, each on
+    20.0 from the second gameweek of the window on.
+
+    Six is one more than the free-transfer bank can ever hold, which is the
+    point of the board. ``opening`` is what they are worth in the first
+    gameweek — nothing by default, so there is no reason to sign one early.
+    """
+    rows = [
+        (pid, position, 50, {event: points for event in events})
+        for pid, position, points in SPINE
+    ]
+    for pid, position in SIX:
+        arrival = {events[0]: opening}
+        arrival.update({event: 20.0 for event in events[1:]})
+        rows.append((pid, position, 50, arrival))
+    return _build(rows)
 
 
 # ==  ===  ====  ====  =====  =====  ===================================
@@ -230,38 +264,59 @@ def assert_legal_path(
     players: dict[int, Player],
     current_squad: list[int],
     bank: int,
+    free_transfers: int,
     events: list[int],
     plan,
     path: PlannedPath,
-) -> None:
-    """Replay the path a gameweek at a time and check every squad it implies.
+) -> list[int]:
+    """Replay the path a gameweek at a time and check everything it implies.
 
     The week-one move lives on the plan and the rest on the path, so this walks
-    both: fifteen legal men, the quotas, the club limit and a bank that never
-    goes below zero, gameweek after gameweek.
+    both: fifteen legal men, the quotas, the club limit, a bank that never goes
+    below zero, and — worked out here from the game's rules rather than read
+    back off the solver — the free transfers and the hits. Every gameweek's
+    stated hits must be exactly the moves it makes beyond the free ones it
+    holds, and the bank it leaves behind must be
+    ``min(5, ft - moves + hits + 1)``.
+
+    Returns the free-transfer bank standing at each gameweek's deadline, which
+    is how a test can pin the way the bank fills and where it stops.
     """
     moves = {move.event: move for move in path.moves}
     squad = set(current_squad)
     cash = bank
+    banked = free_transfers
+    series: list[int] = []
 
     for index, event in enumerate(events):
         if index == 0:
-            incoming, outgoing = plan.transfers_in, plan.transfers_out
+            incoming, outgoing, hits = (
+                plan.transfers_in, plan.transfers_out, plan.hits
+            )
         else:
             move = moves.get(event)
             incoming = move.transfers_in if move else []
             outgoing = move.transfers_out if move else []
+            hits = move.hits if move else 0
 
         assert set(outgoing) <= squad
         assert not set(incoming) & squad
+        assert len(incoming) == len(outgoing)
         squad = (squad - set(outgoing)) | set(incoming)
         cash += sum(players[p].now_cost for p in outgoing)
         cash -= sum(players[p].now_cost for p in incoming)
         assert_legal(players, sorted(squad), cash)
 
+        series.append(banked)
+        owed = max(0, len(incoming) - banked)
+        assert hits == owed, f"GW{event}: {len(incoming)} moves on {banked} free"
+        assert owed <= MAX_HITS
+        banked = min(MAX_FREE_TRANSFERS, banked - len(incoming) + owed + 1)
+
     assert set(plan.squad) == set(current_squad) - set(plan.transfers_out) | set(
         plan.transfers_in
     )
+    return series
 
 
 # --------------------------------------------------------------------------
@@ -294,7 +349,7 @@ def test_a_static_world_rolls_the_transfer_and_plans_nothing():
         6: pytest.approx(SPINE_WEEK_XI),
         7: pytest.approx(SPINE_WEEK_XI),
     }
-    assert_legal_path(players, SQUAD, 0, [5, 6, 7], plan, path)
+    assert_legal_path(players, SQUAD, 0, 1, [5, 6, 7], plan, path)
 
 
 def test_the_objective_counts_the_captain_twice():
@@ -372,7 +427,7 @@ def test_free_transfers_are_banked_for_a_double_move_next_week():
         PlannedMove(event=6, transfers_in=[16, 17], transfers_out=[8, 9], hits=0)
     ]
     assert plan.objective == pytest.approx(225.4574, abs=1e-4)
-    assert_legal_path(players, SQUAD, 0, [5, 6, 7], plan, path)
+    assert_legal_path(players, SQUAD, 0, 1, [5, 6, 7], plan, path)
 
 
 def test_a_hit_is_taken_in_the_week_that_earns_it():
@@ -399,10 +454,15 @@ def test_a_gameweek_that_cannot_hold_five_moves_starts_early():
     # Five late bloomers and two gameweeks. Rolling into GW6 leaves two free
     # transfers, and two free plus the two-hit ceiling is four moves — one short.
     # So the plan opens with two moves in GW5 (one hit) and finishes with three
-    # in GW6 (two hits): 54.2 + 0.85 x 146.54 - 12 = 166.759. Taking four
-    # bloomers instead and touching nothing in GW5 is 162.799, and starting with
-    # three is 161.409.
-    players, projections = blooming([5, 6], count=5)
+    # in GW6 (two hits). 16 is worth 3.0 in GW5 and the others nothing, so he is
+    # the one signed early, and the opening gameweek is 50.6 started + 6.0 for
+    # the captain + 0.15 benched = 56.75: 56.75 + 0.85 x 146.54 - 12 = 169.309.
+    #
+    # The rival is to touch nothing in GW5 and take four bloomers in GW6 on two
+    # free transfers and two hits — 61.54 + 0.85 x 132.54 - 8 = 166.199, which
+    # is the number to beat. Opening with one move is 164.409 and with three is
+    # 163.959.
+    players, projections = blooming([5, 6], count=5, early=3.0)
 
     plan, path = optimize_path(
         players, projections, SQUAD, bank=0, free_transfers=1, events=[5, 6],
@@ -410,6 +470,7 @@ def test_a_gameweek_that_cannot_hold_five_moves_starts_early():
     )
 
     assert plan.transfers_out == [8, 9]
+    assert 16 in plan.transfers_in
     assert len(plan.transfers_in) == 2
     assert plan.hits == 1
     assert path.moves == [
@@ -421,14 +482,87 @@ def test_a_gameweek_that_cannot_hold_five_moves_starts_early():
     assert set(bloomers(5)) <= set(plan.squad) | set(path.moves[0].transfers_in)
     assert plan.hits <= MAX_HITS
     assert all(move.hits <= MAX_HITS for move in path.moves)
-    assert plan.objective == pytest.approx(166.759, abs=1e-4)
-    assert_legal_path(players, SQUAD, 0, [5, 6], plan, path)
+    assert plan.objective == pytest.approx(169.309, abs=1e-4)
+    assert_legal_path(players, SQUAD, 0, 1, [5, 6], plan, path)
+
+
+def test_the_free_transfer_bank_stops_at_five():
+    # Five gameweeks of rolling from a bank that is already full. A transfer a
+    # gameweek accrues, but never a sixth in hand: the bank stands at five at
+    # every one of the five deadlines, and a rolled gameweek at the ceiling is
+    # a free transfer thrown away rather than saved.
+    players, projections = spine([5, 6, 7, 8, 9])
+
+    plan, path = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=MAX_FREE_TRANSFERS,
+        events=[5, 6, 7, 8, 9], decay=DECAY,
+    )
+
+    assert plan.transfers_in == []
+    assert path.moves == []
+    banked = assert_legal_path(
+        players, SQUAD, 0, MAX_FREE_TRANSFERS, [5, 6, 7, 8, 9], plan, path
+    )
+    assert banked == [MAX_FREE_TRANSFERS] * 5
+
+
+def test_a_sixth_move_costs_a_hit_because_the_bank_stops_at_five():
+    # Six players worth having in GW6 — five midfielders and a forward — and a
+    # full bank of five going into GW5, which GW5 is pinned to roll. An
+    # uncapped bank would carry 5 - 0 + 1 = 6 into GW6 and buy all six for
+    # nothing; the real one carries five, so the sixth move is a hit. It is
+    # still worth making: 0.85 x (162.55 - 146.54) = 13.61 against four points.
+    # 61.54 + 0.85 x 162.55 - 4 = 195.7075.
+    players, projections = six_arrivals([5, 6])
+
+    plan, path = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=MAX_FREE_TRANSFERS,
+        events=[5, 6], decay=DECAY, forced_first_transfers=0,
+    )
+
+    assert path.moves == [
+        PlannedMove(
+            event=6,
+            transfers_in=[16, 17, 18, 19, 20, 21],
+            transfers_out=[8, 9, 10, 11, 12, 15],
+            hits=1,
+        )
+    ]
+    assert plan.objective == pytest.approx(195.7075, abs=1e-4)
+    banked = assert_legal_path(
+        players, SQUAD, 0, MAX_FREE_TRANSFERS, [5, 6], plan, path
+    )
+    assert banked == [MAX_FREE_TRANSFERS, MAX_FREE_TRANSFERS]
+
+
+def test_a_bank_bigger_than_the_game_allows_is_taken_as_five():
+    # 15 is how aigaffer.solver.lineup prices a wildcard, and it is not a bank:
+    # this solver reads the number as the free transfers a manager actually
+    # holds, so anything above the ceiling is the ceiling. Six arrivals worth
+    # 20.0 straight away are all worth signing at once, and the sixth is a hit —
+    # 162.55 + 0.85 x 162.55 - 4 = 296.7175. Read literally, fifteen free moves
+    # would have made it free, and 300.7175.
+    players, projections = six_arrivals([5, 6], opening=20.0)
+
+    plan, path = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=15, events=[5, 6],
+        decay=DECAY,
+    )
+
+    assert plan.transfers_in == [16, 17, 18, 19, 20, 21]
+    assert plan.hits == 1
+    assert path.moves == []
+    assert plan.objective == pytest.approx(296.7175, abs=1e-4)
+    assert_legal_path(
+        players, SQUAD, 0, MAX_FREE_TRANSFERS, [5, 6], plan, path
+    )
 
 
 def test_hits_reconcile_with_the_objective():
     # xp_total is the objective with the hits added back, so that a caller
-    # ranking plans by objective is ranking them net of what they cost.
-    players, projections = blooming([5, 6], count=5)
+    # ranking plans by objective is ranking them net of what they cost. The
+    # board is the one above: one hit in GW5 and two in GW6.
+    players, projections = blooming([5, 6], count=5, early=3.0)
 
     plan, path = optimize_path(
         players, projections, SQUAD, bank=0, free_transfers=1, events=[5, 6],
@@ -486,7 +620,7 @@ def test_week_one_proceeds_pay_for_a_week_two_signing():
     # 17 costs 115 and 12 sells for 40: the other 75 came out of GW5's sale.
     assert players[17].now_cost - players[12].now_cost == 75
     assert plan.objective == pytest.approx(116.745, abs=1e-4)
-    assert_legal_path(players, SQUAD, 0, [5, 6], plan, path)
+    assert_legal_path(players, SQUAD, 0, 1, [5, 6], plan, path)
 
 
 # --------------------------------------------------------------------------
@@ -526,7 +660,7 @@ def test_it_stages_a_transfer_early_for_a_double_gameweek():
     assert plan.xp_total == pytest.approx(172.015, abs=1e-4)
     assert path.weekly_xp[10] == pytest.approx(52.7, abs=1e-4)
     assert path.weekly_xp[11] == pytest.approx(139.5, abs=1e-4)
-    assert_legal_path(players, SQUAD, 0, DOUBLE_EVENTS, plan, path)
+    assert_legal_path(players, SQUAD, 0, 1, DOUBLE_EVENTS, plan, path)
 
 
 def test_the_greedy_solver_never_makes_the_funding_move():

@@ -28,6 +28,14 @@ next gameweek's ceiling, which it raises. The solver therefore has every reason
 to push ``ft`` as high as those inequalities allow and none whatever to hold it
 down, so at the optimum it sits exactly on the ``min``.
 
+The monotonicity has one more channel than that reads, and it is the channel
+that has to be closed by hand. ``paid`` appears in the carry too, so lowering
+``ft[w]`` by one raises ``paid[w]`` by one and leaves the carry's right-hand
+side exactly where it was — a gameweek could buy back its own ceiling for four
+points if ``paid`` were free to rise. It is not, because of the pin below; with
+``paid`` held to ``max(0, transfers − ft)`` a lower ``ft`` costs four points and
+buys nothing, and the argument above is then the whole of it.
+
 **But the hits have to be pinned from both sides.** ``paid[w] ≥ transfers[w] −
 ft[w]`` is the obvious half and, on its own, wrong: ``paid`` also appears in the
 carry above, so a plan could take a hit it did not owe in order to leave its
@@ -141,8 +149,14 @@ def optimize_path(
     ``events`` are the gameweek ids of the window in order, the first of them
     the one being decided. ``bank`` and prices are in tenths of a million and
     ``free_transfers`` is the bank of free moves standing at the first
-    deadline. A player with no projection for a gameweek is worth nothing in
-    it, which is what a blank is.
+    deadline, read as the game reads it and clamped to
+    :data:`~aigaffer.data.free_transfers.MAX_FREE_TRANSFERS`: the fifteen with
+    which :mod:`aigaffer.solver.lineup` prices a wildcard is not a bank, and a
+    window planned as though it were would be a window of illegal gameweeks.
+    Chips are not this solver's business and drafting from an empty squad is
+    not either — fifteen signings will not fit under a gameweek's move ceiling.
+    A player with no projection for a gameweek is worth nothing in it, which is
+    what a blank is.
 
     None means no answer, not an error: an infeasible board, a
     ``forced_first_transfers`` the pool or the budget cannot support, or a
@@ -152,6 +166,7 @@ def optimize_path(
     if not events:
         return None
 
+    opening_bank = min(max(free_transfers, 0), MAX_FREE_TRANSFERS)
     pool = candidate_pool(
         players, projections, current_squad, limit=CANDIDATES_PER_POSITION
     )
@@ -188,9 +203,9 @@ def optimize_path(
     # owing[w] = 1 when the gameweek's moves outran its free transfers. It is
     # what pins paid to the max() it stands for; see the module docstring.
     owing = {w: problem.add_variable(f"owing{w}", cat=pulp.LpBinary) for w in weeks}
-    big_m = MAX_HITS + max(free_transfers, MAX_FREE_TRANSFERS)
+    big_m = MAX_HITS + MAX_FREE_TRANSFERS
     # ft[1] is what the manager holds, a constant; the rest are carried.
-    banked: dict[int, float | pulp.LpVariable] = {1: free_transfers}
+    banked: dict[int, float | pulp.LpVariable] = {1: opening_bank}
     banked.update(
         {
             w: problem.add_variable(f"ft{w}", lowBound=0, upBound=MAX_FREE_TRANSFERS)
