@@ -226,7 +226,10 @@ class _Conversation:
 
         # The ids the briefing printed, minted in the one place that mints them.
         self.registry: dict[int, Plan] = dict(initial_plan_ids(solve0))
-        self.messages: list[dict] = [{"role": "user", "content": briefing}]
+        # The briefing is the longest thing in the conversation and never
+        # changes once written, so it is cached with the system prompt: the
+        # loop is up to a dozen turns and every one of them resends it.
+        self.messages: list[dict] = [{"role": "user", "content": [_cached(briefing)]}]
         self.adjustments: dict[int, float] = {}
         self.record: list[dict] = []
         self.searches = 0
@@ -316,13 +319,7 @@ class _Conversation:
             "model": self.cfg.manager_model,
             "max_tokens": MAX_TOKENS,
             "output_config": EFFORT,
-            "system": [
-                {
-                    "type": "text",
-                    "text": SYSTEM_PROMPT,
-                    "cache_control": {"type": "ephemeral"},
-                }
-            ],
+            "system": [_cached(SYSTEM_PROMPT)],
             "tools": TOOLS,
             "messages": list(self.messages),
         }
@@ -483,6 +480,17 @@ class _Conversation:
         content = getattr(response, "content", None)
         if content:
             self.messages.append({"role": "assistant", "content": content})
+
+
+def _cached(text: str) -> dict:
+    """A text block the server is asked to cache the prefix up to.
+
+    Caching is a prefix match, so the two blocks this marks — the system
+    prompt and the briefing, in that order — are exactly the part of the
+    request that cannot change once the conversation has started. Everything
+    volatile is after them: his turns, and the tool results answering them.
+    """
+    return {"type": "text", "text": text, "cache_control": {"type": "ephemeral"}}
 
 
 def _result(tool_use_id: str, content: str, failed: bool = False) -> dict:

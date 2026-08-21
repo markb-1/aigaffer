@@ -204,6 +204,11 @@ XI_FRESH_HIT = [1, 3, 4, 8, 9, 10, 11, 13, 14, 17, 18]
 XI_FRESH_HIT_AFTER = [1, 3, 6, 8, 9, 10, 11, 13, 14, 17, 18]
 
 BRIEFING = "# AI Gaffer — manager briefing: GW2\n\n(the week, as he is told it)"
+# How it goes into the conversation: one text block, marked as the end of the
+# prefix the server may cache.
+CACHED_BRIEFING = [
+    {"type": "text", "text": BRIEFING, "cache_control": {"type": "ephemeral"}}
+]
 RATIONALE = "Gale is out for a month; Quinn plays every minute, and at home."
 
 CFG = Config(team_id=42, anthropic_api_key="sk-test")
@@ -441,7 +446,26 @@ def test_the_manager_searches_adjusts_resolves_and_decides():
 def test_the_briefing_opens_the_conversation():
     client, _ = converse([reply(use("finalize_decision", finalize()))])
 
-    assert client.requests[0]["messages"] == [{"role": "user", "content": BRIEFING}]
+    assert client.requests[0]["messages"] == [
+        {"role": "user", "content": CACHED_BRIEFING}
+    ]
+
+
+def test_the_briefing_is_cached_alongside_the_system_prompt():
+    # The two longest things in the request are also the two that never change
+    # once the conversation has started, and a dozen turns each resend both.
+    client, _ = converse(
+        [
+            reply(use("resolve", {})),
+            reply(use("finalize_decision", finalize())),
+        ]
+    )
+
+    for request in client.requests:
+        assert request["system"][0]["cache_control"] == {"type": "ephemeral"}
+        opening = request["messages"][0]["content"]
+        assert opening[0]["text"] == BRIEFING
+        assert opening[0]["cache_control"] == {"type": "ephemeral"}
 
 
 def test_the_adjustments_reach_the_resolver_and_the_decision():
@@ -1038,7 +1062,7 @@ def test_a_paused_turn_is_resumed_rather_than_started_again():
     )
     messages = client.requests[1]["messages"]
 
-    assert messages[0] == {"role": "user", "content": BRIEFING}
+    assert messages[0] == {"role": "user", "content": CACHED_BRIEFING}
     assert messages[-1] == {"role": "assistant", "content": paused.content}
     assert decision.source == "manager"
 
