@@ -7,22 +7,35 @@ correlation over the whole field, and how many of the model's top twenty
 actually returned — because a bot that advises transfers is only ever asked
 to put players in order, and those are the two ways of asking whether it can.
 
-**This is not a true backtest, and its numbers are not season simulations.**
-The per-90 rates, the prices and the team strengths all come from the bootstrap
-as it stands today, which includes the gameweek being scored and every one
-since: the model is being asked to rank a week it has already seen. What
-leaks is bounded — a season rate moves little for one week of it — but it
-leaks in the model's favour, so read a good rho as "not broken" rather than
-as "this good". Availability leaks the other way: a player injured today is
-projected at no minutes for a gameweek he was fit for, and takes the penalty
-for it. Only the minutes model is held honest, because it is the one input
-that turns over fast enough for a peek to flatter it outright.
-
 The population is the pipeline's own shortlist — the players it would
 actually consider, by :func:`~aigaffer.orchestrator.history_pool` — narrowed
 to those with a history entry for the gameweek. A player with no fixture that
 week has no score to correlate with, and the rest of the six hundred are
 projected at zero minutes and would only pad the field with ties.
+
+**This is not a true backtest, and its numbers are not season simulations.**
+Three things here know how the gameweek turned out, and all three flatter the
+model:
+
+* **The rates.** The per-90 rates, the prices and the team strengths come from
+  the bootstrap as it stands today, which includes the gameweek being scored
+  and every one since. The model is being asked to rank a week it has already
+  seen. What leaks is bounded — a season rate moves little for one week of it
+  — but it leaks the model's way.
+* **Who is in the field.** The shortlist admits only players available *today*,
+  so anyone since injured or gone is never graded. The population is the
+  survivors, and a projection is never checked against the weeks it got wrong
+  about a man who has since broken down.
+* **Which survivors.** The shortlist then cuts by season-to-date total points —
+  today's total, including everything scored *after* the gameweek being graded.
+  The field is skewed towards players who went on to do well, which is the
+  ordering the model is being congratulated for predicting.
+
+Only the minutes model is held honest, because it is the one input that turns
+over fast enough for a peek to flatter it outright. So the level of rho is
+optimistic and should not be read as a forecast of live performance: what the
+harness is good for is the sign, the trend from week to week, and catching a
+model that has stopped ranking better than chance.
 """
 
 from dataclasses import dataclass

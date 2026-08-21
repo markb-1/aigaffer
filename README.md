@@ -45,14 +45,22 @@ minute. `spearman` is the rank correlation between projected and actual
 points over that population, and `top20_hit_rate` the share of the model's
 top twenty who scored five or more.
 
-**This is not a true backtest.** The per-90 rates, prices and team strengths
-all come from the bootstrap as it stands today, which includes the gameweek
-being graded and every one since: the model is being asked to rank a week it
-has already seen. Availability leaks the other way — a player injured today
-is projected at no minutes for a gameweek he was fit for. Only the minutes
-model is held honest. So read the numbers as a sanity check on ranking
-quality — is the order better than chance? — and never as an estimate of how
-the bot would have done.
+**This is not a true backtest.** Three things here know how the gameweek
+turned out, and all three flatter the model:
+
+1. The per-90 rates, prices and team strengths come from the bootstrap as it
+   stands today, which includes the gameweek being graded and every one since:
+   the model is asked to rank a week it has already seen.
+2. The shortlist admits only players available *today*, so anyone since injured
+   or gone is never graded — the population is the survivors.
+3. The shortlist then cuts by season-to-date total points, today's total,
+   which includes everything scored *after* the graded gameweek: the field is
+   skewed towards the players who went on to do well.
+
+Only the minutes model is held honest. So the level of `spearman` is
+optimistic: read it as a sanity check on ranking quality — is the order better
+than chance, and is it holding up week to week? — and never as an estimate of
+how the bot would have done.
 
 ## Known Phase 1 approximations
 
