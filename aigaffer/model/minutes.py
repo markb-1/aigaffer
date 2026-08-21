@@ -18,8 +18,19 @@ The World Cup had just finished, the internationals were rested for the opening
 weekend, and one gameweek of 0 minutes was the entire season history. Every one
 of them projected zero minutes and zero points; the solver benched a fit
 Haaland; and the gaffer spent his week overriding seven players by hand to
-undo it. A mean of one number was never a role estimate, and this is the
-smallest change that stops it being read as one.
+undo it. A mean of one number was never a role estimate, and this stops it
+being read as one from the moment there is a start on the record to read.
+
+That last clause is the limit of the claim, and it is worth being plain about.
+``starts`` is season-to-date like everything else in the payload, so a player
+rested in GW1 has no starts either, and the floor under him is the bench
+estimate rather than the starter's: twenty minutes of a striker who will play
+ninety. From GW2 the blend bites — one start is all it needs — but the opening
+weekend it was written for is exactly the week it cannot rescue on its own.
+Nothing in the data can: last season is not in the payload, and reading a role
+off a price or off ``total_points`` would be a guess wearing the clothes of a
+measurement. The mitigation there is the gaffer, who reads the team news and
+sets the minutes by hand.
 """
 
 from aigaffer.data.models import GwHistory, Player
@@ -60,9 +71,15 @@ def expected_minutes(history: list[GwHistory], player: Player) -> float:
     whether he has started a match this season.
 
     That fallback is also a floor for the first :data:`BLEND_GAMEWEEKS` weeks,
-    and the higher of the two wins: one rested gameweek should not overrule a
-    season's worth of starts, and a full ninety should not be dragged down to
-    75 by them. From the third gameweek on the mean stands alone.
+    and the higher of the two wins: a rested gameweek should not overrule the
+    fact that he has started, and a full ninety should not be dragged down to
+    75 by it. From the third gameweek on the mean stands alone.
+
+    The floor is only as good as the count it is read off. Under three
+    gameweeks the season's ``starts`` is at most two, and in GW1 a rested
+    player's is zero — so the opening weekend lands on the bench estimate,
+    which is the limitation the module docstring sets out and the gaffer's own
+    minute overrides exist to cover.
     """
     fallback = (
         STARTER_FALLBACK_MINUTES if player.starts > 0 else BENCH_FALLBACK_MINUTES

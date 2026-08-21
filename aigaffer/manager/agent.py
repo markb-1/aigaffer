@@ -68,10 +68,14 @@ MAX_RESUMPTIONS = 3
 # own: the report is due before the gameweek's, and the workflow gives the whole
 # job thirty. Twelve minutes leaves room for the turn already in flight — the
 # client the orchestrator builds bounds that one at five minutes and one retry —
-# and for the solver's own week to be rendered and sent after it. The budget is
-# checked between turns, so a turn that starts inside it can finish outside it:
-# the worst case is one hung request's ten minutes on top, which is why the job
-# is given thirty and not fifteen.
+# and for the solver's own week to be rendered and sent after it.
+#
+# The budget is checked before a request and never during one, so the whole of
+# the last turn falls outside it, tools and all. A hung request is ten minutes,
+# and what that turn asked for is run after it comes back: a resolve is a sweep
+# of six windowed solves at :data:`~aigaffer.solver.plans.SWEEP_TIME_LIMIT`
+# seconds each, so two minutes more. Twelve, ten and two is twenty-four minutes
+# inside the manager, which is why the job is given thirty and not fifteen.
 #
 # A worse report on time beats a better one that missed, every week.
 TIME_BUDGET_SECONDS = 720

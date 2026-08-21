@@ -521,11 +521,17 @@ def _consult(
             # minutes on purpose. Live it never once finished — two attempts of
             # two minutes each, no searches, no turns, and the fallback every
             # time, which is a manager who can never be reached wearing the
-            # clothes of a manager who was unlucky. One retry stays: worst case
-            # a hung request burns ten minutes and the loop's own budget
-            # (:data:`~aigaffer.manager.agent.TIME_BUDGET_SECONDS`, twelve)
-            # catches it with time for the solver's week to be rendered and
-            # sent, which is the thing that must not be missed.
+            # clothes of a manager who was unlucky.
+            #
+            # One retry stays, and the worst case adds up rather than overlaps:
+            # the loop's own budget
+            # (:data:`~aigaffer.manager.agent.TIME_BUDGET_SECONDS`, twelve
+            # minutes) is checked before a request, a hung last request burns
+            # ten more, and the tools that request asked for run after it —
+            # a resolve sweeps the window again, two minutes at the outside.
+            # Twenty-four minutes inside the manager, against a job that is
+            # given thirty, which leaves the solver's own week time to be
+            # rendered and sent: the thing that must not be missed.
             anthropic.Anthropic(
                 api_key=cfg.anthropic_api_key, timeout=300.0, max_retries=1
             ),

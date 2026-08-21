@@ -249,6 +249,11 @@ is not something a misspelling should be able to do. It is the same convention
 as `AIGAFFER_MANAGER`, where one literal value switches and everything else
 leaves the default standing.
 
+On the workflow it is the same arrangement too — Settings → Secrets and
+variables → Actions → Variables → `AIGAFFER_PLANNER` = `single` — so a week the
+window misbehaves is a week the single-week solver reports on time, without a
+commit to the workflow and without a lost report.
+
 ## Operations
 
 The bot runs itself from `.github/workflows/gaffer.yml`. To set it up on a
