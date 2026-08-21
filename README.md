@@ -29,6 +29,7 @@ No transfers are executed in Phase 1 — you make the final call.
 | `ANTHROPIC_API_KEY` | Turns the Phase 2 manager on. No key, no manager |
 | `AIGAFFER_MANAGER` | Set to `0` to run the solver alone even with a key |
 | `AIGAFFER_MANAGER_MODEL` | Which model the manager is (default `claude-opus-5`) |
+| `AIGAFFER_PLANNER` | Set to exactly `single` to solve one gameweek at a time instead of the window |
 
 ### Backtest sanity check
 
@@ -165,6 +166,89 @@ deliberately so that every scheduled run has *asked* for a manager: a run that
 asked and has no key to reach him with prints one line saying so, which is what
 a missing secret looks like from the outside instead of nothing at all.
 
+## Phase 2.5 — "The Planner"
+
+Phase 1's solver answers one question about one gameweek: given this squad,
+this bank and these free transfers, what is the best fifteen reachable *this
+week*? That is the question a manager asks and it is not the question a manager
+answers. Money raised has to be spent the moment it is raised, a free transfer
+rolled is a free transfer thrown away, and a plan that needs five moves and can
+make three is infeasible rather than staged.
+
+So the recommendation is now solved over the whole six-gameweek horizon
+(`aigaffer/solver/multiweek.py`) as one mixed-integer program: a squad, an XI
+and a captain for every gameweek in the window, with the bank and the
+free-transfer count carried between them under the game's own rules — one free
+transfer a week, never more than five in hand, four points for every move past
+what is held and eight points a gameweek at the very most. Only the first
+gameweek is ever entered, but it is chosen knowing what it is for. Three things
+follow that the single-week solver cannot reach:
+
+1. **A rolled transfer is a decision.** Banking this week's move to make two
+   free ones next week is now a plan rather than an accident, and the model can
+   see what the roll is *for*.
+2. **A move can be made early for a gameweek that has not arrived.** The double
+   gameweek is the case this was built for: five moves will not fit under one
+   gameweek's ceiling, so the move that only raises the money goes a week ahead
+   of the moves that spend it. The single-week solver never makes that move at
+   all — selling a good player for a cheap one is a downgrade right up until the
+   week it pays for something, and by then it is too late.
+3. **The captain is inside the model.** The window prices every gameweek with
+   the armband already on the best man in that gameweek's eleven, so a fifteen
+   that unlocks a big captaincy is worth to the solver what it is worth to the
+   season. Phase 1's objective has no captain in it at all — it maximises an
+   eleven and a weighted bench, and the armband is chosen afterwards from
+   whatever squad that produced. The armband finally *played* is still picked
+   afterwards, by `pick_lineup` and then by the gaffer; what changed is that it
+   is no longer invisible to the thing choosing the squad.
+
+The gameweeks after this one are printed in the report under **The road ahead**,
+and ride the end of every plan line in the manager's briefing. The report closes
+that section the same way every week, and the line is the whole of the path's
+status:
+
+> Advisory — re-planned every run; only this week's moves are ever made.
+
+Nothing in a path is a commitment. It is re-solved from scratch on the next run,
+on projections that will have moved, and the one thing a reader must not do is
+hold this week's move back because a path he read a fortnight ago says it
+belongs in the next. The briefing makes the same point at more length, because a
+model reading "GW4 +Pike -Byrne" beside a plan it is being asked to commit to
+would otherwise reasonably read it as part of the commitment.
+
+### The two engines, and which one answered
+
+The window goes first, once per transfer count the shortlist considers, each
+solve on a twenty-second leash. That is four to six solves, and on the boards it
+has been run against they have come back in a second or two between them — the
+leash is a ceiling, not a budget, and a solve that reaches it with a squad in
+hand hands the squad over anyway. When the window has nothing at all to say —
+an infeasible board, or a sweep where every count came back empty — the same
+questions go to the single-week solver, because a gameweek with a deadline
+needs a recommendation more than it needs the better model.
+
+Which engine answered is written down nowhere, and does not need to be: a plan
+off the window carries its path and a plan off the single-week solver does not.
+So a report with a road-ahead section is a report off the window. A run that
+asked for the window and got the other engine says so once, under the candidate
+plans:
+
+> Single-week engine (multi-week solve unavailable this run).
+
+A run that asked for the single-week solver on purpose prints nothing — it got
+what it asked for, and a report that apologised every week would be crying
+wolf. The decision the store keeps carries the same fact as `engine`, `multi` or
+`single`, read off what came back rather than off what was configured.
+
+### Turning the window off
+
+`AIGAFFER_PLANNER=single` in the environment, and the single-week solver answers
+alone. The value has to be exactly `single`: a typo, an empty export, a `0` —
+anything else at all leaves the window on, because turning the better engine off
+is not something a misspelling should be able to do. It is the same convention
+as `AIGAFFER_MANAGER`, where one literal value switches and everything else
+leaves the default standing.
+
 ## Operations
 
 The bot runs itself from `.github/workflows/gaffer.yml`. To set it up on a
@@ -220,7 +304,9 @@ These are deliberate. Do not "fix" them without revisiting the design:
 ## Deferred
 
 Still not shipped, deliberately. The fetch / project / solve seam that used to
-head this list went in with Phase 2 — it is what `resolve` re-solves through.
+head this list went in with Phase 2 — it is what `resolve` re-solves through —
+and the multi-week planner above went in with Phase 2.5, which took the captain
+into the model on the way past. Neither is a gap any more.
 
 1. **Weekly input-data snapshots.** The store keeps the report and the decision
    for each run, not the bootstrap and histories they were computed from, so a
@@ -243,6 +329,14 @@ head this list went in with Phase 2 — it is what `resolve` re-solves through.
    hits, and nothing here does that. The panel still prices both — the wildcard
    over the six-gameweek horizon, which is what the row says, and the other
    three over next gameweek — so the case can be made in the rationale.
+
+   **This is now the next thing the solver should learn.** A chip is a gameweek
+   whose transfer rules are different, which is one more quantity to carry from
+   one gameweek to the next — exactly the shape of thing the multi-week window
+   already carries the bank and the free transfers as. Chip-aware solving is not
+   a solver of its own to write; it is a chip variable a gameweek in the one
+   that is there, and the answer it would give is the question the report
+   currently has to hand back to a human: *is this the week?*
 4. **The mid-season chip reset.** `played_chips` counts a chip as gone the
    moment it appears in the season's history, without asking which half of the
    season it was played in. Modern FPL hands out a second set at the halfway
@@ -281,3 +375,10 @@ Requires Python 3.12 or newer. All tests run offline — HTTP is faked with
 `httpx.MockTransport`, never the live API — which is why the same suite runs on
 every push and pull request in `.github/workflows/tests.yml`, with no secrets
 in the job at all.
+
+It takes about half a minute rather than the second a mocked suite would, and
+almost all of that is real MILP solves: the multi-week tests solve hand-built
+universes whose optimum is worked out with a pencil in the comment above each
+test, and the pipeline tests sweep real windows end to end. That is deliberate.
+A solver test that mocks the solver tests nothing, and thirty seconds of CI is
+a cheap way to find out that a formulation stopped being the game's rules.

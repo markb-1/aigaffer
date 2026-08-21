@@ -398,9 +398,14 @@ def _candidates(
     recommendation above it with no list behind it is a report that has
     stopped explaining itself.
 
-    ``fell_back`` says the window was asked and had nothing to say, so this
-    list is the single-week solver's. It is a line about the whole list and
-    goes under it, above the note about the recommendation.
+    ``fell_back`` says the window was asked and had nothing to say about the
+    plan being recommended, which in the ordinary run is a fact about this
+    whole list: the caller reads it off that plan, and that plan is one of
+    these. After a manager re-solve it need not be one of these, and then the
+    line is still true of the recommendation above and merely unproven of the
+    rows — which is the right way round, since the recommendation is what a
+    reader is being asked to trust. It goes under the list, above the note
+    about the recommendation.
     """
     pick = _pick(plans, choice)
     lines = ["## Candidate plans", ""]
