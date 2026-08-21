@@ -108,7 +108,7 @@ def _alert(cfg: Config, error: Exception, event_id: int | None) -> None:
     message = f"aigaffer run failed: {type(error).__name__}{gameweek}"
     try:
         send_report(cfg.telegram_token, cfg.telegram_chat_id, message)
-    except Exception as sending:  # noqa: BLE001 — the alert is the last resort
+    except Exception as sending:  # any failure; the alert is the last resort
         print(f"aigaffer: the alert failed too: {type(sending).__name__}")
 
 
