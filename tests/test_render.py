@@ -307,6 +307,46 @@ def test_every_candidate_plan_gets_a_row_and_the_choice_is_flagged():
     ]
 
 
+def test_the_gaffers_pick_is_flagged_on_the_row_that_holds_his_squad():
+    # He finalized a plan the solver had already reached, but a re-solve minted
+    # a fresh object for it with fresh numbers on it. Flagging by identity
+    # would flag nothing and quietly break the section's one invariant.
+    same = replace(ONE, xp_total=256.9, objective=256.9)
+    resolved = report(choice=same, view=replace(gaffer(), plan=same))
+    rows = bullets(resolved, "Candidate plans")
+
+    assert sum("recommended" in row for row in rows) == 1
+    assert rows[0].endswith("<- recommended")
+    assert "re-solved" not in resolved
+
+
+def test_a_pick_the_shortlist_never_had_says_where_it_came_from():
+    # The plan he chose was solved on his own minutes and is not among the
+    # four below. Saying nothing would leave a list with no recommendation on
+    # it and a recommendation above with no list behind it.
+    fresh = Plan(
+        squad=[pid for pid in SQUAD if pid != 6] + [17],
+        xi=LINEUP.xi,
+        transfers_in=[17],
+        transfers_out=[6],
+        hits=0,
+        xp_total=257.0,
+        objective=257.0,
+    )
+
+    elsewhere = report(choice=fresh, view=replace(gaffer(), plan=fresh))
+
+    assert not any("recommended" in row for row in bullets(elsewhere, "Candidate plans"))
+    assert section(elsewhere, "Candidate plans")[-1] == (
+        "The gaffer re-solved after his adjustments;"
+        " his pick above is not on this list."
+    )
+
+
+def test_a_report_with_no_manager_never_explains_a_re_solve():
+    assert "re-solved" not in report()
+
+
 def test_the_chip_panel_signs_every_number():
     assert bullets(report(), "Chip EV") == [
         "- Bench boost: +3.2",

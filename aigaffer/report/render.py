@@ -57,6 +57,14 @@ DEADLINE_FORMAT = "%a %d %b %Y %H:%M UTC"
 DECIDED = "manager"
 NO_CHIP = "none"
 
+# What the shortlist says when the manager's own plan is not on it: he adjusted
+# somebody's minutes and solved again, and what came back was a fifteen this
+# list never reached.
+RESOLVED_ELSEWHERE = (
+    "The gaffer re-solved after his adjustments;"
+    " his pick above is not on this list."
+)
+
 
 def render_report(
     mode: str,
@@ -91,7 +99,7 @@ def render_report(
         _recommendation(choice, players, clubs),
         *([] if gaffer is None else [_gaffer(gaffer, players)]),
         _team_sheet(lineup, players, projections),
-        _candidates(plans, choice),
+        _candidates(plans, choice, decided=gaffer is not None),
         _chip_panel(chips),
         _watchlist(choice.squad, players, clubs, projections),
     ]
@@ -273,18 +281,53 @@ def _team_sheet(
     return "\n".join(lines)
 
 
-def _candidates(plans: list[Plan], choice: Plan) -> str:
-    """Every plan the solver came back with, in the order it ranked them."""
+def _candidates(plans: list[Plan], choice: Plan, decided: bool = False) -> str:
+    """Every plan the solver came back with, in the order it ranked them.
+
+    Exactly one row carries the recommendation, and that has to hold however
+    the recommendation was arrived at. A manager who re-solved on his own
+    minutes finalizes a plan object the solver minted after this list was
+    drawn up, so the row is found by the squad it leaves behind and not by
+    identity — the same fifteen is the same plan, whatever the numbers beside
+    it were recomputed to.
+
+    ``decided`` says a manager chose. When his choice is genuinely not on this
+    list — a squad the original solve never reached — no row is flagged and
+    the section says why, because a list with no recommendation on it and a
+    recommendation above it with no list behind it is a report that has
+    stopped explaining itself.
+    """
+    pick = _pick(plans, choice)
     lines = ["## Candidate plans", ""]
-    for plan in plans:
-        recommended = "  <- recommended" if plan is choice else ""
+    for index, plan in enumerate(plans):
+        recommended = "  <- recommended" if index == pick else ""
         lines.append(
             f"- {plural(len(plan.transfers_in), 'transfer')}"
             f" | {plural(plan.hits, 'hit')}"
             f" | {plan.xp_total:.1f} xP"
             f" | {plan.objective:.1f} net{recommended}"
         )
+    if decided and pick is None:
+        lines += ["", RESOLVED_ELSEWHERE]
     return "\n".join(lines)
+
+
+def _pick(plans: list[Plan], choice: Plan) -> int | None:
+    """Which row is the recommendation, if any of them is.
+
+    Identity first, because in a run with no manager the choice is one of
+    these objects and two plans could in principle field the same fifteen by
+    different routes. Then the squad, which is what makes a re-solved plan the
+    same plan as the one this list already has.
+    """
+    for index, plan in enumerate(plans):
+        if plan is choice:
+            return index
+    squad = sorted(choice.squad)
+    for index, plan in enumerate(plans):
+        if sorted(plan.squad) == squad:
+            return index
+    return None
 
 
 def _chip_panel(chips: ChipEvs) -> str:
