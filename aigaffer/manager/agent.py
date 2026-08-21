@@ -140,15 +140,21 @@ def run_manager(
     are also the fallback — every failure below returns the solver's own
     recommendation built from them.
 
-    This never raises. The exception chain names the failures the SDK actually
-    has, and the bare ``except`` under it is not a lapse: an unexpected error in
-    this module is a bug in this module, and losing the week's report to it
-    would be a second, worse one.
+    Given a ``solve0`` the solver produced, this never raises. The exception
+    chain names the failures the SDK actually has, and the bare ``except`` under
+    it is not a lapse: an unexpected error in this module is a bug in this
+    module, and losing the week's report to it would be a second, worse one.
+
+    Setting the conversation up is inside the try for the same reason. It reads
+    the fetch — clubs off the bootstrap, positions off the board — and a fetch
+    that came back malformed would otherwise raise past every handler here and
+    take the report with it, which is exactly the failure this is for.
     """
-    conversation = _Conversation(
-        client, cfg, inputs, solve0, projections0, briefing, resolver
-    )
+    conversation = None
     try:
+        conversation = _Conversation(
+            client, cfg, inputs, solve0, projections0, briefing, resolver
+        )
         return conversation.run()
     except (
         anthropic.RateLimitError,  # too many requests, or too many tokens
@@ -156,9 +162,40 @@ def run_manager(
         anthropic.APIConnectionError,  # the network, or a request that timed out
         anthropic.AnthropicError,  # anything else the SDK raises on its own
     ) as error:
-        return conversation.fallback(type(error).__name__)
+        return _abandoned(solve0, conversation, type(error).__name__)
     except Exception as error:  # ours, then — and still not the run's problem
-        return conversation.fallback(f"unexpected {type(error).__name__}")
+        return _abandoned(solve0, conversation, f"unexpected {type(error).__name__}")
+
+
+def _abandoned(
+    solve0: "SolveResult", conversation: "_Conversation | None", reason: str
+) -> ManagerDecision:
+    """The solver's own week, with the reason it is being read instead.
+
+    ``conversation`` is None when there was never one: the failure happened
+    while the loop was being built, and then not even a search count survives
+    it. Everything this returns comes from ``solve0``, which is the one thing
+    that cannot have been the problem — it was in hand before the manager was
+    asked anything.
+
+    The adjustments go with the manager. They were never applied to the plan
+    this returns, and listing them under it would be a report claiming a
+    minutes model it did not use. The searches stay: they happened, and they
+    were paid for.
+    """
+    lineup = solve0.lineup
+    return ManagerDecision(
+        plan=solve0.choice,
+        lineup=lineup,
+        captain=lineup.captain,
+        vice=lineup.vice,
+        chip=NO_CHIP,
+        chip_justification="",
+        rationale=NO_VIEW,
+        adjustments=[],
+        searches=conversation.searches if conversation is not None else 0,
+        source=f"{FALLBACK}: {reason}",
+    )
 
 
 class _Conversation:
@@ -242,26 +279,8 @@ class _Conversation:
         return self.fallback(f"no decision in {MAX_TURNS} turns")
 
     def fallback(self, reason: str) -> ManagerDecision:
-        """The solver's own week, with the reason it is being read instead.
-
-        The adjustments go with the manager: they were never applied to the
-        plan this returns, and listing them under it would be a report claiming
-        a minutes model it did not use. The searches stay, because they happened
-        and they were paid for.
-        """
-        lineup = self.solve0.lineup
-        return ManagerDecision(
-            plan=self.solve0.choice,
-            lineup=lineup,
-            captain=lineup.captain,
-            vice=lineup.vice,
-            chip=NO_CHIP,
-            chip_justification="",
-            rationale=NO_VIEW,
-            adjustments=[],
-            searches=self.searches,
-            source=f"{FALLBACK}: {reason}",
-        )
+        """Give the week back to the solver, from inside the loop."""
+        return _abandoned(self.solve0, self, reason)
 
     def _ask(self, forced: bool) -> Any:
         """One assistant turn, resumed as often as the server pauses it.

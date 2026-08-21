@@ -44,7 +44,7 @@ manager finalizes against and it has to go on counting across a re-solve:
 """
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 import anthropic
@@ -275,6 +275,17 @@ class Response:
     stop_details: Any = None
 
 
+class ScriptFault(BaseException):
+    """A test's own script, misused — and deliberately not an ``Exception``.
+
+    The loop's safety net catches ``Exception`` and turns it into a fallback
+    decision, which is the whole point of the loop and exactly wrong here: a
+    test that over-ran its script, or a loop that read what it must not, would
+    launder into ``solver-fallback: unexpected AssertionError`` and pass while
+    proving nothing. A ``BaseException`` goes past the net and fails the test.
+    """
+
+
 class Refusal:
     """A refusal whose content is a landmine.
 
@@ -288,7 +299,7 @@ class Refusal:
 
     @property
     def content(self) -> list[Block]:
-        raise AssertionError("the loop read the content of a refusal")
+        raise ScriptFault("the loop read the content of a refusal")
 
 
 class FakeClient:
@@ -303,7 +314,7 @@ class FakeClient:
     def _create(self, **kwargs: Any) -> Any:
         self.requests.append(kwargs)
         if not self.script:
-            raise AssertionError(
+            raise ScriptFault(
                 f"the loop asked for turn {len(self.requests)}, past the script"
             )
         answer = self.script.pop(0)
@@ -1109,6 +1120,24 @@ def test_a_broken_connection_falls_back_too():
     _, decision = converse([anthropic.APIConnectionError(request=request)])
 
     assert decision.source == "solver-fallback: APIConnectionError"
+
+
+def test_a_fetch_that_came_back_wrong_cannot_take_the_report_with_it():
+    # The loop reads the fetch to build itself — clubs off the bootstrap,
+    # positions off the board — before it sends anything. That reading has to be
+    # inside the net too, or a malformed fetch raises past every handler and the
+    # week's report dies with it.
+    client = FakeClient([])
+    malformed = replace(INPUTS, bootstrap=None)
+    decision = run_manager(
+        client, CFG, malformed, SOLVE0, XP, BRIEFING, FakeResolver()
+    )
+
+    assert decision.source == "solver-fallback: unexpected AttributeError"
+    assert decision.plan is SOLVE0.choice
+    assert decision.lineup is SOLVE0.lineup
+    assert decision.searches == 0
+    assert client.requests == [], "it never got as far as asking"
 
 
 def test_a_failure_nobody_planned_for_is_caught_and_named_as_one():
