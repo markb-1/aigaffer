@@ -208,6 +208,10 @@ def run_pipeline(
     event = inputs.event
     choice = solved.choice if gaffer is None else gaffer.plan
     lineup = solved.lineup if gaffer is None else gaffer.lineup
+    # And costed on the projections the decision was made on: his, if he
+    # re-solved on minutes of his own. A team sheet he picked printed beside
+    # numbers he overruled is one report describing two different weeks.
+    costed = projections if gaffer is None else (gaffer.projections or projections)
     report = render_report(
         _label(mode, drafting=solved.draft_mode),
         event,
@@ -216,7 +220,7 @@ def run_pipeline(
         lineup,
         solved.chips,
         inputs.bootstrap,
-        projections,
+        costed,
         gaffer,
     )
     decision = {

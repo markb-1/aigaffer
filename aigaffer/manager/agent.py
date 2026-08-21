@@ -106,6 +106,12 @@ class ManagerDecision:
     printed in the report, because "the solver picked this" and "the manager
     picked this" are different claims and Mark is entitled to know which he is
     reading.
+
+    ``projections`` is what the decision was costed on — the ones in force
+    when he finalized, which are the re-solve's if he re-solved. The report is
+    written on them, so that the eleven it prints and the numbers beside it
+    describe the same week. None on a fallback: that is the solver's own week
+    and the pipeline already holds the projections it was solved on.
     """
 
     plan: Plan
@@ -118,6 +124,7 @@ class ManagerDecision:
     adjustments: list[dict]
     searches: int
     source: str
+    projections: dict[int, PlayerProjection] | None = None
 
 
 def run_manager(
@@ -180,7 +187,9 @@ def _abandoned(
 
     The adjustments go with the manager. They were never applied to the plan
     this returns, and listing them under it would be a report claiming a
-    minutes model it did not use. The searches stay: they happened, and they
+    minutes model it did not use. The projections go with them, and for the
+    same reason: this is the solver's own week, and the caller is holding the
+    projections it was solved on. The searches stay: they happened, and they
     were paid for.
     """
     lineup = solve0.lineup
@@ -455,6 +464,10 @@ class _Conversation:
             adjustments=list(self.record),
             searches=self.searches,
             source=MANAGER,
+            # The ones in force: the re-solve's if he re-solved, the
+            # briefing's if he did not. The lineup above was picked from them
+            # and the report is written on them.
+            projections=self.projections,
         )
 
     def _lineup(self, plan: Plan) -> Lineup:

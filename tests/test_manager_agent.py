@@ -566,6 +566,33 @@ def test_the_final_lineup_is_built_on_the_projections_the_resolve_returned():
     assert 6 in decision.lineup.xi and 4 not in decision.lineup.xi
 
 
+def test_the_decision_carries_the_projections_it_was_costed_on():
+    # The report is written on these: the eleven is his, and a team sheet
+    # ordered by numbers he overruled is a team sheet nobody can check.
+    _, decision = converse(
+        [
+            reply(use("resolve", {})),
+            reply(use("finalize_decision", finalize(plan_id=3))),
+        ]
+    )
+
+    assert decision.projections is XP_AFTER
+
+
+def test_a_decision_with_no_resolve_carries_the_ones_it_started_with():
+    _, decision = converse([reply(use("finalize_decision", finalize(plan_id=0)))])
+
+    assert decision.projections is XP
+
+
+def test_a_fallback_carries_no_projections_of_its_own():
+    # It is the solver's own week, and the solver's own projections are the
+    # ones the pipeline already has in hand.
+    _, decision = converse([rate_limited()])
+
+    assert decision.projections is None
+
+
 def test_without_a_resolve_the_lineup_stands_on_the_briefings_projections():
     # The same plan, on the same two sets of projections: Egan plays on the
     # briefing's, Fenn on the ones no resolve ever asked for.

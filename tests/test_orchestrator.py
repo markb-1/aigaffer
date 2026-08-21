@@ -34,6 +34,7 @@ from aigaffer.data.fpl_api import FplClient
 from aigaffer.data.models import Player
 from aigaffer.manager import agent
 from aigaffer.manager.agent import ManagerDecision
+from aigaffer.model.xp import PlayerProjection
 from aigaffer.orchestrator import (
     NO_CHIPS,
     PipelineError,
@@ -694,6 +695,34 @@ def test_the_resolver_reprojects_and_resolves_on_his_minutes(monkeypatch, tmp_pa
     assert FERRER not in seen["xi"], "told he is not playing, the solver drops him"
     assert store.has_run(2, "scout") is True
     assert "## The Gaffer's view" in report
+
+
+def test_the_report_is_costed_on_the_projections_he_decided_on(monkeypatch, tmp_path):
+    # A manager who re-solves decides on projections the pipeline never saw.
+    # Printing his eleven beside the solver's numbers would be a report whose
+    # team sheet and whose columns disagree about what week it is.
+    REYES = 17
+
+    def re_costed(consult: Consult) -> ManagerDecision:
+        his = dict(consult.projections)
+        his[REYES] = PlayerProjection(player_id=REYES, per_gw={2: 9.9}, total=99.9)
+        return replace(decided(consult), projections=his)
+
+    report, _, _ = gaffer_run(monkeypatch, tmp_path, decide=re_costed, send=False)
+
+    assert bullets(report, "Watchlist")[0] == "- Reyes (MID, EAS, £9.5m) — 99.9 xP"
+
+
+def test_a_decision_with_no_projections_is_costed_by_the_solvers(
+    monkeypatch, tmp_path, scout_run
+):
+    # The fallback is the solver's own week, and the solver's own numbers are
+    # the ones already in hand.
+    report, _, _ = gaffer_run(
+        monkeypatch, tmp_path, decide=unavailable, send=False
+    )
+
+    assert bullets(report, "Watchlist") == bullets(scout_run.report, "Watchlist")
 
 
 def test_a_gaffer_who_could_not_be_reached_leaves_the_solvers_week(
