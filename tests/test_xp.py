@@ -71,7 +71,8 @@ HOME_FIXTURE = Fixture(id=1, event=2, team_h=1, team_a=2)
 
 
 def player(**overrides) -> Player:
-    """A Lions midfielder: 0.5 xG90, 0.3 xA90, 9 bonus and 18 defcon in 900."""
+    """A Lions midfielder: 0.5 xG90, 0.3 xA90, 9 bonus and 120 defensive
+    actions in 900 minutes — twelve a game, which is his threshold exactly."""
     fields = {
         "id": 1,
         "web_name": "Test",
@@ -87,7 +88,7 @@ def player(**overrides) -> Player:
         "expected_goals_per_90": 0.5,
         "expected_assists_per_90": 0.3,
         "saves_per_90": 0.0,
-        "defensive_contribution": 18,
+        "defensive_contribution": 120,
     }
     return Player(**{**fields, **overrides})
 
@@ -204,17 +205,37 @@ def test_a_season_total_with_no_minutes_behind_it_is_not_a_rate():
 
 
 def test_a_cameo_is_a_sample_not_a_rate():
-    # One defensive contribution in one minute on the pitch is one a game at
-    # the very most, not ninety.
-    cameo = player(minutes=1, bonus=1, defensive_contribution=1)
-    assert defcon_points(cameo, 90.0) == approx(1.0)
-    assert bonus_points(cameo, 90.0) == approx(1.0)
+    # Six defensive actions in a minute off the bench is six a game at the
+    # very most — not the five hundred and forty a naive rate reads it as,
+    # which would have him clearing any threshold there is.
+    cameo = player(minutes=1, defensive_contribution=6)
+    assert defcon_points(cameo, 90.0) == 0.0
 
 
-def test_defcon_projects_the_season_rate_per_ninety():
-    # 36 defcon points in 720 minutes is 4.5 a game.
-    busy = player(minutes=720, defensive_contribution=36)
-    assert defcon_points(busy, 72.0) == approx(4.5 * 0.8)
+def test_a_defender_averaging_his_threshold_is_a_coin_flip_on_it():
+    # 100 defensive actions in 900 minutes is 10 a game, and 10 is what a
+    # defender needs. Half the two points.
+    defender = player(element_type=2, minutes=900, defensive_contribution=100)
+    assert defcon_points(defender, 90.0) == approx(1.0)
+
+
+def test_a_midfielder_well_short_of_his_threshold_never_earns_it():
+    # 5 a game against a threshold of 12 is not a defensive contributor.
+    quiet = player(element_type=3, minutes=900, defensive_contribution=50)
+    assert defcon_points(quiet, 90.0) == 0.0
+
+
+def test_even_the_busiest_defender_is_not_a_certainty():
+    # 30 a game is three times the bar and still not every week — and half a
+    # match on the pitch is half the chances to do it.
+    monster = player(element_type=2, minutes=900, defensive_contribution=300)
+    assert defcon_points(monster, 45.0) == approx(1.9 * 0.5)
+
+
+def test_a_keeper_earns_nothing_for_defensive_contributions():
+    # Keepers are not eligible for the points, whatever they do.
+    keeper = player(element_type=1, minutes=900, defensive_contribution=900)
+    assert defcon_points(keeper, 90.0) == 0.0
 
 
 # --- opponent strength -----------------------------------------------------
@@ -354,7 +375,7 @@ def test_projects_a_midfielder_at_home():
         + 0.3 * 1.2 * ASSIST_PTS  # assists: 1.08
         + math.exp(-1.54) * CS_PTS[3]  # clean sheet
         + 0.9  # bonus: 9 in 900 minutes
-        + 1.8  # defcon: 18 in 900 minutes
+        + 1.0  # defcon: 12 actions a game is a coin flip on 2 points
     )
     assert projection.per_gw[2] == approx(expected)
     assert projection.player_id == 10
@@ -369,7 +390,7 @@ def test_projects_a_defender_away():
         expected_assists_per_90=0.2,
         minutes=720,
         bonus=4,
-        defensive_contribution=36,
+        defensive_contribution=80,
     )
     projection = project(defender, [HOME_FIXTURE], minutes=72.0, horizon=1)
     expected = (
@@ -379,7 +400,7 @@ def test_projects_a_defender_away():
         + math.exp(-1.19) * CS_PTS[2] * 0.8  # clean sheet
         - (1.19 / 2) * 0.8  # conceded: -0.476
         + 0.5 * 0.8  # bonus: 4 in 720 minutes
-        + 4.5 * 0.8  # defcon: 36 in 720 minutes
+        + 1.0 * 0.8  # defcon: 80 in 720 is 10 a game, his threshold exactly
     )
     assert projection.per_gw[2] == approx(expected)
 

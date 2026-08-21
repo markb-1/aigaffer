@@ -31,9 +31,18 @@ MAX_FACTOR = 1.3
 
 GOALKEEPER = 1
 DEFENDER = 2
+MIDFIELDER = 3
+FORWARD = 4
 
 # The fewest minutes a per-90 rate may be taken over: a full match.
 MIN_RATE_MINUTES = 90
+
+# Defensive contributions pay two points once in a match, to a defender who
+# reaches ten defensive actions or to anyone further forward who reaches
+# twelve. Keepers are not eligible, so they have no threshold at all.
+DEFCON_POINTS = 2
+DEFCON_THRESHOLDS = {DEFENDER: 10, MIDFIELDER: 12, FORWARD: 12}
+MAX_DEFCON_CHANCE = 0.95
 
 
 @dataclass
@@ -144,8 +153,28 @@ def bonus_points(player: Player, minutes: float) -> float:
 
 
 def defcon_points(player: Player, minutes: float) -> float:
-    """Defensive-contribution points at the player's season rate per 90."""
-    return _per_90(player.defensive_contribution, player.minutes) * (minutes / 90)
+    """Expected defensive-contribution points from one fixture.
+
+    ``defensive_contribution`` counts defensive *actions* over the season,
+    not points — a busy midfielder makes fourteen a game. The points are a
+    threshold: two of them, once in a match, to a defender who reaches ten
+    actions or to anyone further forward who reaches twelve. So the season
+    count becomes a rate per ninety, and the rate becomes the chance of
+    clearing the bar on the day.
+
+    That chance is a straight line rather than a distribution, pinned at the
+    one point worth being right about — a player who averages the threshold
+    clears it about half the time — and capped below certainty, because
+    nobody does it every week. It is a proxy, and a deliberately crude one:
+    what it has to get right is that this is worth at most two points a
+    match, which reading the rate as points did not.
+    """
+    threshold = DEFCON_THRESHOLDS.get(player.element_type)
+    if threshold is None:
+        return 0.0
+    rate = _per_90(player.defensive_contribution, player.minutes)
+    chance = min(MAX_DEFCON_CHANCE, max(0.0, (rate - threshold / 2) / threshold))
+    return DEFCON_POINTS * chance * (minutes / 90)
 
 
 def fixture_points(
