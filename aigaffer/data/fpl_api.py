@@ -1,5 +1,18 @@
-"""The one place that talks to the FPL API. No raw FPL URLs live elsewhere."""
+"""The one place that talks to the FPL API. No raw FPL URLs live elsewhere.
 
+The endpoints are public, unauthenticated and somebody else's, and a run asks
+for a couple of hundred of them in a burst. Two courtesies follow from that: a
+``User-Agent`` that says who is calling, so the traffic can be identified by
+the people serving it, and a short bounded retry, so a rate limit or a bad
+minute costs a few seconds instead of the week's report.
+
+Only a 429 or a 5xx is worth asking again about. A 404 is an answer — the
+picks endpoint gives one for a gameweek the manager did not play — and asking
+again would arrive at the same place six seconds later.
+"""
+
+import time
+from collections.abc import Callable
 from typing import Any
 
 import httpx
@@ -7,19 +20,48 @@ import httpx
 from aigaffer.data.models import Bootstrap, Fixture, GwHistory, Squad
 
 BASE_URL = "https://fantasy.premierleague.com/api"
+USER_AGENT = "aigaffer/0.1 (github.com/markbradley/aigaffer)"
+TIMEOUT = 30.0
+
+# One entry per wait, so the number of tries is one more than the number of
+# waits: three tries, a second and then three.
+RETRY_BACKOFF = (1.0, 3.0)
+RATE_LIMITED = 429
+
+
+def default_http_client() -> httpx.Client:
+    """The client used when the caller supplies none of its own."""
+    return httpx.Client(timeout=TIMEOUT, headers={"User-Agent": USER_AGENT})
+
+
+def worth_retrying(status_code: int) -> bool:
+    """Is this status the API being busy rather than the API answering?"""
+    return status_code == RATE_LIMITED or 500 <= status_code < 600
 
 
 class FplClient:
     """Thin read-only client over the public FPL endpoints.
 
-    Every method raises ``httpx.HTTPStatusError`` on a non-2xx response.
+    Every method raises ``httpx.HTTPStatusError`` on a non-2xx response that
+    survived :data:`RETRY_BACKOFF`. ``sleep`` is injectable so tests can wait
+    for nothing.
     """
 
-    def __init__(self, http: httpx.Client | None = None) -> None:
-        self._http = http or httpx.Client(timeout=30.0)
+    def __init__(
+        self,
+        http: httpx.Client | None = None,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
+        self._http = http or default_http_client()
+        self._sleep = sleep
 
     def _get(self, path: str) -> Any:
-        response = self._http.get(f"{BASE_URL}{path}")
+        url = f"{BASE_URL}{path}"
+        for delay in (*RETRY_BACKOFF, None):
+            response = self._http.get(url)
+            if delay is None or not worth_retrying(response.status_code):
+                break
+            self._sleep(delay)
         response.raise_for_status()
         return response.json()
 

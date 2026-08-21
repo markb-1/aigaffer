@@ -39,10 +39,21 @@ from typing import Any
 import httpx
 
 
-def fake_fpl_transport(routes: dict[str, Any]) -> httpx.MockTransport:
-    """Serve ``routes`` (URL path -> JSON payload); 404 for anything else."""
+def fake_fpl_transport(
+    routes: dict[str, Any], statuses: dict[str, int] | None = None
+) -> httpx.MockTransport:
+    """Serve ``routes`` (URL path -> JSON payload); 404 for anything else.
+
+    ``statuses`` maps a path to the status code it answers with instead,
+    whatever ``routes`` holds for it: how a test asks for the 429 or the 503
+    the live API hands out under load.
+    """
+    failing = statuses or {}
 
     def handler(request: httpx.Request) -> httpx.Response:
+        status = failing.get(request.url.path)
+        if status is not None:
+            return httpx.Response(status, json={"detail": "no"})
         payload = routes.get(request.url.path)
         if payload is None:
             return httpx.Response(404, json={"detail": "not found"})

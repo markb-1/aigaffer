@@ -3,7 +3,12 @@ import copy
 import httpx
 import pytest
 
-from aigaffer.data.fpl_api import FplClient
+from aigaffer.data.fpl_api import (
+    RETRY_BACKOFF,
+    USER_AGENT,
+    FplClient,
+    default_http_client,
+)
 from tests.fixtures import (
     BOOTSTRAP_JSON,
     ELEMENT_SUMMARY_JSON,
@@ -195,3 +200,75 @@ def test_http_error_raises_for_picks():
     c = make_client({})
     with pytest.raises(httpx.HTTPStatusError):
         c.picks(99, 1)
+
+
+# --- politeness and patience -----------------------------------------------
+
+
+def test_the_default_client_says_who_is_calling():
+    # The FPL API is public, unauthenticated and someone else's; a scheduled
+    # bot hitting it should at least be identifiable.
+    assert default_http_client().headers["User-Agent"] == USER_AGENT
+
+
+def test_a_client_built_without_one_gets_the_default():
+    assert FplClient()._http.headers["User-Agent"] == USER_AGENT
+
+
+def flaky_client(statuses: list[int]) -> tuple[FplClient, list, list[float]]:
+    """A client whose responses follow ``statuses``, then 200 forever.
+
+    Returns it with the list of requests it made and the sleeps it took, so a
+    test can pin how many tries it had and how long it waited between them.
+    """
+    codes = list(statuses)
+    seen: list[httpx.Request] = []
+    slept: list[float] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        code = codes.pop(0) if codes else 200
+        return httpx.Response(code, json=BOOTSTRAP_JSON)
+
+    client = FplClient(
+        http=httpx.Client(transport=httpx.MockTransport(handler)),
+        sleep=slept.append,
+    )
+    return client, seen, slept
+
+
+def test_a_rate_limit_is_retried_after_a_wait():
+    client, seen, slept = flaky_client([429])
+
+    assert client.bootstrap().next_event().id == 2
+    assert len(seen) == 2
+    assert slept == [RETRY_BACKOFF[0]]
+
+
+def test_server_errors_are_retried_with_a_growing_backoff():
+    client, seen, slept = flaky_client([503, 500])
+
+    assert client.bootstrap().next_event().id == 2
+    assert len(seen) == 3
+    assert slept == list(RETRY_BACKOFF)
+
+
+def test_retries_are_bounded_and_the_last_failure_raises():
+    client, seen, slept = flaky_client([429, 429, 429, 429])
+
+    with pytest.raises(httpx.HTTPStatusError):
+        client.bootstrap()
+    assert len(seen) == len(RETRY_BACKOFF) + 1
+    assert slept == list(RETRY_BACKOFF)
+
+
+def test_a_404_is_an_answer_and_is_not_retried():
+    # The picks endpoint 404s for a gameweek a manager did not play, and the
+    # orchestrator reads that as "no squad". Retrying it wastes six seconds
+    # to arrive at the same place.
+    client, seen, slept = flaky_client([404])
+
+    with pytest.raises(httpx.HTTPStatusError):
+        client.bootstrap()
+    assert len(seen) == 1
+    assert slept == []

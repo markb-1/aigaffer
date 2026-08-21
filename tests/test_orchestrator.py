@@ -91,8 +91,12 @@ def pipeline_routes(bootstrap: dict = PIPELINE_BOOTSTRAP_JSON) -> dict:
     }
 
 
-def make_client(routes: dict) -> FplClient:
-    return FplClient(http=httpx.Client(transport=fake_fpl_transport(routes)))
+def make_client(routes: dict, statuses: dict[str, int] | None = None) -> FplClient:
+    """A client over the fake transport that never waits between retries."""
+    return FplClient(
+        http=httpx.Client(transport=fake_fpl_transport(routes, statuses)),
+        sleep=lambda _: None,
+    )
 
 
 def preseason_bootstrap() -> dict:
@@ -163,7 +167,7 @@ def test_the_run_is_recorded_with_its_report(scout_run):
     assert scout_run.store.has_run(2, "deadline") is False
 
     written = scout_run.cfg.state_dir / "reports" / "gw2-scout.md"
-    assert written.read_text() == scout_run.report
+    assert written.read_text(encoding="utf-8") == scout_run.report
 
 
 def test_the_decision_says_what_was_decided(scout_run):
@@ -229,6 +233,24 @@ def test_a_preseason_run_drafts_a_squad(tmp_path):
         "- Wildcard: +0.0",
     ]
     assert store.has_run(1, "scout") is True
+
+
+def test_one_history_the_api_will_not_serve_does_not_lose_the_report(tmp_path):
+    # Ferrer's element-summary rate-limits every try. Two hundred requests a
+    # run and one of them failing is a Saturday, not an outage: he falls back
+    # on the starts-based minutes guess and the week's report still comes out.
+    store = Store(tmp_path / "aigaffer.db")
+
+    report = run_pipeline(
+        Config(team_id=TEAM_ID, state_dir=tmp_path),
+        make_client(pipeline_routes(), statuses={"/api/element-summary/5/": 429}),
+        store,
+        "scout",
+    )
+
+    assert report.startswith("# AI Gaffer — GW2 scout")
+    assert "Ferrer" in report  # projected from his starts, not written off
+    assert store.has_run(2, "scout") is True
 
 
 def test_a_season_with_no_gameweek_ahead_is_an_error(tmp_path):

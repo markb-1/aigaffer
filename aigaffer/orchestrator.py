@@ -34,7 +34,7 @@ import httpx
 from aigaffer.config import Config
 from aigaffer.data.fpl_api import FplClient
 from aigaffer.data.free_transfers import compute_free_transfers
-from aigaffer.data.models import Bootstrap, Event, Player, Squad
+from aigaffer.data.models import Bootstrap, Event, GwHistory, Player, Squad
 from aigaffer.model.minutes import expected_minutes
 from aigaffer.model.xp import PlayerProjection, project_all
 from aigaffer.report.render import render_report
@@ -213,9 +213,24 @@ def _expected_minutes(
     not a player the solver will buy, which is the point of leaving him out.
     """
     return {
-        pid: expected_minutes(client.element_history(pid), players[pid])
+        pid: expected_minutes(_history(client, pid), players[pid])
         for pid in history_pool(players, held)
     }
+
+
+def _history(client: FplClient, pid: int) -> list[GwHistory]:
+    """One player's season so far, or none of it.
+
+    Two hundred requests go out on a run and the API is somebody else's; one
+    of them refusing after its retries is not a reason to lose the week's
+    report. The minutes model already has a way to guess without a history —
+    it is what a new signing gets — so the player is projected from his
+    starts rather than dropped.
+    """
+    try:
+        return client.element_history(pid)
+    except httpx.HTTPStatusError:
+        return []
 
 
 def history_pool(players: dict[int, Player], held: list[int]) -> list[int]:
@@ -305,7 +320,7 @@ def _write_report(cfg: Config, event_id: int, mode: str, report: str) -> None:
     """Keep the report as a file: the repo is the managerial diary."""
     path = cfg.state_dir / "reports" / f"gw{event_id}-{mode}.md"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(report)
+    path.write_text(report, encoding="utf-8")
 
 
 def _deliver(cfg: Config, report: str) -> None:
