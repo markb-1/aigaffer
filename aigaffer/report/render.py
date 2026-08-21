@@ -146,11 +146,11 @@ def _gaffer(gaffer: "ManagerDecision", players: dict[int, Player]) -> str:
     to the solver is a report that has told the reader something untrue about
     where its recommendation came from.
     """
-    lines = ["## The Gaffer's view", "", gaffer.rationale]
+    lines = ["## The Gaffer's view", "", _prose(gaffer.rationale)]
 
     if gaffer.chip != NO_CHIP:
         spoken = gaffer.chip.replace("_", " ")
-        lines += ["", f"Playing the {spoken}. {gaffer.chip_justification}"]
+        lines += ["", f"Playing the {spoken}. {_prose(gaffer.chip_justification)}"]
 
     adjustments = _settled(gaffer.adjustments)
     if adjustments:
@@ -207,6 +207,26 @@ def _source(source: str) -> str:
         return "Decided by the gaffer."
     reason = source.partition(": ")[2] or source
     return f"The gaffer was unavailable ({reason}); this is the solver's pick."
+
+
+def _prose(text: str) -> str:
+    """A paragraph of his, kept out of the report's own structure.
+
+    The rationale and the argument for a chip are written by a model that has
+    just spent the afternoon reading whatever the web served it, and they land
+    in a document whose sections are carried by lines beginning with ``##`` —
+    a document that is committed to the repo and read on a phone. A forged
+    heading here would fool no parser, because nothing parses this; it would
+    fool a reader, which is the worse of the two.
+
+    So a line that opens a section is pushed off the margin and reads as the
+    sentence it is. The line breaks are kept: this is prose, and a paragraph
+    flattened into one line is a paragraph nobody finishes.
+    """
+    return "\n".join(
+        f" {line}" if line.lstrip().startswith("#") else line
+        for line in str(text).splitlines()
+    )
 
 
 def _one_line(text: str) -> str:
