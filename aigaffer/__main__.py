@@ -25,6 +25,7 @@ the Telegram leg of a run that URL has the bot token in it.
 """
 
 import argparse
+import os
 from datetime import UTC, datetime
 
 import httpx
@@ -44,6 +45,17 @@ DB_NAME = "aigaffer.db"
 SCHEDULE_STAGE = "reading the schedule"
 BACKTEST_STAGE = "the backtest"
 
+# The manager switch, and what a run says when it was thrown on and there is
+# nothing to reach the manager with. The name is Config's; it is read here too
+# because only the command line knows what was asked for, as against what the
+# configuration could deliver.
+MANAGER_ENV = "AIGAFFER_MANAGER"
+MANAGER_OFF = "0"
+NO_MANAGER = (
+    "the manager was asked for but ANTHROPIC_API_KEY is not set —"
+    " running the solver alone"
+)
+
 
 def main(argv: list[str] | None = None) -> int:
     """Run one command and return the process exit code."""
@@ -56,6 +68,7 @@ def main(argv: list[str] | None = None) -> int:
             return _failed(None, error, event_id=None, stage=BACKTEST_STAGE)
 
     cfg = Config.from_env()
+    _manager_notice(cfg)
     store = Store(cfg.state_dir / DB_NAME)
     alert_to = None if args.dry_run else cfg
 
@@ -76,6 +89,24 @@ def main(argv: list[str] | None = None) -> int:
     if args.dry_run:
         print(report)
     return 0
+
+
+def _manager_notice(cfg: Config) -> None:
+    """Say so when the manager was asked for and cannot run.
+
+    ``AIGAFFER_MANAGER`` is an opt-out, so a run that sets it to anything but
+    ``0`` has asked for the manager, and :class:`Config` turns him off anyway
+    when there is no key to reach him with. That combination is what a missing
+    repository secret looks like from the outside, and without a line here it
+    looks like nothing at all: the report comes out, a little worse, and says
+    nothing about what it did not do.
+
+    Not an alert. The run is going to succeed, and a phone that buzzes for a
+    successful run is a phone that gets ignored on the week it matters.
+    """
+    asked = os.environ.get(MANAGER_ENV)
+    if asked is not None and asked != MANAGER_OFF and not cfg.manager_enabled:
+        print(f"aigaffer: {NO_MANAGER}")
 
 
 def _failed(

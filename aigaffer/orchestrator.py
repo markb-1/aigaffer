@@ -34,11 +34,22 @@ over the same fetch, with a different opinion about who is playing and for
 how long — without asking the API anything twice. That is what the
 ``minute_overrides`` argument is for, and it is the hinge a manager reading
 the team news hangs off.
+
+A fourth stage hangs off it: :func:`_consult`, which puts the solved week to
+the manager (:mod:`aigaffer.manager`) and takes back the week to actually
+enter. It is optional in the strongest sense — no key, the kill switch, a
+draft, a rate limit, a refusal, a conversation that reaches no decision, or a
+chip he has already spent all end with the solver's own recommendation and a
+line in the report saying so. The rule that makes the rest of this module
+readable is that the decision it comes back with, whoever made it, is the one
+that goes into the report, the store and the phone. There is never a second
+opinion further down.
 """
 
 from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 import httpx
 
@@ -61,6 +72,9 @@ from aigaffer.solver.optimizer import (
 from aigaffer.solver.plans import generate_plans, recommend
 from aigaffer.store import Store
 
+if TYPE_CHECKING:  # imported inside _consult and nowhere else at module scope
+    from aigaffer.manager.agent import ManagerDecision
+
 DEADLINE_MODE, SCOUT_MODE = "deadline", "scout"
 # Three hours, not six: the press conferences that decide the team news land
 # the day before or the morning of, and a report written before them is a
@@ -70,6 +84,16 @@ DEADLINE_WINDOW = (0, 3)
 SCOUT_WINDOW = (36, 60)
 
 NOT_CONFIGURED = "telegram not configured: the report was kept but not sent"
+
+# What a run says about the manager, once, on stdout. A schedule nobody is
+# watching leaves the log as the only record of whether the week was decided
+# by a manager who read the news or by a solver that could not.
+DECIDED = "the gaffer decided"
+STOOD_DOWN = "the gaffer stood down"
+
+# And why a decision of his was not used: he played a chip that is gone. It is
+# the one refusal that happens outside his own loop.
+CHIP_SPENT = "chip already played"
 
 # A manager with no squad has the whole board and the opening budget: fifteen
 # moves from nothing, £100.0m to make them with, and no hit for any of them.
@@ -167,12 +191,23 @@ def run_pipeline(
     and recorded in the store; with ``send`` it goes to Telegram, if a token
     and a chat are configured. A dry run turns both off and leaves nothing
     behind, which is what makes it safe to point at the live API.
+
+    Neither flag reaches the manager. Asking him is reading and thinking, not
+    sending or saving, and a dry run that skipped it would print a report
+    nobody could check against the one the schedule will produce.
     """
     inputs = fetch_inputs(cfg, client)
-    _, projections = build_projections(inputs, cfg)
+    xmins, projections = build_projections(inputs, cfg)
     solved = solve(inputs, projections, cfg)
+    gaffer = _consult(cfg, inputs, solved, projections, xmins)
 
-    event, choice, lineup = inputs.event, solved.choice, solved.lineup
+    # From here down the week is his, if there was a him: the plan he chose and
+    # the eleven that goes with it, in every place the solver's own would have
+    # gone. A recommendation the report prints and a decision the store keeps
+    # have to be the same recommendation.
+    event = inputs.event
+    choice = solved.choice if gaffer is None else gaffer.plan
+    lineup = solved.lineup if gaffer is None else gaffer.lineup
     report = render_report(
         _label(mode, drafting=solved.draft_mode),
         event,
@@ -182,6 +217,7 @@ def run_pipeline(
         solved.chips,
         inputs.bootstrap,
         projections,
+        gaffer,
     )
     decision = {
         "mode": mode,
@@ -198,6 +234,17 @@ def run_pipeline(
         "chip_evs": asdict(solved.chips),
         "chip_baseline": _baseline_label(solved),
     }
+    if gaffer is not None:
+        # The adjustments go in whole, superseded entries and all: this is the
+        # record of what he did, and the report is where it is read tidily.
+        decision.update(
+            decision_source=gaffer.source,
+            rationale=gaffer.rationale,
+            adjustments=gaffer.adjustments,
+            chip=gaffer.chip,
+            chip_justification=gaffer.chip_justification,
+            searches=gaffer.searches,
+        )
 
     if save:
         _write_report(cfg, event.id, mode, report)
@@ -325,6 +372,110 @@ def solve(
         chips=chips,
         draft_mode=inputs.squad is None,
     )
+
+
+def _consult(
+    cfg: Config,
+    inputs: PipelineInputs,
+    solved: SolveResult,
+    projections: dict[int, PlayerProjection],
+    xmins: dict[int, float],
+) -> "ManagerDecision | None":
+    """Put the week to the manager, and come back with the week to enter.
+
+    None means there was no manager to ask: no key, the kill switch, or a
+    draft — fifteen players from nothing is not a week to read the news about,
+    since there is no team to change, no chip to play and no transfer to be
+    talked out of. Then the pipeline is exactly the one Phase 1 shipped.
+
+    Anything else is a decision, his or the solver's wearing his label, and
+    every path through here produces one. The manager's own loop never raises
+    given a solve the solver produced; the net around it is for everything
+    outside the loop — building a client, building a briefing, an import of a
+    dependency that is not installed — because none of that is worth the
+    week's report either.
+
+    The manager package is imported here and nowhere else. It reads this
+    module's types to do its job, so the dependency runs one way at module
+    scope and is closed inside a function, which also keeps the Anthropic SDK
+    off the import path of every run that never asks for a manager.
+    """
+    if solved.draft_mode or not cfg.manager_enabled:
+        return None
+
+    try:
+        import anthropic
+
+        from aigaffer.manager.agent import (
+            FALLBACK,
+            MANAGER,
+            NO_VIEW,
+            ManagerDecision,
+            run_manager,
+        )
+        from aigaffer.manager.briefing import build_briefing
+        from aigaffer.manager.tools import NO_CHIP, played_chips
+    except ImportError as error:  # a broken install, and still not a lost week
+        print(f"{STOOD_DOWN}: {type(error).__name__}")
+        return None
+
+    def solver_view(reason: str, searches: int = 0) -> ManagerDecision:
+        """The solver's own week, labelled with why it is being read instead."""
+        return ManagerDecision(
+            plan=solved.choice,
+            lineup=solved.lineup,
+            captain=solved.lineup.captain,
+            vice=solved.lineup.vice,
+            chip=NO_CHIP,
+            chip_justification="",
+            rationale=NO_VIEW,
+            adjustments=[],
+            searches=searches,
+            source=f"{FALLBACK}: {reason}",
+        )
+
+    def resolver(
+        overrides: dict[int, float],
+    ) -> tuple[SolveResult, dict[int, PlayerProjection]]:
+        """His minutes, projected and solved again — the whole point of the
+        seam. The projections that come back are the ones the solve was run
+        on, because the eleven he ends up with is picked from them."""
+        _, adjusted = build_projections(inputs, cfg, overrides)
+        return solve(inputs, adjusted, cfg), adjusted
+
+    try:
+        decision = run_manager(
+            anthropic.Anthropic(api_key=cfg.anthropic_api_key),
+            cfg,
+            inputs,
+            solved,
+            projections,
+            build_briefing(
+                inputs, solved, projections, inputs.free_transfers, xmins=xmins
+            ),
+            resolver,
+        )
+    except Exception as error:  # the gaffer is a luxury; the report is not
+        decision = solver_view(f"unexpected {type(error).__name__}")
+
+    # The briefing tells him which chips are gone; this is the belt under that
+    # brace, and it is checked here rather than in the loop because the loop
+    # has no business knowing what our chip history looks like. A week built
+    # on a chip we cannot play is not a week anybody can enter, so the whole
+    # decision goes back to the solver rather than just the chip.
+    if decision.chip != NO_CHIP and decision.chip in played_chips(inputs.chips_used):
+        decision = solver_view(CHIP_SPENT, decision.searches)
+
+    # One line a run, on stdout, for the log nobody is watching live: either
+    # the manager decided and what it cost, or he did not and why. The reason
+    # is a class name or a phrase of ours, never an exception's own words.
+    if decision.source == MANAGER:
+        searches = decision.searches
+        spent = "1 search" if searches == 1 else f"{searches} searches"
+        print(f"{DECIDED}: {spent}")
+    else:
+        print(f"{STOOD_DOWN}: {decision.source.partition(': ')[2]}")
+    return decision
 
 
 def _within(hours: float, window: tuple[int, int]) -> bool:

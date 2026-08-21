@@ -13,6 +13,7 @@ by the unit tests of the modules that produce them.
 import copy
 import json
 from collections import Counter
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from functools import partial
 from typing import NamedTuple
@@ -25,10 +26,13 @@ from aigaffer import orchestrator
 from aigaffer.config import Config
 from aigaffer.data.fpl_api import FplClient
 from aigaffer.data.models import Player
+from aigaffer.manager import agent
+from aigaffer.manager.agent import ManagerDecision
 from aigaffer.orchestrator import (
     NO_CHIPS,
     PipelineError,
     PipelineInputs,
+    SolveResult,
     build_projections,
     decide_mode,
     fetch_inputs,
@@ -38,6 +42,7 @@ from aigaffer.orchestrator import (
 )
 from aigaffer.report.render import render_report
 from aigaffer.report.telegram import send_report
+from aigaffer.solver.lineup import Lineup, pick_lineup
 from aigaffer.store import Store
 from tests.fixtures import (
     ELEMENT_SUMMARY_JSON,
@@ -452,6 +457,366 @@ def test_a_solve_with_no_squad_drafts_a_fifteen(tmp_path):
     assert solved.chips == NO_CHIPS  # no squad to play a chip against
 
 
+# --- the gaffer ------------------------------------------------------------
+#
+# The manager's own loop is tested against a scripted API in
+# ``tests/test_manager_agent``; what is tested here is the wiring around it.
+# ``run_manager`` is stubbed at the module the pipeline reaches into, so these
+# runs are the real fetch, the real solver and the real renderer with one
+# canned decision dropped in the middle — which is exactly the seam this task
+# builds. Nothing here can reach Anthropic: the stub is called instead of the
+# loop, and the client it is handed is never used.
+
+GAFFER_RATIONALE = (
+    "Grant is suspended and the solver did not know it. I have rolled the"
+    " transfer rather than pay for a replacement I do not want."
+)
+GRANT = 6  # in the fifteen, and the player the solver's own plan sells
+
+GOOD_CHIP = (
+    "The bench boost is the chip this week: the panel prices it above anything"
+    " else on the board, all four of the bench have home fixtures against the"
+    " bottom three, and what we give up is the double gameweek in GW34 —"
+    " eight months of injuries away, against points on offer on Saturday."
+)
+
+
+class Consult(NamedTuple):
+    """One call of ``run_manager``, as the pipeline made it."""
+
+    client: object
+    cfg: Config
+    inputs: PipelineInputs
+    solve0: SolveResult
+    projections: dict
+    briefing: str
+    resolver: object
+
+
+class Gaffer:
+    """The manager, stubbed: what he was asked, and what he answered."""
+
+    def __init__(self, decide) -> None:
+        self.decide = decide
+        self.consults: list[Consult] = []
+        self.decisions: list[ManagerDecision] = []
+
+    def __call__(self, client, cfg, inputs, solve0, projections, briefing, resolver):
+        consult = Consult(client, cfg, inputs, solve0, projections, briefing, resolver)
+        self.consults.append(consult)
+        decision = self.decide(consult)
+        self.decisions.append(decision)
+        return decision
+
+
+def lineup_for(plan, inputs: PipelineInputs, projections: dict) -> Lineup:
+    """The eleven ``plan`` fields, picked the way the manager's loop picks it."""
+    positions = {pid: player.element_type for pid, player in inputs.players.items()}
+    gw_xp = {
+        pid: projection.per_gw.get(inputs.event.id, 0.0)
+        for pid, projection in projections.items()
+    }
+    return pick_lineup(plan.squad, positions, gw_xp)
+
+
+def decided(
+    consult: Consult,
+    plan=None,
+    chip: str = "none",
+    justification: str = "",
+    searches: int = 2,
+) -> ManagerDecision:
+    """A decision of his own: the plan that rolls, and his own armbands.
+
+    The captain is the highest id in the eleven rather than the best player in
+    it, so that a report or a decision record carrying the solver's captain
+    instead of his is a test failure and not a coincidence.
+    """
+    chosen = plan or next(p for p in consult.solve0.plans if not p.transfers_in)
+    lineup = lineup_for(chosen, consult.inputs, consult.projections)
+    return ManagerDecision(
+        plan=chosen,
+        lineup=replace(lineup, captain=max(lineup.xi), vice=min(lineup.xi)),
+        captain=max(lineup.xi),
+        vice=min(lineup.xi),
+        chip=chip,
+        chip_justification=justification,
+        rationale=GAFFER_RATIONALE,
+        adjustments=[
+            {"player_id": GRANT, "expected_minutes": 0.0, "reason": "suspended (club)"}
+        ],
+        searches=searches,
+        source="manager",
+    )
+
+
+def unavailable(consult: Consult, reason: str = "RateLimitError") -> ManagerDecision:
+    """The week the manager's own fallback hands back when he cannot be asked."""
+    lineup = consult.solve0.lineup
+    return ManagerDecision(
+        plan=consult.solve0.choice,
+        lineup=lineup,
+        captain=lineup.captain,
+        vice=lineup.vice,
+        chip="none",
+        chip_justification="",
+        rationale=agent.NO_VIEW,
+        adjustments=[],
+        searches=1,
+        source=f"solver-fallback: {reason}",
+    )
+
+
+def stub_gaffer(monkeypatch, decide=decided) -> Gaffer:
+    """Answer the pipeline's manager with ``decide``; record what it was asked."""
+    gaffer = Gaffer(decide)
+    monkeypatch.setattr(agent, "run_manager", gaffer)
+    return gaffer
+
+
+def gaffer_cfg(tmp_path) -> Config:
+    return Config(team_id=TEAM_ID, state_dir=tmp_path, anthropic_api_key="sk-test")
+
+
+def gaffer_run(monkeypatch, tmp_path, decide=decided, mode="scout", **kwargs):
+    """One run with a manager in it; the report, the store and the manager."""
+    gaffer = stub_gaffer(monkeypatch, decide)
+    store = Store(tmp_path / "aigaffer.db")
+    report = run_pipeline(
+        gaffer_cfg(tmp_path), make_client(pipeline_routes()), store, mode, **kwargs
+    )
+    return report, store, gaffer
+
+
+def test_the_gaffer_decides_the_week(monkeypatch, tmp_path):
+    # The solver wants a transfer; the manager rolls. Everything downstream
+    # has to be his week and not the solver's — the recommendation, the
+    # armbands, the eleven and the record kept of all three.
+    report, store, gaffer = gaffer_run(monkeypatch, tmp_path, send=False)
+    decision = store.last_runs(1)[0]["decision"]
+    his = gaffer.decisions[0]
+
+    assert gaffer.consults[0].solve0.choice.transfers_in, "the solver would have moved"
+    assert "Roll the transfer." in report and "- Out:" not in report
+    assert GAFFER_RATIONALE in report
+    assert decision["transfers_in"] == [] and decision["transfers_out"] == []
+    assert decision["captain"] == his.captain != FERRER, "his captain, not the solver's"
+    assert decision["vice"] == his.vice
+    # And the armband is on the team sheet, against the player he gave it to.
+    named = next(e["web_name"] for e in PIPELINE_ELEMENTS_JSON if e["id"] == his.captain)
+    assert f"{named} (C)" in report
+
+
+def test_the_record_keeps_the_words_as_well_as_the_numbers(monkeypatch, tmp_path):
+    _, store, _ = gaffer_run(monkeypatch, tmp_path, send=False)
+    decision = store.last_runs(1)[0]["decision"]
+
+    assert decision["decision_source"] == "manager"
+    assert decision["rationale"] == GAFFER_RATIONALE
+    assert decision["adjustments"] == [
+        {"player_id": GRANT, "expected_minutes": 0.0, "reason": "suspended (club)"}
+    ]
+    assert decision["chip"] == "none"
+    assert decision["chip_justification"] == ""
+    assert decision["searches"] == 2
+
+
+def test_the_gaffer_is_briefed_on_the_week_the_solver_solved(monkeypatch, tmp_path):
+    _, _, gaffer = gaffer_run(monkeypatch, tmp_path, send=False)
+    his = gaffer.consults[0]
+
+    assert len(gaffer.consults) == 1
+    assert his.briefing.startswith("# AI Gaffer — manager briefing: GW2")
+    assert "Free transfers: 1" in his.briefing
+    # The expected minutes the projection was built on: the one number he is
+    # allowed to overwrite, and he cannot sensibly overwrite what he is not shown.
+    assert "xMins" in his.briefing
+    assert his.inputs.event.id == 2 and his.solve0.draft_mode is False
+
+
+def test_the_resolver_reprojects_and_resolves_on_his_minutes(monkeypatch, tmp_path):
+    seen = {}
+
+    def re_solve(consult: Consult) -> ManagerDecision:
+        solved, projections = consult.resolver({FERRER: 0.0})
+        seen["xi"] = solved.lineup.xi
+        seen["ferrer"] = projections[FERRER].total
+        seen["before"] = consult.projections[FERRER].total
+        return decided(consult, plan=solved.choice)
+
+    report, store, _ = gaffer_run(monkeypatch, tmp_path, decide=re_solve, send=False)
+
+    assert seen["before"] > 0 and seen["ferrer"] == 0.0
+    assert FERRER not in seen["xi"], "told he is not playing, the solver drops him"
+    assert store.has_run(2, "scout") is True
+    assert "## The Gaffer's view" in report
+
+
+def test_a_gaffer_who_could_not_be_reached_leaves_the_solvers_week(
+    monkeypatch, tmp_path
+):
+    report, store, gaffer = gaffer_run(
+        monkeypatch, tmp_path, decide=unavailable, send=False
+    )
+    decision = store.last_runs(1)[0]["decision"]
+
+    assert "The gaffer was unavailable (RateLimitError)" in report
+    assert decision["decision_source"] == "solver-fallback: RateLimitError"
+    assert decision["transfers_in"] == gaffer.consults[0].solve0.choice.transfers_in
+    assert decision["captain"] == FERRER, "the solver's own eleven, and his captain"
+
+
+def test_a_manager_that_falls_over_does_not_take_the_report_with_it(
+    monkeypatch, tmp_path
+):
+    # run_manager is not supposed to raise. If it ever does, the week's report
+    # is not the thing to lose over it.
+    def explode(consult: Consult) -> ManagerDecision:
+        raise ValueError("the loop has a bug")
+
+    report, store, _ = gaffer_run(monkeypatch, tmp_path, decide=explode, send=False)
+
+    assert "The gaffer was unavailable (unexpected ValueError)" in report
+    assert "the loop has a bug" not in report
+    assert store.has_run(2, "scout") is True
+
+
+def test_a_chip_he_still_holds_is_played(monkeypatch, tmp_path):
+    report, store, _ = gaffer_run(
+        monkeypatch,
+        tmp_path,
+        decide=partial(decided, chip="bench_boost", justification=GOOD_CHIP),
+        send=False,
+    )
+    decision = store.last_runs(1)[0]["decision"]
+
+    assert "Playing the bench boost." in report
+    assert decision["chip"] == "bench_boost"
+    assert decision["chip_justification"] == GOOD_CHIP
+
+
+def test_a_chip_he_has_already_played_is_refused_at_the_door(monkeypatch, tmp_path):
+    # The season's history says the wildcard went in GW1. The briefing tells
+    # him so; this is the belt under that brace, and it costs him the decision
+    # rather than the chip, because a week built on a chip we cannot play is
+    # not a week anybody can enter.
+    report, store, gaffer = gaffer_run(
+        monkeypatch,
+        tmp_path,
+        decide=partial(decided, chip="wildcard", justification=GOOD_CHIP),
+        send=False,
+    )
+    decision = store.last_runs(1)[0]["decision"]
+
+    assert "The gaffer was unavailable (chip already played)" in report
+    assert decision["decision_source"] == "solver-fallback: chip already played"
+    assert decision["chip"] == "none"
+    assert decision["transfers_in"] == gaffer.consults[0].solve0.choice.transfers_in
+    assert decision["searches"] == 2, "the searches were still paid for"
+    assert GAFFER_RATIONALE not in report
+
+
+def test_without_a_key_there_is_no_gaffer_and_no_difference(
+    monkeypatch, tmp_path, scout_run
+):
+    # The Phase 1 report, byte for byte, and a manager who was never asked.
+    def never(consult: Consult) -> ManagerDecision:
+        raise AssertionError("the manager was asked without a key")
+
+    stub_gaffer(monkeypatch, never)
+    store = Store(tmp_path / "aigaffer.db")
+
+    report = run_pipeline(
+        Config(team_id=TEAM_ID, state_dir=tmp_path),
+        make_client(pipeline_routes()),
+        store,
+        "scout",
+        send=False,
+    )
+
+    assert report == scout_run.report
+    assert "decision_source" not in store.last_runs(1)[0]["decision"]
+
+
+def test_the_gaffer_is_never_asked_to_draft_a_squad(monkeypatch, tmp_path):
+    # Fifteen players from nothing is not a week to read the news about: there
+    # is no team, no chip to play and no transfer to talk him out of.
+    def never(consult: Consult) -> ManagerDecision:
+        raise AssertionError("the manager was asked to draft")
+
+    gaffer = stub_gaffer(monkeypatch, never)
+    routes = pipeline_routes()
+    del routes[PICKS_PATH]
+
+    report = run_pipeline(
+        gaffer_cfg(tmp_path),
+        make_client(routes),
+        Store(tmp_path / "aigaffer.db"),
+        "scout",
+        send=False,
+    )
+
+    assert gaffer.consults == []
+    assert "## The Gaffer's view" not in report
+
+
+@pytest.mark.parametrize("mode", ["scout", "deadline"])
+def test_the_gaffer_reads_the_news_for_both_reports(monkeypatch, tmp_path, mode):
+    # The scout report is two days out and the deadline report is on the day;
+    # the news is worth reading for both, and it is the deadline run that has
+    # the team news in it.
+    report, store, gaffer = gaffer_run(monkeypatch, tmp_path, mode=mode, send=False)
+
+    assert len(gaffer.consults) == 1
+    assert store.has_run(2, mode) is True
+    assert "## The Gaffer's view" in report
+
+
+def test_a_dry_run_still_asks_the_gaffer(monkeypatch, tmp_path):
+    # Reading the news is analysis and costs nothing but tokens; a dry run
+    # that skipped it would print a report nobody could check.
+    report, store, gaffer = gaffer_run(monkeypatch, tmp_path, send=False, save=False)
+
+    assert len(gaffer.consults) == 1
+    assert "## The Gaffer's view" in report
+    assert store.last_runs() == []
+
+
+def test_the_run_says_whether_the_gaffer_decided(monkeypatch, capsys, tmp_path):
+    gaffer_run(monkeypatch, tmp_path, send=False)
+
+    assert capsys.readouterr().out.strip() == "the gaffer decided: 2 searches"
+
+
+def test_the_run_says_when_the_gaffer_stood_down(monkeypatch, capsys, tmp_path):
+    # The class name and nothing else: an exception's own words can carry a
+    # key, and this line goes into a log anybody can read.
+    gaffer_run(monkeypatch, tmp_path, decide=unavailable, send=False)
+
+    assert capsys.readouterr().out.strip() == "the gaffer stood down: RateLimitError"
+
+
+def test_the_report_the_gaffer_wrote_is_the_one_that_is_sent(monkeypatch, tmp_path):
+    sent = []
+    monkeypatch.setattr(orchestrator, "send_report", lambda *args: sent.append(args))
+    gaffer = stub_gaffer(monkeypatch)
+    cfg = Config(
+        team_id=TEAM_ID,
+        telegram_token=TOKEN,
+        telegram_chat_id="42",
+        state_dir=tmp_path,
+        anthropic_api_key="sk-test",
+    )
+
+    report = run_pipeline(
+        cfg, make_client(pipeline_routes()), Store(tmp_path / "aigaffer.db"), "deadline"
+    )
+
+    assert len(gaffer.consults) == 1
+    assert sent == [(TOKEN, "42", report)]
+    assert "## The Gaffer's view" in report
+
+
 # --- whose history to fetch ------------------------------------------------
 
 
@@ -757,6 +1122,30 @@ def test_a_dry_run_that_fails_keeps_it_off_the_phone(monkeypatch, store):
 
     assert cli.main(["deadline", "--force", "--dry-run"]) == 1
     assert posted == []
+
+
+def test_a_manager_asked_for_without_a_key_says_so(monkeypatch, capsys, store):
+    # AIGAFFER_MANAGER is an opt-out, so asking for the manager and getting
+    # the solver alone is a silent disappointment unless the run says why.
+    # A missing repository secret arrives looking exactly like this.
+    monkeypatch.setenv("AIGAFFER_MANAGER", "1")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    serve(monkeypatch, pipeline_routes())
+
+    assert cli.main(["scout", "--force", "--dry-run"]) == 0
+
+    printed = capsys.readouterr().out
+    assert cli.NO_MANAGER in printed
+    assert "## The Gaffer's view" not in printed
+
+
+def test_a_manager_turned_off_on_purpose_says_nothing(monkeypatch, capsys, store):
+    monkeypatch.setenv("AIGAFFER_MANAGER", "0")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    serve(monkeypatch, pipeline_routes())
+
+    assert cli.main(["scout", "--force", "--dry-run"]) == 0
+    assert cli.NO_MANAGER not in capsys.readouterr().out
 
 
 def test_an_unknown_command_is_refused():
