@@ -268,6 +268,10 @@ class _Conversation:
         self.spent: dict[int, float] = {}
         self.record: list[dict] = []
         self.searches = 0
+        # When the clock started. Here rather than in :meth:`run`, because a
+        # conversation is built to be run at once and the one thing the budget
+        # must not depend on is how many places read it.
+        self.started = monotonic()
 
         self.clubs = {team.id: team.short_name for team in inputs.bootstrap.teams}
         self.positions = {pid: p.element_type for pid, p in inputs.players.items()}
@@ -276,23 +280,27 @@ class _Conversation:
         """Turn after turn until he decides, or until we stop asking.
 
         Two things stop us asking: :data:`MAX_TURNS`, and the clock. The clock
-        is read before each turn rather than after it, because a budget that is
-        already spent buys nothing by being spent again — and a turn that is
-        under way is left to finish, since its answer is paid for either way.
+        is read before every request — the turns here and the resumptions in
+        :meth:`_ask` — because a budget that is already spent buys nothing by
+        being spent again. A request already in flight is left to come back:
+        its answer is paid for either way, and the client's own timeout is what
+        bounds it.
         """
-        started = monotonic()
         forced = False
         nudged = False
 
         for turn in range(1, MAX_TURNS + 1):
-            if monotonic() - started > TIME_BUDGET_SECONDS:
+            if self._expired():
                 return self.fallback(OUT_OF_TIME)
             response = self._ask(forced or turn == MAX_TURNS)
             # Forcing is one turn's worth of insistence, not a mode: a turn cut
             # off mid-sentence should not cost him the rest of his research.
             forced = False
             if response is None:
-                return self.fallback("pause_turn")
+                # Either the pauses ran out or the clock did, and the two are
+                # different weeks to explain: one is a turn that would not come
+                # back, the other is a turn there was no longer time for.
+                return self.fallback(OUT_OF_TIME if self._expired() else "pause_turn")
 
             # Before the content, always: on a refusal there may be nothing in
             # it, and reading it first is how that becomes a crash.
@@ -347,16 +355,24 @@ class _Conversation:
         a paused turn the API reads that as the continuation it is, rather than
         as the prefill this model refuses.
 
-        None if it is still paused after :data:`MAX_RESUMPTIONS`: a turn that
-        will not come back is not a turn to keep paying for.
+        None if it is still paused after :data:`MAX_RESUMPTIONS`, or if the
+        time budget goes while it is paused: a turn that will not come back is
+        not a turn to keep paying for, and neither is one there is no longer
+        time to finish. The caller reads the clock again to tell them apart.
         """
-        for _ in range(MAX_RESUMPTIONS + 1):
+        for attempt in range(MAX_RESUMPTIONS + 1):
+            if attempt and self._expired():
+                return None
             response = self.client.messages.create(**self._request(forced))
             if getattr(response, "stop_reason", None) != "pause_turn":
                 return response
             self._count(response)
             self._append(response)
         return None
+
+    def _expired(self) -> bool:
+        """Has the conversation outrun :data:`TIME_BUDGET_SECONDS`?"""
+        return monotonic() - self.started > TIME_BUDGET_SECONDS
 
     def _request(self, forced: bool) -> dict:
         """The request, byte-stable where it can be: the system block never

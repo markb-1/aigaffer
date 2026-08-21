@@ -519,7 +519,9 @@ def test_the_minutes_he_never_re_solved_on_are_marked_as_such():
 def test_a_week_where_nothing_reached_a_resolve_says_only_that():
     noted = [{"player_id": 7, "expected_minutes": 0.0, "reason": "hamstring"}]
 
-    view = section(report(view=gaffer(adjustments=[], unapplied=noted)), "The Gaffer's view")
+    week = report(view=gaffer(adjustments=[], unapplied=noted))
+
+    view = section(week, "The Gaffer's view")
 
     assert "Minutes he overruled:" not in view
     assert NOT_APPLIED in view

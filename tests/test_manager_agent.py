@@ -1325,7 +1325,8 @@ def test_a_conversation_that_runs_out_of_time_gives_the_week_back(monkeypatch):
     # Twelve turns of an agent that searches the web between them can outlast
     # the deadline it is being asked about. The budget is checked before every
     # request, so the turn that would have blown it is never paid for.
-    monkeypatch.setattr(agent, "monotonic", Clock(0.0, 1.0, agent.TIME_BUDGET_SECONDS + 1))
+    spent = agent.TIME_BUDGET_SECONDS + 1
+    monkeypatch.setattr(agent, "monotonic", Clock(0.0, 1.0, spent))
     client, decision = converse(
         [
             reply(use("adjust_players", adjust())),
@@ -1336,6 +1337,18 @@ def test_a_conversation_that_runs_out_of_time_gives_the_week_back(monkeypatch):
     assert decision.source == "solver-fallback: out of time"
     assert len(client.requests) == 1, "the second turn was never asked for"
     assert decision.plan is SOLVE0.choice
+
+
+def test_a_paused_turn_is_not_resumed_past_the_budget(monkeypatch):
+    # A turn can be resumed three times, and each resumption is a fresh request
+    # against the same clock. Left unchecked, one paused turn could run on for
+    # minutes after the budget it was started inside had gone.
+    spent = agent.TIME_BUDGET_SECONDS + 1
+    monkeypatch.setattr(agent, "monotonic", Clock(0.0, 1.0, spent))
+    client, decision = converse([reply(text(), stop="pause_turn")] * 4)
+
+    assert len(client.requests) == 1, "the resumption was never asked for"
+    assert decision.source == "solver-fallback: out of time"
 
 
 def test_a_conversation_inside_the_budget_is_never_interrupted(monkeypatch):
