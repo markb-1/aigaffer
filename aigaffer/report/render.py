@@ -277,14 +277,25 @@ def _prose(text: str) -> str:
     heading here would fool no parser, because nothing parses this; it would
     fool a reader, which is the worse of the two.
 
-    So a line that opens a section is pushed off the margin and reads as the
-    sentence it is. The line breaks are kept: this is prose, and a paragraph
-    flattened into one line is a paragraph nobody finishes.
+    So the hash that would open a section is escaped, and the line reads as the
+    sentence it is. Indenting it instead — which is what this did first — is
+    not enough: CommonMark allows three spaces before an ATX heading, so a
+    pushed-off line is still a heading on GitHub, where the diary is read. A
+    backslash is a heading nowhere; on the phone, where nothing is rendered at
+    all, it costs one visible character in a line that was trying to lie.
+
+    The line breaks are kept: this is prose, and a paragraph flattened into one
+    line is a paragraph nobody finishes.
     """
-    return "\n".join(
-        f" {line}" if line.lstrip().startswith("#") else line
-        for line in str(text).splitlines()
-    )
+    return "\n".join(_unheaded(line) for line in str(text).splitlines())
+
+
+def _unheaded(line: str) -> str:
+    """One line of his, made unable to open a section of ours."""
+    body = line.lstrip()
+    if not body.startswith("#"):
+        return line
+    return f"{line[: len(line) - len(body)]}\\{body}"
 
 
 def _one_line(text: str) -> str:

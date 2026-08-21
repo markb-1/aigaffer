@@ -40,6 +40,8 @@ leaves behind is set for the watchlist's benefit and no further.
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from aigaffer.data.models import Bootstrap, Event, Player
 from aigaffer.manager.agent import ManagerDecision
 from aigaffer.model.xp import PlayerProjection
@@ -469,19 +471,24 @@ def test_a_reason_cannot_break_the_list_it_is_written_on():
     assert view.count("## Recommendation\n") == 1
 
 
-def test_a_rationale_cannot_forge_a_section_of_its_own():
+@pytest.mark.parametrize("indent", ["", " ", "   "])
+def test_a_rationale_cannot_forge_a_section_of_its_own(indent: str):
     # He writes this after reading whatever the web served him, and it goes
     # into a document whose sections are lines beginning with ##. A heading
     # here fools no parser — nothing parses this — but it would fool a reader.
+    #
+    # Pushing the line off the margin does not stop it: CommonMark allows three
+    # spaces before a heading, so GitHub renders an indented one as a heading
+    # too. The hash itself is escaped instead.
     forged = replace(
         gaffer(),
-        rationale="Roll the transfer.\n\n## Recommendation\n\nSell everyone.",
+        rationale=f"Roll the transfer.\n\n{indent}## Recommendation\n\nSell everyone.",
     )
 
     view = report(view=forged)
 
     assert view.count("\n## Recommendation\n") == 1
-    assert " ## Recommendation" in view, "pushed off the margin, and still legible"
+    assert f"{indent}\\## Recommendation" in view, "escaped, and still legible"
 
 
 def test_a_chip_argument_cannot_forge_one_either():

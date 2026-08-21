@@ -78,7 +78,9 @@ do and nothing else:
    or sell with the expected minutes behind him, the chip EV panel and the
    chips already spent.
 2. **Search the web** for what the model cannot know: injuries, suspensions,
-   rotation, a press conference that made somebody a doubt.
+   rotation, a press conference that made somebody a doubt. The tool is capped
+   at eight searches **per request** — that is one assistant turn, not the run
+   — so a long conversation can spend more than eight in total; see Deferred.
 3. **Overrule the minutes and re-solve.** `adjust_players` sets a player's
    expected minutes for the coming gameweek absolutely — 0 for a player who is
    out, 20 for a substitute, 90 for a starter — and `resolve` re-projects and
@@ -247,6 +249,25 @@ head this list went in with Phase 2 — it is what `resolve` re-solves through.
    point, so from GW20 the bot is too strict rather than too generous — it will
    decline to recommend a chip it actually holds. That is the safer of the two
    mistakes, and it is still a mistake.
+5. **The bench order the design asks the manager for.** The spec has him
+   returning a bench order with his decision; he is not asked for one. The
+   order the report prints is the solver's — substitute keeper first, then by
+   next gameweek's projection — and it is a good default and nobody's judgement
+   about which of two fringe players is likelier to have a game at all.
+6. **Price-change pressure in the briefing.** The spec lists it among the
+   manager's inputs and the briefing does not carry it, so a player about to
+   rise or fall reads to him exactly like one who is not, and "buy him this week
+   rather than next" is an argument he cannot make. The bootstrap does publish
+   the transfer counts it would be estimated from; the estimate itself is a
+   model of an algorithm FPL does not document, which is why it is not in here
+   pretending to be a fact.
+7. **A search budget for the run.** `max_uses: 8` on the web search tool is a
+   per-request cap — one assistant turn — not a budget for the conversation, so
+   a twelve-turn run could in principle spend eight searches in each of them.
+   Nothing counts them across turns or stops the loop when the total gets
+   silly; what bounds a run is the turn cap and the twelve-minute clock, and
+   the report prints the count afterwards. The cost note above is written for
+   that worst case rather than against it.
 
 ## Development
 

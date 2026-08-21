@@ -95,9 +95,15 @@ Be honest in the rationale. It is read by the person whose team this is, after \
 the gameweek has been played, next to the score. Say what you did, what you \
 learned that made you do it, and what you were unsure about."""
 
-# What the server tool is allowed to cost us. Eight is enough for the handful of
-# players a shortlist actually turns on, and few enough that the model has to
-# choose which ones those are.
+# What the server tool is allowed to cost us in one request. ``max_uses`` is
+# per request — one assistant turn — and not a budget for the conversation: a
+# run of a dozen turns could in principle spend eight in each of them, and
+# nothing here counts them across turns or stops the loop when they add up.
+# What bounds a run is the turn cap and the clock in the loop itself; the
+# report prints the total afterwards.
+#
+# Eight is enough for the handful of players a shortlist actually turns on, and
+# few enough that a turn has to choose which ones those are.
 MAX_SEARCHES = 8
 
 CHIPS = ["none", "bench_boost", "triple_captain", "free_hit", "wildcard"]
