@@ -214,11 +214,11 @@ def _expected_minutes(
     """
     return {
         pid: expected_minutes(client.element_history(pid), players[pid])
-        for pid in _history_pool(players, held)
+        for pid in history_pool(players, held)
     }
 
 
-def _history_pool(players: dict[int, Player], held: list[int]) -> list[int]:
+def history_pool(players: dict[int, Player], held: list[int]) -> list[int]:
     """Whose history to fetch: the squad, and the best of each position.
 
     The solver cuts its own field by projected points, which is the thing
@@ -227,6 +227,10 @@ def _history_pool(players: dict[int, Player], held: list[int]) -> list[int]:
     nothing but the bootstrap. The two cuts are the same width, and anyone
     left out of this one projects at zero, so he is never the player the
     solver buys.
+
+    Public because :mod:`aigaffer.backtest` scores this same population: the
+    players the pipeline would actually consider are the ones whose ranking
+    is worth grading.
     """
     pool = {pid for pid in held if pid in players}
 

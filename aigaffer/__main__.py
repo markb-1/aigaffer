@@ -10,26 +10,35 @@ A gameweek gets one of each report. The store is what remembers that, so a
 schedule that fires every six hours does not send the same thing four times;
 ``--force`` is how a person overrules it. ``--dry-run`` prints the report and
 writes nothing anywhere, which is what makes it safe against the live API.
+
+``backtest`` is the odd one out: it grades the model against a gameweek that
+has already been played instead of advising on one to come, so it wants no
+team, no store and no schedule — only a gameweek and the API.
 """
 
 import argparse
 from datetime import UTC, datetime
 
+from aigaffer.backtest import backtest_gw, finished_gameweeks
 from aigaffer.config import Config
 from aigaffer.data.fpl_api import FplClient
 from aigaffer.orchestrator import PipelineError, decide_mode, run_pipeline
 from aigaffer.store import Store
 
 AUTO = "auto"
-COMMANDS = (AUTO, "scout", "deadline")
+BACKTEST = "backtest"
+COMMANDS = (AUTO, "scout", "deadline", BACKTEST)
 DB_NAME = "aigaffer.db"
 
 
 def main(argv: list[str] | None = None) -> int:
     """Run one command and return the process exit code."""
     args = _parse_args(argv)
-    cfg = Config.from_env()
     client = FplClient()
+    if args.command == BACKTEST:
+        return _backtest(client, args.gw)
+
+    cfg = Config.from_env()
     store = Store(cfg.state_dir / DB_NAME)
 
     mode = _mode(args, client, store)
@@ -52,7 +61,10 @@ def main(argv: list[str] | None = None) -> int:
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="python -m aigaffer",
-        description="Report on the next Fantasy Premier League gameweek.",
+        description=(
+            "Report on the next Fantasy Premier League gameweek, "
+            "or grade the model against a finished one."
+        ),
     )
     parser.add_argument(
         "command",
@@ -69,7 +81,34 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         action="store_true",
         help="print the report instead of saving or sending it",
     )
+    parser.add_argument(
+        "--gw",
+        type=int,
+        help="which finished gameweek to backtest (default: the most recent)",
+    )
     return parser.parse_args(argv)
+
+
+def _backtest(client: FplClient, gw: int | None) -> int:
+    """Print how well the model ranked one finished gameweek.
+
+    A gameweek still being played has no scores to grade against, and before
+    the first deadline of a season there is nothing to grade at all. Both say
+    so and stop, because a person asked and is owed an answer.
+    """
+    bootstrap = client.bootstrap()
+    finished = finished_gameweeks(bootstrap)
+    if not finished:
+        print("aigaffer: no gameweek has finished yet")
+        return 1
+
+    gameweek = finished[-1] if gw is None else gw
+    if gameweek not in finished:
+        print(f"aigaffer: GW{gameweek} has not finished")
+        return 1
+
+    print(backtest_gw(client, bootstrap, client.fixtures(), gameweek))
+    return 0
 
 
 def _mode(args: argparse.Namespace, client: FplClient, store: Store) -> str | None:

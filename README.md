@@ -26,6 +26,34 @@ No transfers are executed in Phase 1 — you make the final call.
 | `TELEGRAM_CHAT_ID` | Chat to deliver reports to (optional) |
 | `AIGAFFER_STATE_DIR` | State directory (default `state`) |
 
+### Backtest sanity check
+
+`backtest` grades the model against a gameweek that has already been played.
+It rebuilds expected minutes from each player's history *before* that
+gameweek, projects the single gameweek, and sets the projection against what
+players actually scored. It needs no team id and writes nothing.
+
+```sh
+python -m aigaffer backtest            # the most recent finished gameweek
+python -m aigaffer backtest --gw 3     # one by name, printing for example:
+{'gw': 3, 'n': 143, 'spearman': 0.41, 'top20_hit_rate': 0.35}
+```
+
+`n` is the population: the 160-odd players on the pipeline's own shortlist
+who had a fixture that gameweek — one API request each, so the run takes a
+minute. `spearman` is the rank correlation between projected and actual
+points over that population, and `top20_hit_rate` the share of the model's
+top twenty who scored five or more.
+
+**This is not a true backtest.** The per-90 rates, prices and team strengths
+all come from the bootstrap as it stands today, which includes the gameweek
+being graded and every one since: the model is being asked to rank a week it
+has already seen. Availability leaks the other way — a player injured today
+is projected at no minutes for a gameweek he was fit for. Only the minutes
+model is held honest. So read the numbers as a sanity check on ranking
+quality — is the order better than chance? — and never as an estimate of how
+the bot would have done.
+
 ## Known Phase 1 approximations
 
 These are deliberate. Do not "fix" them without revisiting the design:
