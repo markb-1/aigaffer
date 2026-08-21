@@ -6,7 +6,9 @@ requires-python = ">=3.12"
 # Upper bounds on the majors: this bot runs unattended on a schedule, and a
 # breaking release picked up by a fresh `pip install .` in CI would first be
 # noticed as a missing report.
-dependencies = ["httpx>=0.27,<1", "pydantic>=2.7,<3", "pulp>=3.3,<4"]
+# anthropic 1.x is the first stable SDK major and 0.x is a different client
+# shape, so on that one the floor matters as much as the ceiling.
+dependencies = ["httpx>=0.27,<1", "pydantic>=2.7,<3", "pulp>=3.3,<4", "anthropic>=1.0,<2"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
