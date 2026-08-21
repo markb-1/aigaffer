@@ -18,6 +18,7 @@ report, the store and the phone did with it.
 
 import copy
 import json
+import sys
 from collections import Counter
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -751,6 +752,42 @@ def test_a_manager_that_falls_over_does_not_take_the_report_with_it(
 
     assert "The gaffer was unavailable (unexpected ValueError)" in report
     assert "the loop has a bug" not in report
+    assert store.has_run(2, "scout") is True
+
+
+class PoisonedModule:
+    """A module whose every attribute blows up on the way out.
+
+    What a half-installed dependency does to an import that is not an
+    ImportError: a C extension that will not load, a module whose top level
+    raises. ``from x import y`` on this raises RuntimeError, which is what a
+    guard written for ImportError alone would let past.
+    """
+
+    def __getattr__(self, name: str):
+        raise RuntimeError(f"{name} is not coming out of here")
+
+
+def test_an_import_that_blows_up_is_a_fallback_and_not_a_lost_report(
+    monkeypatch, tmp_path
+):
+    def never(consult: Consult) -> ManagerDecision:
+        raise AssertionError("the manager was asked with his briefing broken")
+
+    stub_gaffer(monkeypatch, never)
+    monkeypatch.setitem(sys.modules, "aigaffer.manager.briefing", PoisonedModule())
+    store = Store(tmp_path / "aigaffer.db")
+
+    report = run_pipeline(
+        gaffer_cfg(tmp_path),
+        make_client(pipeline_routes()),
+        store,
+        "scout",
+        send=False,
+    )
+
+    assert "The gaffer was unavailable (unexpected RuntimeError)" in report
+    assert "not coming out of here" not in report
     assert store.has_run(2, "scout") is True
 
 

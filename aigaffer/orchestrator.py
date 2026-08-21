@@ -407,6 +407,13 @@ def _consult(
     if solved.draft_mode or not cfg.manager_enabled:
         return None
 
+    # The imports come in two groups, and the split is not cosmetic. This one
+    # is everything a decision needs in order to exist and be vetted, and it
+    # is also the one that cannot be recovered from: without the manager's own
+    # types there is nothing to build a labelled fallback out of, so the run
+    # reads as a run with no manager and says why on the log. Not ImportError
+    # alone — a half-installed dependency raises whatever it likes on the way
+    # up, and none of it is worth the week's report.
     try:
         import anthropic
 
@@ -417,9 +424,8 @@ def _consult(
             ManagerDecision,
             run_manager,
         )
-        from aigaffer.manager.briefing import build_briefing
         from aigaffer.manager.tools import NO_CHIP, played_chips
-    except ImportError as error:  # a broken install, and still not a lost week
+    except Exception as error:  # a broken install, and still not a lost week
         print(f"{STOOD_DOWN}: {type(error).__name__}")
         return None
 
@@ -448,6 +454,11 @@ def _consult(
         return solve(inputs, adjusted, cfg), adjusted
 
     try:
+        # The second group: what asking him needs, imported where it is used,
+        # because a failure from here on is a fallback like any other and the
+        # net below is what says so in the report.
+        from aigaffer.manager.briefing import build_briefing
+
         decision = run_manager(
             anthropic.Anthropic(api_key=cfg.anthropic_api_key),
             cfg,
