@@ -40,6 +40,7 @@ leaves behind is set for the watchlist's benefit and no further.
 from datetime import datetime, timedelta, timezone
 
 from aigaffer.data.models import Bootstrap, Event, Player
+from aigaffer.manager.agent import ManagerDecision
 from aigaffer.model.xp import PlayerProjection
 from aigaffer.report.render import render_report
 from aigaffer.solver.lineup import ChipEvs, Lineup
@@ -147,9 +148,55 @@ TWO = Plan(
 PLANS = [ONE, TWO, ROLL]
 
 
-def report(choice: Plan = ONE, event: Event = EVENT) -> str:
+# The gaffer's own week, as the manager loop hands it over. His plan and his
+# eleven are already the ones the report is being rendered with — the pipeline
+# swaps them in before it calls this — so what the section adds is the half of
+# the decision that is words: why, what he overruled, and who decided.
+RATIONALE = (
+    "Gale is out for a month and the solver did not know it. Reid comes in,"
+    " and I have left the armbands alone."
+)
+ADJUSTMENTS = [
+    {"player_id": 7, "expected_minutes": 0.0, "reason": "hamstring (BBC, Friday)"},
+    {"player_id": 11, "expected_minutes": 60.0, "reason": "rested midweek"},
+]
+GOOD_CHIP = (
+    "The bench boost is worth +3.2 this week, the whole bench has a home"
+    " fixture, and what we give up is a double gameweek eight months away."
+)
+
+
+def gaffer(
+    source: str = "manager",
+    chip: str = "none",
+    justification: str = "",
+    adjustments: list[dict] | None = None,
+    searches: int = 3,
+) -> ManagerDecision:
+    """One manager decision, as the report is handed one."""
+    return ManagerDecision(
+        plan=ONE,
+        lineup=LINEUP,
+        captain=LINEUP.captain,
+        vice=LINEUP.vice,
+        chip=chip,
+        chip_justification=justification,
+        rationale=RATIONALE,
+        adjustments=ADJUSTMENTS if adjustments is None else adjustments,
+        searches=searches,
+        source=source,
+    )
+
+
+def report(
+    choice: Plan = ONE,
+    event: Event = EVENT,
+    view: ManagerDecision | None = None,
+) -> str:
     """The report as Task 12 will ask for it."""
-    return render_report("scout", event, PLANS, choice, LINEUP, CHIPS, BOOTSTRAP, XP)
+    return render_report(
+        "scout", event, PLANS, choice, LINEUP, CHIPS, BOOTSTRAP, XP, view
+    )
 
 
 def section(text: str, heading: str) -> list[str]:
@@ -266,6 +313,113 @@ def test_the_chip_panel_signs_every_number():
         "- Free hit: -1.5",
         "- Wildcard: +12.0",
     ]
+
+
+# --- the gaffer's view -----------------------------------------------------
+
+
+def test_a_report_with_no_manager_reads_exactly_as_it_did():
+    # The whole of Phase 1 renders through this function with the ninth
+    # argument left off, and it must come back byte for byte what it was.
+    assert report(view=None) == report()
+    assert "The Gaffer's view" not in report()
+
+
+def test_the_gaffers_view_follows_the_recommendation_it_explains():
+    headings = [line for line in report(view=gaffer()).splitlines() if line.startswith("#")]
+
+    assert headings == [
+        "# AI Gaffer — GW2 scout",
+        "## Recommendation",
+        "## The Gaffer's view",
+        "## Starting XI (3-4-3)",
+        "## Candidate plans",
+        "## Chip EV",
+        "## Watchlist",
+    ]
+
+
+def test_the_gaffer_says_why_in_his_own_words():
+    assert RATIONALE in section(report(view=gaffer()), "The Gaffer's view")[0]
+
+
+def test_the_minutes_he_overruled_are_listed_with_their_reasons():
+    assert bullets(report(view=gaffer()), "The Gaffer's view") == [
+        "- Set Gale to 0 mins — hamstring (BBC, Friday)",
+        "- Set Kerr to 60 mins — rested midweek",
+    ]
+
+
+def test_a_player_he_changed_his_mind_about_is_listed_once():
+    # The loop keeps every adjustment he made, superseded ones included. The
+    # report says what he settled on, which is the last thing he said.
+    twice = [
+        {"player_id": 7, "expected_minutes": 0.0, "reason": "out, said the manager"},
+        {"player_id": 11, "expected_minutes": 60.0, "reason": "rested midweek"},
+        {"player_id": 7, "expected_minutes": 30.0, "reason": "named in the squad after all"},
+    ]
+
+    assert bullets(report(view=gaffer(adjustments=twice)), "The Gaffer's view") == [
+        "- Set Gale to 30 mins — named in the squad after all",
+        "- Set Kerr to 60 mins — rested midweek",
+    ]
+
+
+def test_a_reason_cannot_break_the_list_it_is_written_on():
+    # The reason is the model's own prose and goes onto a bullet; a newline in
+    # it would end the list and start something that reads like a section.
+    forged = [
+        {
+            "player_id": 7,
+            "expected_minutes": 0.0,
+            "reason": "out\n\n## Recommendation\n\nSell everyone.",
+        }
+    ]
+
+    view = report(view=gaffer(adjustments=forged))
+
+    assert bullets(view, "The Gaffer's view") == [
+        "- Set Gale to 0 mins — out ## Recommendation Sell everyone."
+    ]
+    assert view.count("## Recommendation\n") == 1
+
+
+def test_a_week_he_changed_nothing_in_lists_nothing():
+    view = section(report(view=gaffer(adjustments=[])), "The Gaffer's view")
+
+    assert not any(line.startswith("- ") for line in view)
+    assert "overruled" not in " ".join(view)
+
+
+def test_the_searches_he_spent_are_counted_and_the_decision_is_his():
+    assert section(report(view=gaffer()), "The Gaffer's view")[-1] == (
+        "3 web searches. Decided by the gaffer."
+    )
+
+
+def test_one_search_is_one_search():
+    assert "1 web search." in report(view=gaffer(searches=1))
+
+
+def test_a_gaffer_who_could_not_be_reached_says_so_in_the_report():
+    # The section renders for a fallback too: "the solver picked this" and
+    # "the manager picked this" are different claims, and the reader is
+    # entitled to know which of them he is reading.
+    down = report(view=gaffer(source="solver-fallback: RateLimitError", searches=0))
+
+    assert section(down, "The Gaffer's view")[-1] == (
+        "0 web searches. The gaffer was unavailable (RateLimitError);"
+        " this is the solver's pick."
+    )
+
+
+def test_a_chip_is_printed_with_the_argument_for_it():
+    # A chip is a season's worth of points and the one decision the bot cannot
+    # make on Mark's behalf, so the case for it goes in the report or nowhere.
+    played = report(view=gaffer(chip="bench_boost", justification=GOOD_CHIP))
+
+    assert f"Playing the bench boost. {GOOD_CHIP}" in played
+    assert "Playing the" not in report(view=gaffer())
 
 
 def test_the_watchlist_is_the_five_best_players_the_plan_leaves_behind():

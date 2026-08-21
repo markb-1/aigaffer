@@ -25,6 +25,7 @@ naive timestamp as the runner's local clock is a mistake worth making once.
 
 from collections import defaultdict
 from datetime import UTC
+from typing import TYPE_CHECKING
 
 from aigaffer.data.models import Bootstrap, Event, Player
 from aigaffer.model.xp import PlayerProjection
@@ -39,11 +40,22 @@ from aigaffer.solver.optimizer import (
     projected_points,
 )
 
+if TYPE_CHECKING:  # the manager imports this module, so never the reverse
+    from aigaffer.manager.agent import ManagerDecision
+
 POSITIONS = {GOALKEEPER: "GKP", DEFENDER: "DEF", MIDFIELDER: "MID", FORWARD: "FWD"}
 OUTFIELD = (DEFENDER, MIDFIELDER, FORWARD)
 
 WATCHLIST_SIZE = 5
 DEADLINE_FORMAT = "%a %d %b %Y %H:%M UTC"
+
+# The manager's own vocabulary, repeated here rather than imported: the manager
+# package imports this module for the house formatting, so the dependency runs
+# one way only and a report that reached back into it would close the circle.
+# ``ManagerDecision.source`` is either this word or ``solver-fallback: reason``,
+# and ``ManagerDecision.chip`` is either this word or a chip.
+DECIDED = "manager"
+NO_CHIP = "none"
 
 
 def render_report(
@@ -55,6 +67,7 @@ def render_report(
     chips: ChipEvs,
     bootstrap: Bootstrap,
     projections: dict[int, PlayerProjection],
+    gaffer: "ManagerDecision | None" = None,
 ) -> str:
     """The whole report as one markdown string. Pure; no I/O.
 
@@ -63,6 +76,12 @@ def render_report(
     and the lineup must be a ``bootstrap`` element, which it is: they came
     from there. The string ends in a newline, because it is written out as a
     file as well as sent as a message.
+
+    ``gaffer`` is the manager's decision, when there was a manager: the plan
+    and the eleven above are his by then, and the section this adds is the
+    half of a decision that is words rather than numbers — why, what he
+    overruled, and whose pick this actually is. Omitted, the report is byte
+    for byte the one this wrote before there was a manager at all.
     """
     players = {player.id: player for player in bootstrap.elements}
     clubs = {team.id: team.short_name for team in bootstrap.teams}
@@ -70,6 +89,7 @@ def render_report(
     sections = [
         _header(mode, event),
         _recommendation(choice, players, clubs),
+        *([] if gaffer is None else [_gaffer(gaffer, players)]),
         _team_sheet(lineup, players, projections),
         _candidates(plans, choice),
         _chip_panel(chips),
@@ -113,6 +133,91 @@ def _recommendation(
         "- In: " + _listed(choice.transfers_in, players, clubs),
     ]
     return "\n".join(lines)
+
+
+def _gaffer(gaffer: "ManagerDecision", players: dict[int, Player]) -> str:
+    """The manager's week in his own words, and whose week it actually is.
+
+    Four things, in the order they are worth reading: what he decided and why,
+    the chip he is spending if he is spending one, the minutes he overruled to
+    get there, and — last, because it qualifies everything above it — how much
+    research it cost and whether the manager reached a decision at all. A
+    failed conversation prints this section too: a report that quietly reverts
+    to the solver is a report that has told the reader something untrue about
+    where its recommendation came from.
+    """
+    lines = ["## The Gaffer's view", "", gaffer.rationale]
+
+    if gaffer.chip != NO_CHIP:
+        spoken = gaffer.chip.replace("_", " ")
+        lines += ["", f"Playing the {spoken}. {gaffer.chip_justification}"]
+
+    adjustments = _settled(gaffer.adjustments)
+    if adjustments:
+        lines += ["", "Minutes he overruled:", ""]
+        lines += [
+            f"- Set {_who(record['player_id'], players)}"
+            f" to {record['expected_minutes']:.0f} mins"
+            f" — {_one_line(record['reason'])}"
+            for record in adjustments
+        ]
+
+    lines += ["", f"{_searches(gaffer.searches)}. {_source(gaffer.source)}"]
+    return "\n".join(lines)
+
+
+def _searches(count: int) -> str:
+    """``1 web search``, ``3 web searches``. The house :func:`plural` adds an
+    s and would make it "web searchs"; a noun that pluralizes differently is
+    spelled out where it is used rather than taught to the vocabulary."""
+    return f"{count} web search" if count == 1 else f"{count} web searches"
+
+
+def _settled(adjustments: list[dict]) -> list[dict]:
+    """One entry per player: the last thing he said about each of them.
+
+    The manager's record keeps every adjustment he made, in the order he made
+    them, superseded ones included — it is the conversation's own history and
+    the store keeps it whole. What the projection actually used, though, is
+    the last number set for each player, and that is what a report claiming
+    "he set Gale to 30 minutes" has to say. Each player keeps the place he
+    first appears in, because that is the order he thought about them in.
+    """
+    settled: dict[int, dict] = {}
+    for record in adjustments:
+        settled[record["player_id"]] = record
+    return list(settled.values())
+
+
+def _who(pid: int, players: dict[int, Player]) -> str:
+    """His name, or his id if this board has never heard of him. Nothing here
+    is worth losing a written report over."""
+    player = players.get(pid)
+    return player.web_name if player is not None else f"player {pid}"
+
+
+def _source(source: str) -> str:
+    """Whose pick this is, said plainly.
+
+    ``source`` is ``manager`` or ``solver-fallback: <reason>``, and the reason
+    is a class name or a phrase of ours — never an exception's own words,
+    which can carry a key or a token.
+    """
+    if source == DECIDED:
+        return "Decided by the gaffer."
+    reason = source.partition(": ")[2] or source
+    return f"The gaffer was unavailable ({reason}); this is the solver's pick."
+
+
+def _one_line(text: str) -> str:
+    """Somebody else's sentence, flattened onto the line it was given.
+
+    The reason is the model's own prose and it goes onto a list item. A
+    newline in it ends the list; a newline and two hashes start a section that
+    the solver never produced, in a document that is committed to the repo and
+    sent to a phone.
+    """
+    return " ".join(str(text).split())
 
 
 def _team_sheet(
