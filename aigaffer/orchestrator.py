@@ -8,11 +8,11 @@ judgements it has to make on its own:
 * **When to run.** A report is only worth reading at two moments: two days
   out, when there is still time to plan, and on the day, when the team news
   is in. :func:`decide_mode` turns the hours to the deadline into one of
-  those or into nothing at all, so the cron job can fire every six hours and
-  stand down quietly most of the time.
+  those or into nothing at all, so the cron job can fire every three hours
+  and stand down quietly most of the time.
 * **Whose history to fetch.** A season of history is one request per player,
   and six hundred requests is not a polite thing to do to a public API every
-  six hours. Only the squad and the players who could plausibly replace
+  three hours. Only the squad and the players who could plausibly replace
   someone in it are asked for.
 * **What to do when there is no squad.** Before the first deadline of a
   season there are no picks to fetch, and a manager who has just joined 404s
@@ -51,8 +51,14 @@ from aigaffer.solver.plans import generate_plans, recommend
 from aigaffer.store import Store
 
 DEADLINE_MODE, SCOUT_MODE = "deadline", "scout"
-DEADLINE_WINDOW = (0, 6)
+# Three hours, not six: the press conferences that decide the team news land
+# the day before or the morning of, and a report written before them is a
+# report written without the one thing the deadline run is for. One
+# correctly-timed tick beats two early ones.
+DEADLINE_WINDOW = (0, 3)
 SCOUT_WINDOW = (36, 60)
+
+NOT_CONFIGURED = "telegram not configured: the report was kept but not sent"
 
 # A manager with no squad has the whole board and the opening budget: fifteen
 # moves from nothing, £100.0m to make them with, and no hit for any of them.
@@ -70,10 +76,11 @@ class PipelineError(RuntimeError):
 def decide_mode(now: datetime, deadline: datetime) -> str | None:
     """Which report ``now`` calls for, or None for none at all.
 
-    The last six hours before a deadline are the deadline report; a window a
-    day and a half to two and a half days out is the scout report. Between
-    and either side of them there is nothing worth saying, which is most of
-    the week. Both datetimes must be timezone-aware.
+    The last three hours before a deadline are the deadline report — late
+    enough that the press conferences have happened and the team news is in
+    — and a window a day and a half to two and a half days out is the scout
+    report. Between and either side of them there is nothing worth saying,
+    which is most of the week. Both datetimes must be timezone-aware.
     """
     hours = (deadline - now).total_seconds() / 3600
     if _within(hours, DEADLINE_WINDOW):
@@ -326,12 +333,17 @@ def _write_report(cfg: Config, event_id: int, mode: str, report: str) -> None:
 def _deliver(cfg: Config, report: str) -> None:
     """Send the report on, if there is anywhere to send it.
 
+    Half-configured — a token in the secrets and no chat id, or the other way
+    about — looks exactly like a working bot until the phone stays quiet, so
+    a run that meant to deliver and could not says so.
+
     The bot token is part of the URL, so it is inside any ``httpx`` error
     this can raise — which makes the exception text unprintable in a log
     anyone can read. The class name says what went wrong without saying it
     with the token attached, and the run survives either way.
     """
     if not (cfg.telegram_token and cfg.telegram_chat_id):
+        print(NOT_CONFIGURED)
         return
     try:
         send_report(cfg.telegram_token, cfg.telegram_chat_id, report)

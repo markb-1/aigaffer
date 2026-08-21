@@ -2,9 +2,12 @@ name: gaffer
 
 on:
   schedule:
-    # Every three hours, so the six-hour deadline window gets two ticks and a
-    # dropped one costs nothing; seven past, off the on-the-hour crush. The
-    # store makes the second tick a no-op.
+    # Every three hours; seven past, off the on-the-hour crush. The deadline
+    # window is the last three hours before the deadline, so one tick lands
+    # in it — after the press conferences, which is the whole point of the
+    # deadline report. GitHub drops scheduled runs under load, and a missed
+    # tick costs that week's deadline report, which is the price of reporting
+    # on team news that exists rather than team news that does not.
     - cron: "7 */3 * * *"
   workflow_dispatch:
     inputs:
@@ -29,6 +32,10 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
+    # A run is a couple of hundred API calls and a handful of MILP solves:
+    # minutes, not tens of them. A job still going after twenty is stuck, and
+    # it holds the concurrency group against every tick behind it.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -40,6 +47,10 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       - name: Commit state
+        # Even when the run failed: it may have sent a report before it died,
+        # and a report that went out but was never recorded is one the next
+        # tick sends again.
+        if: always()
         run: |
           git config user.name "aigaffer-bot"
           git config user.email "bot@aigaffer.local"

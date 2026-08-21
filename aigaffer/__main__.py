@@ -7,22 +7,33 @@ run a report by name for someone sitting at a keyboard, and unlike ``auto``
 they explain themselves when they decide not to.
 
 A gameweek gets one of each report. The store is what remembers that, so a
-schedule that fires every six hours does not send the same thing four times;
+schedule that fires every three hours does not send the same thing twice;
 ``--force`` is how a person overrules it. ``--dry-run`` prints the report and
 writes nothing anywhere, which is what makes it safe against the live API.
 
 ``backtest`` is the odd one out: it grades the model against a gameweek that
 has already been played instead of advising on one to come, so it wants no
 team, no store and no schedule — only a gameweek and the API.
+
+Failure is loud here and nowhere else. A run on a schedule has no one
+watching it, so a run that dies has to say so twice: on stdout for the log,
+and — when there is a phone configured and this was not a dry run — as one
+line to Telegram, because a silent failure and a quiet week look identical
+from the outside. What it must never say is the exception's own words:
+``httpx`` names the URL it was calling in every message it raises, and for
+the Telegram leg of a run that URL has the bot token in it.
 """
 
 import argparse
 from datetime import UTC, datetime
 
+import httpx
+
 from aigaffer.backtest import backtest_gw, finished_gameweeks
 from aigaffer.config import Config
 from aigaffer.data.fpl_api import FplClient
 from aigaffer.orchestrator import PipelineError, decide_mode, run_pipeline
+from aigaffer.report.telegram import send_report
 from aigaffer.store import Store
 
 AUTO = "auto"
@@ -30,18 +41,28 @@ BACKTEST = "backtest"
 COMMANDS = (AUTO, "scout", "deadline", BACKTEST)
 DB_NAME = "aigaffer.db"
 
+SCHEDULE_STAGE = "reading the schedule"
+BACKTEST_STAGE = "the backtest"
+
 
 def main(argv: list[str] | None = None) -> int:
     """Run one command and return the process exit code."""
     args = _parse_args(argv)
     client = FplClient()
     if args.command == BACKTEST:
-        return _backtest(client, args.gw)
+        try:
+            return _backtest(client, args.gw)
+        except httpx.HTTPError as error:
+            return _failed(None, error, event_id=None, stage=BACKTEST_STAGE)
 
     cfg = Config.from_env()
     store = Store(cfg.state_dir / DB_NAME)
+    alert_to = None if args.dry_run else cfg
 
-    mode = _mode(args, client, store)
+    try:
+        mode, event_id = _mode(args, client, store)
+    except httpx.HTTPError as error:
+        return _failed(alert_to, error, event_id=None, stage=SCHEDULE_STAGE)
     if mode is None:
         return 0
 
@@ -49,13 +70,46 @@ def main(argv: list[str] | None = None) -> int:
         report = run_pipeline(
             cfg, client, store, mode, send=not args.dry_run, save=not args.dry_run
         )
-    except PipelineError as error:
-        print(f"aigaffer: {error}")
-        return 1
+    except (PipelineError, httpx.HTTPError) as error:
+        return _failed(alert_to, error, event_id, stage=f"the {mode} run")
 
     if args.dry_run:
         print(report)
     return 0
+
+
+def _failed(
+    cfg: Config | None, error: Exception, event_id: int | None, stage: str
+) -> int:
+    """Report a run that did not happen, and return its exit code.
+
+    A :class:`PipelineError` is ours: it was raised about our own data, in
+    words written to be read, so it is printed as it stands. Anything from
+    ``httpx`` is not — its message carries the URL, and a bot token with it —
+    so only the class name gets out, which says as much as a log needs.
+    """
+    detail = str(error) if isinstance(error, PipelineError) else type(error).__name__
+    print(f"aigaffer: {stage} failed: {detail}")
+    if cfg is not None:
+        _alert(cfg, error, event_id)
+    return 1
+
+
+def _alert(cfg: Config, error: Exception, event_id: int | None) -> None:
+    """Best effort: tell the phone that was expecting a report.
+
+    Nothing here may raise. The exit code is already 1 and the reason is
+    already on stdout; an alert that cannot be delivered is not a second
+    failure to handle, and it certainly must not print what it tried.
+    """
+    if not (cfg.telegram_token and cfg.telegram_chat_id):
+        return
+    gameweek = "" if event_id is None else f" (gw {event_id})"
+    message = f"aigaffer run failed: {type(error).__name__}{gameweek}"
+    try:
+        send_report(cfg.telegram_token, cfg.telegram_chat_id, message)
+    except Exception as sending:  # noqa: BLE001 — the alert is the last resort
+        print(f"aigaffer: the alert failed too: {type(sending).__name__}")
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
@@ -111,37 +165,43 @@ def _backtest(client: FplClient, gw: int | None) -> int:
     return 0
 
 
-def _mode(args: argparse.Namespace, client: FplClient, store: Store) -> str | None:
-    """The mode to run, or None to stand down.
+def _mode(
+    args: argparse.Namespace, client: FplClient, store: Store
+) -> tuple[str | None, int | None]:
+    """The mode to run and the gameweek it is for, or ``(None, ...)`` to
+    stand down.
 
     Deciding costs a bootstrap fetch — for the deadline ``auto`` reads and
     the gameweek the store is asked about — so a mode named on the command
     line with ``--force`` skips the question entirely and gets on with it.
+    That is also the one path where the gameweek is not known yet, which is
+    why it comes back alongside the mode: a failure alert says which week it
+    was about when anything has bothered to ask.
     """
     if args.command != AUTO and args.force:
-        return args.command
+        return args.command, None
 
     event = client.bootstrap().next_event()
     if event is None:
         _explain(args.command, "the API has no gameweek ahead")
-        return None
+        return None, None
 
     mode = args.command
     if mode == AUTO:
         chosen = decide_mode(datetime.now(UTC), event.deadline_time)
         if chosen is None:
-            return None
+            return None, event.id
         mode = chosen
 
     if store.has_run(event.id, mode) and not args.force:
         _explain(args.command, f"GW{event.id} {mode} has run already — use --force")
-        return None
-    return mode
+        return None, event.id
+    return mode, event.id
 
 
 def _explain(command: str, reason: str) -> None:
     """Say why nothing happened — unless nothing happening is the normal
-    course of events, which for a job that runs every six hours it is."""
+    course of events, which for a job that runs every three hours it is."""
     if command != AUTO:
         print(f"aigaffer: {reason}")
 

@@ -11,7 +11,9 @@ by the unit tests of the modules that produce them.
 """
 
 import copy
+import json
 from datetime import UTC, datetime, timedelta
+from functools import partial
 from typing import NamedTuple
 
 import httpx
@@ -22,6 +24,7 @@ from aigaffer import orchestrator
 from aigaffer.config import Config
 from aigaffer.data.fpl_api import FplClient
 from aigaffer.orchestrator import PipelineError, decide_mode, run_pipeline
+from aigaffer.report.telegram import send_report
 from aigaffer.store import Store
 from tests.fixtures import (
     ELEMENT_SUMMARY_JSON,
@@ -51,9 +54,10 @@ DEADLINE = datetime(2025, 8, 22, 17, 30, tzinfo=UTC)
     ("hours_to_go", "mode"),
     [
         (0.5, "deadline"),
-        (5, "deadline"),
-        (6, "deadline"),
-        (6.5, None),
+        (2, "deadline"),
+        (3, "deadline"),
+        (3.5, None),
+        (6, None),
         (20, None),
         (36, None),
         (36.5, "scout"),
@@ -300,7 +304,10 @@ def test_the_report_is_sent_to_telegram(monkeypatch, tmp_path):
     assert sent == [(TOKEN, "42", report)]
 
 
-def test_nothing_is_sent_without_somewhere_to_send_it(monkeypatch, tmp_path):
+def test_nothing_is_sent_without_somewhere_to_send_it(monkeypatch, capsys, tmp_path):
+    # Half-configured is the easy mistake — a token in the secrets and no
+    # chat id — and it looks exactly like a working bot until the phone stays
+    # quiet, so the run that could not deliver says so.
     sent = []
     monkeypatch.setattr(orchestrator, "send_report", lambda *args: sent.append(args))
 
@@ -311,7 +318,10 @@ def test_nothing_is_sent_without_somewhere_to_send_it(monkeypatch, tmp_path):
         "deadline",
     )
 
+    printed = capsys.readouterr().out
     assert sent == []
+    assert printed.strip() == orchestrator.NOT_CONFIGURED
+    assert TOKEN not in printed
 
 
 def test_a_failed_send_keeps_the_run_and_never_prints_the_token(
@@ -357,8 +367,29 @@ def store(monkeypatch, tmp_path):
     return Store(tmp_path / "aigaffer.db")
 
 
-def serve(monkeypatch, routes: dict) -> None:
-    monkeypatch.setattr(cli, "FplClient", lambda: make_client(routes))
+def serve(monkeypatch, routes: dict, statuses: dict[str, int] | None = None) -> None:
+    monkeypatch.setattr(cli, "FplClient", lambda: make_client(routes, statuses))
+
+
+def telegram(monkeypatch) -> list[dict]:
+    """Point the CLI's alert at a fake Telegram; return the messages posted.
+
+    The real :func:`send_report` runs — chunking, URL and all — over a mock
+    transport, so the token never leaves the process but everything that
+    handles it is exercised.
+    """
+    posted: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert TOKEN in str(request.url)  # the token travels in the URL
+        posted.append(json.loads(request.content))
+        return httpx.Response(200, json={"ok": True})
+
+    http = httpx.Client(transport=httpx.MockTransport(handler))
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", TOKEN)
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "42")
+    monkeypatch.setattr(cli, "send_report", partial(send_report, http=http))
+    return posted
 
 
 def test_auto_runs_the_scout_two_days_out(monkeypatch, store):
@@ -369,7 +400,7 @@ def test_auto_runs_the_scout_two_days_out(monkeypatch, store):
 
 
 def test_auto_runs_the_deadline_check_on_the_day(monkeypatch, store):
-    serve(monkeypatch, pipeline_routes(bootstrap=bootstrap_due_in(5)))
+    serve(monkeypatch, pipeline_routes(bootstrap=bootstrap_due_in(2)))
 
     assert cli.main(["auto"]) == 0
     assert store.has_run(2, "deadline") is True
@@ -434,6 +465,96 @@ def test_a_pipeline_that_cannot_run_exits_non_zero(monkeypatch, capsys, store):
 
     assert cli.main(["deadline", "--force"]) == 1
     assert "gameweek" in capsys.readouterr().out
+
+
+def test_an_api_that_will_not_answer_exits_non_zero_without_quoting_itself(
+    monkeypatch, capsys, store
+):
+    # httpx names the URL it was calling in every message it raises, and for
+    # the Telegram leg of a run that URL has the bot token in it. So the CLI
+    # prints the class of the failure and the stage it happened at, and never
+    # the exception's own words.
+    serve(monkeypatch, pipeline_routes(), statuses={"/api/fixtures/": 500})
+
+    assert cli.main(["deadline", "--force"]) == 1
+
+    printed = capsys.readouterr().out
+    assert printed.strip() == "aigaffer: the deadline run failed: HTTPStatusError"
+    assert "premierleague.com" not in printed
+    assert store.last_runs() == []
+
+
+def test_a_schedule_the_api_will_not_serve_is_reported_the_same_way(
+    monkeypatch, capsys, store
+):
+    # Nothing has been decided yet, so there is no mode to name — only the
+    # stage that failed.
+    serve(monkeypatch, {}, statuses={"/api/bootstrap-static/": 503})
+
+    assert cli.main(["auto"]) == 1
+    assert (
+        capsys.readouterr().out.strip()
+        == "aigaffer: reading the schedule failed: HTTPStatusError"
+    )
+
+
+def test_a_failed_run_tells_the_phone_that_expects_the_report(
+    monkeypatch, capsys, store
+):
+    # A run that dies in silence looks exactly like a quiet week, and the
+    # point of the schedule is that nobody has to check.
+    posted = telegram(monkeypatch)
+    serve(
+        monkeypatch,
+        pipeline_routes(bootstrap=bootstrap_due_in(2)),
+        statuses={"/api/fixtures/": 500},
+    )
+
+    assert cli.main(["auto"]) == 1
+
+    assert posted == [
+        {"chat_id": "42", "text": "aigaffer run failed: HTTPStatusError (gw 2)"}
+    ]
+    assert TOKEN not in capsys.readouterr().out
+
+
+def test_a_failure_with_no_gameweek_named_still_gets_an_alert(monkeypatch, store):
+    # --force skips the schedule read, so nothing has asked which gameweek
+    # this is. The alert says what it knows and nothing more.
+    posted = telegram(monkeypatch)
+    over = copy.deepcopy(PIPELINE_BOOTSTRAP_JSON)
+    for event in over["events"]:
+        event.update(is_next=False, is_current=False)
+    serve(monkeypatch, pipeline_routes(bootstrap=over))
+
+    assert cli.main(["deadline", "--force"]) == 1
+    assert posted == [{"chat_id": "42", "text": "aigaffer run failed: PipelineError"}]
+
+
+def test_an_alert_that_fails_too_is_not_a_second_failure(monkeypatch, capsys, store):
+    # The exit code is already 1 and the reason is already printed; the alert
+    # is the last thing anybody wants an exception from.
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", TOKEN)
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "42")
+
+    def explode(*args, **kwargs):
+        raise httpx.ConnectError(f"connecting to /bot{TOKEN}/sendMessage failed")
+
+    monkeypatch.setattr(cli, "send_report", explode)
+    serve(monkeypatch, pipeline_routes(), statuses={"/api/fixtures/": 500})
+
+    assert cli.main(["deadline", "--force"]) == 1
+    assert TOKEN not in capsys.readouterr().out
+
+
+def test_a_dry_run_that_fails_keeps_it_off_the_phone(monkeypatch, store):
+    # --dry-run means nothing leaves the machine, and there is a person at
+    # the keyboard reading the failure already.
+    posted = telegram(monkeypatch)
+    serve(monkeypatch, pipeline_routes(), statuses={"/api/fixtures/": 500})
+
+    assert cli.main(["deadline", "--force", "--dry-run"]) == 1
+    assert posted == []
 
 
 def test_an_unknown_command_is_refused():
