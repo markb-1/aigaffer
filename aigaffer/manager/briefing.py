@@ -11,7 +11,9 @@ Three things follow from that.
 
 * **Every player carries his id.** The agent's only way to name a player back
   to us is ``adjust_players``, which takes an integer, so a line that names a
-  player without his id is a line he cannot act on.
+  player without his id is a line he cannot act on. The one exception proves
+  it: the path on the end of a plan line is a list of moves in gameweeks that
+  have not happened, and there is nothing on it for him to act on at all.
 * **Every plan carries the id it will be finalized by, and the caller sets
   it.** :func:`format_plans` is public and takes ``(id, plan)`` pairs because
   a re-solve mid-conversation produces a fresh shortlist that must be
@@ -54,6 +56,7 @@ from aigaffer.solver.optimizer import AVAILABLE, Plan, projected_points
 
 if TYPE_CHECKING:  # the orchestrator imports the manager, so never the reverse
     from aigaffer.orchestrator import PipelineInputs, SolveResult
+    from aigaffer.solver.multiweek import PlannedMove
 
 # What the API's one-letter status codes mean. Everything but "a" is shouted,
 # because a squad list is fifteen lines long and the one that matters is the
@@ -100,6 +103,19 @@ CHIP_UNITS = (
     " horizon number: the decayed total of the best squad fifteen free"
     " transfers could reach, against the plan in hand. It is not comparable"
     " with the other three."
+)
+# What a path on a plan line is, said once above the list. He is choosing
+# between openings on the strength of where they lead, so he has to know that
+# the leading is the argument and the opening is the decision — and that asking
+# for a re-solve plans the rest of it again with his own minutes in it. Printed
+# only when something on the board actually carries a path: a paragraph
+# explaining a notation nobody used is a paragraph of noise.
+PATH_GUARD = (
+    'A "path" is what the solver would go on to do in the gameweeks after this'
+    " one if nothing changed — the reason an opening move is worth making."
+    " Read it as an argument for the plan, not as a commitment: only the coming"
+    " gameweek's transfers are ever entered, and the path is planned again from"
+    " scratch every run. resolve re-plans it with your adjustments in it."
 )
 PLANNED_GUARD = (
     "Only bench_boost and triple_captain can be finalized: they are played on"
@@ -220,6 +236,14 @@ def format_plans(
     model gets wrong once in a while. The baseline is named on every line
     rather than assumed to be plan 0, so a shortlist that reaches no roll at
     all still reads honestly.
+
+    A plan off the multi-week planner carries the gameweeks after this one, and
+    they ride the end of its line as a compact path. It is not a parameter: a
+    plan either was planned over a window or was not, and a caller that had to
+    remember to ask for the half of a plan that explains it is a caller that
+    will one day forget. Plans without one — every plan off the single-week
+    solver, and every plan minted before there was a window at all — print
+    exactly what they printed before.
     """
     if not plans:
         return ""
@@ -242,6 +266,7 @@ def format_plans(
             f" | {plural(plan.hits, 'hit')}"
             f" | {plan.objective:.1f} net"
             f" | {against}"
+            f"{_path(plan, board)}"
             f"{PICK_MARKER if plan_id == recommended else ''}"
         )
     return "\n".join(lines)
@@ -390,18 +415,27 @@ def _team_sheet(lineup: Lineup, board: _Board, event: int, pick: int | None) -> 
 
 
 def _candidates(plans: list[tuple[int, Plan]], board: _Board, pick: int | None) -> str:
-    """The shortlist, numbered, with the boundary the manager may not cross."""
-    return "\n".join(
-        [
-            "## Candidate plans",
-            "",
-            "Finalize on one of these ids and no other. Each has already been"
-            " checked for budget, club quotas and the hit cap; a squad that is"
-            " not on this list is not reachable.",
-            "",
-            format_plans(plans, board.players, board.clubs, board.projections, pick),
-        ]
-    )
+    """The shortlist, numbered, with the boundary the manager may not cross.
+
+    And, when the plans came off the window, what the path on the end of each
+    line is. Told nothing, a model reading "GW4 +Pike -Byrne" beside a plan it
+    is being asked to commit to would reasonably read it as part of the
+    commitment.
+    """
+    lines = [
+        "## Candidate plans",
+        "",
+        "Finalize on one of these ids and no other. Each has already been"
+        " checked for budget, club quotas and the hit cap; a squad that is"
+        " not on this list is not reachable.",
+    ]
+    if any(plan.path is not None and plan.path.moves for _, plan in plans):
+        lines += ["", PATH_GUARD]
+    lines += [
+        "",
+        format_plans(plans, board.players, board.clubs, board.projections, pick),
+    ]
+    return "\n".join(lines)
 
 
 def _chip_panel(
@@ -535,6 +569,38 @@ def _moves(plan: Plan, board: _Board) -> str:
         "out " + _listed(plan.transfers_out, board)
         + "; in " + _listed(plan.transfers_in, board)
     )
+
+
+def _path(plan: Plan, board: _Board) -> str:
+    """``| path: GW3 +Quinn -Fenn, GW4 +Pike -Byrne (1 hit)``, or nothing.
+
+    Compact, and deliberately thinner than the transfer lists in front of it.
+    Those are this week's decision and every player in them is one he may be
+    about to research; a path is an argument for that decision, and thirty
+    characters a player over four gameweeks would bury the numbers the choice
+    is actually made on.
+
+    No ids, for the same reason: the tools take an id in order to change what
+    the *coming* gameweek assumes, and there is nothing on a path for him to
+    act on. A gameweek the plan means to leave alone is not listed at all,
+    which is what makes this a list of intentions.
+    """
+    if plan.path is None or not plan.path.moves:
+        return ""
+    return " | path: " + ", ".join(_planned(move, board) for move in plan.path.moves)
+
+
+def _planned(move: "PlannedMove", board: _Board) -> str:
+    """One future gameweek: who comes in, who goes, and what it costs.
+
+    The hit rides on the line when there is one and stays off it when there is
+    not. A plan whose line says "0 hits" and whose path pays four points in
+    three weeks' time is a plan he should be able to see paying them.
+    """
+    names = [f"+{_safe(board.players[pid].web_name)}" for pid in move.transfers_in]
+    names += [f"-{_safe(board.players[pid].web_name)}" for pid in move.transfers_out]
+    taken = f" ({plural(move.hits, 'hit')})" if move.hits else ""
+    return f"GW{move.event} " + " ".join(names) + taken
 
 
 def _listed(pids: list[int], board: _Board) -> str:

@@ -16,6 +16,14 @@ they travel as tenths of a million right up to the moment they are printed.
 The renderer decides nothing. It is handed the plans, the choice among them,
 the eleven and the chip numbers, and it says what they are.
 
+One section is not about this week at all. A recommendation off the multi-week
+planner carries the rest of the window it was chosen for, and "the road ahead"
+prints it — under a standing caveat, because only the gameweek above it is ever
+entered and the rest is re-planned from scratch on the next run. A
+recommendation off the single-week solver has no such thing to print, and when
+the window was configured on and could not answer, the shortlist says so: which
+engine drew a list up is part of what the list means.
+
 :func:`deadline`, :func:`price` and :func:`plural` are public because they are
 the house vocabulary rather than this module's private business: the manager's
 briefing (:mod:`aigaffer.manager.briefing`) says the same things to a different
@@ -42,6 +50,7 @@ from aigaffer.solver.optimizer import (
 
 if TYPE_CHECKING:  # the manager imports this module, so never the reverse
     from aigaffer.manager.agent import ManagerDecision
+    from aigaffer.solver.multiweek import PlannedMove
 
 POSITIONS = {GOALKEEPER: "GKP", DEFENDER: "DEF", MIDFIELDER: "MID", FORWARD: "FWD"}
 OUTFIELD = (DEFENDER, MIDFIELDER, FORWARD)
@@ -78,6 +87,19 @@ RESOLVED_ELSEWHERE = (
     " his pick above is not on this list."
 )
 
+# What the shortlist says when the window was asked and had nothing to say. It
+# is printed only when the better engine was configured on and did not answer:
+# a run that asked for the single-week solver got what it asked for, and a
+# report that apologised for it every week would be crying wolf.
+SINGLE_WEEK = "Single-week engine (multi-week solve unavailable this run)."
+
+# The line under the path, every week. The gameweeks after this one are solved
+# on a projection of a projection and re-planned from scratch on the next run;
+# printed without this they would read as a commitment, and the one thing a
+# reader must not do is hold a move back this week because a plan he read a
+# fortnight ago says it belongs in the next.
+ADVISORY = "Advisory — re-planned every run; only this week's moves are ever made."
+
 
 def render_report(
     mode: str,
@@ -89,6 +111,8 @@ def render_report(
     bootstrap: Bootstrap,
     projections: dict[int, PlayerProjection],
     gaffer: "ManagerDecision | None" = None,
+    *,
+    engine_expected: bool = False,
 ) -> str:
     """The whole report as one markdown string. Pure; no I/O.
 
@@ -103,16 +127,30 @@ def render_report(
     half of a decision that is words rather than numbers — why, what he
     overruled, and whose pick this actually is. Omitted, the report is byte
     for byte the one this wrote before there was a manager at all.
+
+    ``engine_expected`` says the multi-week planner was configured on. Whether
+    it *answered* is written on the recommendation — a plan off the window
+    carries a path and a plan off the single-week solver does not — and the
+    two together are the only way to tell a fallback from a run that asked for
+    the single-week solver on purpose. The renderer decides nothing: the caller
+    knows what it configured, and this knows what came back.
     """
     players = {player.id: player for player in bootstrap.elements}
     clubs = {team.id: team.short_name for team in bootstrap.teams}
+    road = choice.path.moves if choice.path is not None else []
 
     sections = [
         _header(mode, event),
         _recommendation(choice, players, clubs),
         *([] if gaffer is None else [_gaffer(gaffer, players)]),
         _team_sheet(lineup, players, projections),
-        _candidates(plans, choice, decided=gaffer is not None),
+        _candidates(
+            plans,
+            choice,
+            decided=gaffer is not None,
+            fell_back=engine_expected and choice.path is None,
+        ),
+        *([_road_ahead(road, players)] if road else []),
         _chip_panel(chips, horizon_of(projections)),
         _watchlist(choice.squad, players, clubs, projections),
     ]
@@ -342,7 +380,9 @@ def _team_sheet(
     return "\n".join(lines)
 
 
-def _candidates(plans: list[Plan], choice: Plan, decided: bool = False) -> str:
+def _candidates(
+    plans: list[Plan], choice: Plan, decided: bool = False, fell_back: bool = False
+) -> str:
     """Every plan the solver came back with, in the order it ranked them.
 
     Exactly one row carries the recommendation, and that has to hold however
@@ -357,6 +397,10 @@ def _candidates(plans: list[Plan], choice: Plan, decided: bool = False) -> str:
     the section says why, because a list with no recommendation on it and a
     recommendation above it with no list behind it is a report that has
     stopped explaining itself.
+
+    ``fell_back`` says the window was asked and had nothing to say, so this
+    list is the single-week solver's. It is a line about the whole list and
+    goes under it, above the note about the recommendation.
     """
     pick = _pick(plans, choice)
     lines = ["## Candidate plans", ""]
@@ -368,6 +412,8 @@ def _candidates(plans: list[Plan], choice: Plan, decided: bool = False) -> str:
             f" | {plan.xp_total:.1f} xP"
             f" | {plan.objective:.1f} net{recommended}"
         )
+    if fell_back:
+        lines += ["", SINGLE_WEEK]
     if decided and pick is None:
         lines += ["", RESOLVED_ELSEWHERE]
     return "\n".join(lines)
@@ -389,6 +435,57 @@ def _pick(plans: list[Plan], choice: Plan) -> int | None:
         if sorted(plan.squad) == squad:
             return index
     return None
+
+
+def _road_ahead(moves: list["PlannedMove"], players: dict[int, Player]) -> str:
+    """The gameweeks after this one, as the window means to play them.
+
+    A gameweek to a line, and only the gameweeks it means to move in: a plan
+    that leaves a week alone has no move in it, which is what makes a path a
+    list of intentions rather than a calendar. Each line says who goes, who
+    comes, and what the move spends — the free transfers it uses and the hit
+    it takes, because a plan that pays four points in three weeks' time is
+    making an argument about this week's move that the reader is entitled to
+    weigh.
+
+    The section exists only when there is a path with moves on it, and it
+    closes with :data:`ADVISORY` every time. Nothing here is ever entered: the
+    week above it is the decision, and this is what the decision is for.
+    """
+    lines = ["## The road ahead", ""]
+    lines += [f"- GW{move.event}: {_planned(move, players)}" for move in moves]
+    lines += ["", ADVISORY]
+    return "\n".join(lines)
+
+
+def _planned(move: "PlannedMove", players: dict[int, Player]) -> str:
+    """``out Gale (£4.0m), in Dodd (£4.5m) — 1 FT, no hit``.
+
+    The sales bullet is omitted when there are none, as the recommendation's
+    is: a week the window only buys in is not a week to print an empty list
+    for. In practice a squad is fifteen every gameweek and every move is a
+    swap, so this is a defence against a solver that changed rather than a
+    case anybody has seen.
+    """
+    parts = []
+    if move.transfers_out:
+        parts.append("out " + _priced(move.transfers_out, players))
+    parts.append("in " + _priced(move.transfers_in, players))
+    return ", ".join(parts) + f" — {_spent(move)}"
+
+
+def _spent(move: "PlannedMove") -> str:
+    """``1 FT, no hit`` — what a future gameweek's moves cost it.
+
+    The free transfers are the moves the hits did not pay for: the path model
+    charges four points for every move beyond the bank, so what is left is
+    what the bank covered. Both halves are printed because a reader deciding
+    whether to trust a path wants to know whether it is spending points or
+    only patience.
+    """
+    free = max(0, len(move.transfers_in) - move.hits)
+    cost = f"-{move.hits * HIT_POINTS} pts in hits" if move.hits else "no hit"
+    return f"{plural(free, 'FT')}, {cost}"
 
 
 def _chip_panel(chips: ChipEvs, horizon: int) -> str:
@@ -465,6 +562,19 @@ def _armband(pid: int, lineup: Lineup, players: dict[int, Player]) -> str:
 
 def _listed(pids: list[int], players: dict[int, Player], clubs: dict[int, str]) -> str:
     return ", ".join(_described(pid, players, clubs) for pid in pids)
+
+
+def _priced(pids: list[int], players: dict[int, Player]) -> str:
+    """``Gale (£4.0m), Fenn (£4.5m)`` — a name and a price each.
+
+    What a move three gameweeks out turns on, and no more than that: the
+    position and the club are for the week being decided, where the reader is
+    weighing one player against another. On a path they would be detail about
+    a move that will be planned again before anybody makes it.
+    """
+    return ", ".join(
+        f"{players[pid].web_name} ({price(players[pid].now_cost)})" for pid in pids
+    )
 
 
 def _described(pid: int, players: dict[int, Player], clubs: dict[int, str]) -> str:

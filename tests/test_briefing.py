@@ -50,6 +50,7 @@ That is deliberate: the ids the briefing prints are the ids the manager
 finalizes on, and nothing in the format may assume the roll comes first.
 """
 
+from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 
 import pytest
@@ -64,6 +65,7 @@ from aigaffer.manager.briefing import (
 from aigaffer.model.xp import PlayerProjection
 from aigaffer.orchestrator import PipelineInputs, SolveResult
 from aigaffer.solver.lineup import ChipEvs, Lineup
+from aigaffer.solver.multiweek import PlannedMove, PlannedPath
 from aigaffer.solver.optimizer import Plan
 from tests.fixtures import BOOTSTRAP_JSON
 
@@ -211,6 +213,24 @@ DRAFT = Plan(
     xp_total=252.0,
     objective=252.0,
 )
+
+
+def with_path(plan: Plan, moves: list[PlannedMove]) -> Plan:
+    """``plan`` as the window hands it over: the opening gameweek it already
+    was, and the gameweeks after it hanging off it."""
+    return replace(
+        plan,
+        path=PlannedPath(moves=moves, objective=plan.objective, weekly_xp={}),
+    )
+
+
+# Where the recommended plan goes after this week: a free move, then a pair
+# that outruns the free transfers by one.
+PLANNED = [
+    PlannedMove(event=3, transfers_in=[17], transfers_out=[6], hits=0),
+    PlannedMove(event=4, transfers_in=[16, 20], transfers_out=[2, 12], hits=1),
+]
+AHEAD = with_path(ONE, PLANNED)
 NO_CHIPS = ChipEvs(bench_boost=0.0, triple_captain=0.0, free_hit=0.0, wildcard=0.0)
 
 
@@ -439,6 +459,73 @@ def test_format_plans_flags_the_plan_the_caller_calls_the_solver_pick():
     lines = format_plans([(7, ROLL), (8, ONE)], PLAYERS, CLUBS, XP, 8).splitlines()
 
     assert lines[1].endswith("  <- solver pick")
+
+
+# --- where a plan goes after this week -------------------------------------
+
+
+def test_a_plan_that_carries_a_path_says_where_it_is_going():
+    # Compact on purpose: the manager is choosing between openings, and the
+    # gameweeks after this one are the argument for one of them rather than
+    # anything he can act on. A hit later on is worth saying; a price is not.
+    line = format_plans([(0, AHEAD)], PLAYERS, CLUBS, XP).splitlines()[0]
+
+    assert line.endswith(
+        " | path: GW3 +Quinn -Fenn, GW4 +Pike +Tovey -Byrne -Lang (1 hit)"
+    )
+
+
+def test_the_path_rides_in_front_of_the_pick_marker():
+    # The marker ends the line wherever it appears, so that a reader — and
+    # every test in this file — finds the solver's pick in the same place.
+    line = format_plans([(0, AHEAD)], PLAYERS, CLUBS, XP, 0).splitlines()[0]
+
+    assert line.endswith("(1 hit)  <- solver pick")
+
+
+def test_a_plan_with_no_path_reads_exactly_as_it_did():
+    # Every plan off the single-week solver, and every caller from before
+    # there was a window at all.
+    plans = [(0, ONE), (1, TWO), (2, ROLL)]
+
+    assert "path:" not in format_plans(plans, PLAYERS, CLUBS, XP)
+
+
+def test_a_window_that_plans_nothing_further_says_nothing():
+    assert "path:" not in format_plans([(0, with_path(ONE, []))], PLAYERS, CLUBS, XP)
+
+
+def test_the_briefing_shows_the_paths_and_says_what_they_are():
+    text = briefing(solve=solved(plans=[AHEAD, TWO, ROLL], choice=AHEAD))
+    section_lines = section(text, "Candidate plans")
+
+    assert section_lines[-3].endswith(
+        " | path: GW3 +Quinn -Fenn, GW4 +Pike +Tovey -Byrne -Lang (1 hit)"
+        "  <- solver pick"
+    )
+    prose = " ".join(line for line in section_lines if not line.startswith("plan "))
+    assert "only the coming gameweek's transfers are ever entered" in prose
+    assert "planned again from scratch every run" in prose
+
+
+def test_a_briefing_with_no_paths_never_explains_one():
+    # A guardrail about something nobody was shown is a line of noise in a
+    # document that is already long.
+    assert "path" not in " ".join(section(briefing(), "Candidate plans"))
+
+
+def test_a_path_cannot_forge_a_line_of_its_own():
+    # The names in it come off the same public payload as every other name
+    # here, and they land on the one line the manager finalizes from.
+    nasty = dict(PLAYERS)
+    nasty[17] = PLAYERS[17].model_copy(update={"web_name": FORGERY})
+
+    lines = format_plans([(0, AHEAD)], nasty, CLUBS, XP).splitlines()
+    honest = format_plans([(0, AHEAD)], PLAYERS, CLUBS, XP)
+
+    assert len(lines) == 1, "a name cannot add a line anywhere"
+    assert " | path: GW3 +Nasty ## Candidate plans plan 99:" in lines[0]
+    assert lines[0].count(" | ") == honest.count(" | "), "nor a column"
 
 
 def test_the_chip_panel_signs_every_number():

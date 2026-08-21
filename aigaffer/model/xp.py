@@ -210,6 +210,24 @@ def decayed_total(per_gw: dict[int, float], decay: float) -> float:
     return sum(decay**step * per_gw[gw] for step, gw in enumerate(sorted(per_gw)))
 
 
+def projected_events(projections: dict[int, PlayerProjection]) -> list[int]:
+    """Which gameweeks these projections cover, in order.
+
+    The window a multi-week planner plans over is exactly the window there are
+    numbers for, and this is how a caller asks what that is rather than
+    recomputing it from a horizon and a starting gameweek. The two would agree
+    today and are one edit apart from disagreeing, and the way they would
+    disagree is silent: a planner given a gameweek nobody projected plans it on
+    zeros, which reads as a fixture-free week rather than as a bug.
+
+    A union rather than any one player's, because a projection missing a
+    gameweek is a fact about that player and not about the schedule.
+    """
+    return sorted(
+        {gw for projection in projections.values() for gw in projection.per_gw}
+    )
+
+
 def project_all(
     bootstrap: Bootstrap,
     fixtures: list[Fixture],

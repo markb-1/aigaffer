@@ -84,6 +84,13 @@ one would enter a team that was never costed. If you believe this is the week \
 for one, finalize with chip 'none' and make the case in your rationale: it is \
 read by the person whose team this is, and he can play the chip himself.
 
+Some plans carry a path: what the solver would go on to do in later gameweeks \
+if nothing changed. Read it as the argument for the opening move — this is why \
+the transfer is worth making now — and never as a commitment. Only the coming \
+gameweek's transfers are ever entered, and the path is planned again from \
+scratch every run, so a plan you finalize commits its first gameweek and \
+nothing else. resolve re-plans the paths along with the plans, on your minutes.
+
 Two habits, in the order they matter.
 
 Roll when you are not sure. A transfer has to beat doing nothing by more than \

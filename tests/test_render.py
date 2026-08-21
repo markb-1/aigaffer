@@ -47,6 +47,7 @@ from aigaffer.manager.agent import ManagerDecision
 from aigaffer.model.xp import PlayerProjection
 from aigaffer.report.render import render_report
 from aigaffer.solver.lineup import ChipEvs, Lineup
+from aigaffer.solver.multiweek import PlannedMove, PlannedPath
 from aigaffer.solver.optimizer import Plan
 from tests.fixtures import BOOTSTRAP_JSON
 
@@ -167,6 +168,25 @@ DRAFT = Plan(
 PLANS = [ONE, TWO, ROLL]
 
 
+def with_path(plan: Plan, moves: list[PlannedMove]) -> Plan:
+    """``plan`` as the window hands it over: the same opening gameweek, with
+    the rest of the story hanging off it."""
+    return replace(
+        plan,
+        path=PlannedPath(moves=moves, objective=plan.objective, weekly_xp={}),
+    )
+
+
+# Two more gameweeks of the recommended plan: a free move, then a pair that
+# outruns the bank of free transfers by one and pays four points for it.
+FIRST = PlannedMove(event=3, transfers_in=[17], transfers_out=[6], hits=0)
+SECOND = PlannedMove(event=4, transfers_in=[16, 20], transfers_out=[2, 12], hits=1)
+AHEAD = with_path(ONE, [FIRST, SECOND])
+
+ADVISORY = "Advisory — re-planned every run; only this week's moves are ever made."
+SINGLE_WEEK = "Single-week engine (multi-week solve unavailable this run)."
+
+
 # The gaffer's own week, as the manager loop hands it over. His plan and his
 # eleven are already the ones the report is being rendered with — the pipeline
 # swaps them in before it calls this — so what the section adds is the half of
@@ -213,10 +233,20 @@ def report(
     choice: Plan = ONE,
     event: Event = EVENT,
     view: ManagerDecision | None = None,
+    engine_expected: bool = False,
 ) -> str:
     """The report as Task 12 will ask for it."""
     return render_report(
-        "scout", event, PLANS, choice, LINEUP, CHIPS, BOOTSTRAP, XP, view
+        "scout",
+        event,
+        PLANS,
+        choice,
+        LINEUP,
+        CHIPS,
+        BOOTSTRAP,
+        XP,
+        view,
+        engine_expected=engine_expected,
     )
 
 
@@ -380,6 +410,77 @@ def test_a_pick_the_shortlist_never_had_says_where_it_came_from():
 
 def test_a_report_with_no_manager_never_explains_a_re_solve():
     assert "re-solved" not in report()
+
+
+# --- the road ahead --------------------------------------------------------
+
+
+def test_the_road_ahead_names_every_move_the_window_intends():
+    # A gameweek at a time: who goes, who comes in, what each of them costs,
+    # and what the move spends. The last line is the whole point of the
+    # section — none of it is entered but the week above it.
+    assert section(report(choice=AHEAD), "The road ahead") == [
+        "- GW3: out Fenn (£4.5m), in Quinn (£5.5m) — 1 FT, no hit",
+        "- GW4: out Byrne (£4.5m), Lang (£5.5m),"
+        " in Pike (£8.0m), Tovey (£5.0m) — 1 FT, -4 pts in hits",
+        ADVISORY,
+    ]
+
+
+def test_the_road_ahead_follows_the_shortlist_it_came_off():
+    headings = [
+        line for line in report(choice=AHEAD).splitlines() if line.startswith("#")
+    ]
+
+    assert headings == [
+        "# AI Gaffer — GW2 scout",
+        "## Recommendation",
+        "## Starting XI (3-4-3)",
+        "## Candidate plans",
+        "## The road ahead",
+        "## Chip EV",
+        "## Watchlist",
+    ]
+
+
+def test_a_plan_off_the_single_week_solver_has_no_road_ahead():
+    # There is no window behind it, so there is nothing to print and nothing
+    # to caveat: the report is the one it was before the window existed.
+    assert "## The road ahead" not in report()
+    assert ADVISORY not in report()
+
+
+def test_a_window_that_plans_nothing_further_prints_no_road_either():
+    # A path is the list of things a plan means to do, and an empty one means
+    # it means to do nothing — which is a heading over an empty section.
+    assert "## The road ahead" not in report(choice=with_path(ONE, []))
+
+
+def test_the_road_ahead_is_the_gaffers_when_the_week_is_his():
+    # His plan is a plan: if he finalized one off a re-solve, its path is the
+    # one the report prints, because that is the week being recommended.
+    view = replace(gaffer(), plan=AHEAD)
+
+    assert section(report(choice=AHEAD, view=view), "The road ahead")[0] == (
+        "- GW3: out Fenn (£4.5m), in Quinn (£5.5m) — 1 FT, no hit"
+    )
+
+
+def test_a_week_the_window_could_not_answer_says_which_engine_did():
+    # The multi-week engine was configured on and came back with nothing, so
+    # the shortlist below was drawn up by the other one. A reader comparing
+    # this week's report with last week's is owed the reason it got shorter.
+    assert section(report(engine_expected=True), "Candidate plans")[-1] == SINGLE_WEEK
+
+
+def test_the_engine_is_never_mentioned_when_the_window_answered():
+    assert SINGLE_WEEK not in report(choice=AHEAD, engine_expected=True)
+
+
+def test_a_planner_turned_off_on_purpose_explains_nothing():
+    # AIGAFFER_PLANNER=single is a configuration, not a degradation, and a
+    # report that apologised for it every week would be crying wolf.
+    assert SINGLE_WEEK not in report()
 
 
 def test_the_chip_panel_signs_every_number():

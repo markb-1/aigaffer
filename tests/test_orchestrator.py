@@ -172,10 +172,122 @@ def test_the_report_is_the_whole_report(scout_run):
     assert [headings[1], *headings[3:]] == [
         "## Recommendation",
         "## Candidate plans",
+        # The window is the default engine, so an ordinary run has somewhere
+        # it is going as well as something it is doing.
+        "## The road ahead",
         "## Chip EV",
         "## Watchlist",
     ]
     assert "Deadline: Fri 22 Aug 2025 17:30 UTC" in scout_run.report
+
+
+def test_the_window_the_projections_cover_is_the_window_the_planner_plans(
+    seam, monkeypatch
+):
+    # The planner and the projections have to agree about which gameweeks
+    # exist: a window with a gameweek nobody projected in it is a window
+    # planned on zeros, and the arithmetic that says how long it is lives in
+    # one place.
+    asked: list[dict] = []
+    real = orchestrator.generate_plans
+
+    def spy(*args, **kwargs):
+        asked.append(kwargs)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(orchestrator, "generate_plans", spy)
+    _, projections = build_projections(seam.inputs, seam.cfg)
+
+    solve(seam.inputs, projections, seam.cfg)
+
+    covered = sorted({gw for p in projections.values() for gw in p.per_gw})
+    assert len(covered) == seam.cfg.horizon and covered[0] == seam.inputs.event.id
+    assert asked == [
+        {
+            "projections_events": covered,
+            "decay": seam.cfg.decay,
+            "planner": "multi",
+        }
+    ]
+
+
+def test_the_window_answers_and_the_recommendation_carries_its_path(scout_run):
+    # The engine is on by default, so an ordinary run comes back with a plan
+    # that knows what its opening move is for.
+    decision = scout_run.store.last_runs(1)[0]["decision"]
+
+    assert decision["engine"] == "multi"
+    assert decision["path"], "a window with nothing after this week is not one"
+    for move in decision["path"]:
+        assert move["event"] > 2
+        assert len(move["in"]) == len(move["out"]) >= 1
+        assert all(isinstance(pid, int) for pid in move["in"] + move["out"])
+        assert isinstance(move["hits"], int)
+
+
+def test_the_report_says_where_the_recommendation_is_going(scout_run):
+    ahead = bullets(scout_run.report, "The road ahead")
+    decision = scout_run.store.last_runs(1)[0]["decision"]
+
+    assert len(ahead) == len(decision["path"])
+    assert ahead[0].startswith(f"- GW{decision['path'][0]['event']}: out ")
+    assert (
+        "Advisory — re-planned every run; only this week's moves are ever made."
+        in scout_run.report
+    )
+    assert "Single-week engine" not in scout_run.report
+
+
+def test_the_single_week_planner_is_recorded_as_the_engine_it_is(tmp_path):
+    # AIGAFFER_PLANNER=single: the other engine, on purpose. There is no path
+    # to print and nothing to apologise for.
+    store = Store(tmp_path / "aigaffer.db")
+    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path, planner="single")
+
+    report = run_pipeline(cfg, make_client(pipeline_routes()), store, "scout")
+    decision = store.last_runs(1)[0]["decision"]
+
+    assert decision["engine"] == "single"
+    assert "path" not in decision
+    assert "## The road ahead" not in report
+    assert "Single-week engine" not in report
+
+
+def test_a_window_that_answers_nothing_says_so_under_the_shortlist(
+    monkeypatch, tmp_path
+):
+    # The multi-week engine was asked for and came back with nothing, so the
+    # single-week solver drew this shortlist up. The report says which.
+    # Every window solve comes back with nothing, which is what an infeasible
+    # board or a sweep that ran out of time looks like from here.
+    monkeypatch.setattr("aigaffer.solver.plans.optimize_path", lambda *a, **k: None)
+    store = Store(tmp_path / "aigaffer.db")
+
+    report = run_pipeline(
+        Config(team_id=TEAM_ID, state_dir=tmp_path),
+        make_client(pipeline_routes()),
+        store,
+        "scout",
+    )
+
+    assert "Single-week engine (multi-week solve unavailable this run)." in report
+    assert store.last_runs(1)[0]["decision"]["engine"] == "single"
+
+
+def test_a_draft_never_claims_the_window_was_unavailable(tmp_path):
+    # Fifteen players from nothing is not a question the window is asked —
+    # a whole squad will not fit under a gameweek's transfer ceiling — so the
+    # single-week solver answering it is not a degradation to report.
+    routes = pipeline_routes()
+    del routes[PICKS_PATH]
+    store = Store(tmp_path / "aigaffer.db")
+
+    report = run_pipeline(
+        Config(team_id=TEAM_ID, state_dir=tmp_path), make_client(routes), store, "scout"
+    )
+
+    assert "Single-week engine" not in report
+    assert store.last_runs(1)[0]["decision"]["engine"] == "single"
 
 
 def test_the_shortlist_offers_more_than_one_plan(scout_run):
@@ -730,6 +842,37 @@ def test_the_resolver_reprojects_and_resolves_on_his_minutes(monkeypatch, tmp_pa
     assert FERRER not in seen["xi"], "told he is not playing, the solver drops him"
     assert store.has_run(2, "scout") is True
     assert "## The Gaffer's view" in report
+
+
+def test_a_re_solve_plans_the_road_ahead_again_on_his_minutes(monkeypatch, tmp_path):
+    # The resolver is this module's own solve, so a re-solve re-plans the
+    # window as well as the week — and the plan he finalizes off it carries
+    # the path that came back, into the report and into the record.
+    seen = {}
+
+    def re_solve(consult: Consult) -> ManagerDecision:
+        solved, _ = consult.resolver({FERRER: 0.0})
+        seen["paths"] = [plan.path for plan in solved.plans]
+        seen["chosen"] = solved.choice.path
+        seen["before"] = consult.solve0.choice.path
+        return decided(consult, plan=solved.choice)
+
+    report, store, _ = gaffer_run(monkeypatch, tmp_path, decide=re_solve, send=False)
+    decision = store.last_runs(1)[0]["decision"]
+
+    assert seen["before"] is not None, "the first solve planned a window too"
+    assert seen["paths"] and all(path is not None for path in seen["paths"])
+    assert decision["engine"] == "multi"
+    assert decision["path"] == [
+        {
+            "event": move.event,
+            "in": move.transfers_in,
+            "out": move.transfers_out,
+            "hits": move.hits,
+        }
+        for move in seen["chosen"].moves
+    ]
+    assert ("## The road ahead" in report) == bool(seen["chosen"].moves)
 
 
 def test_the_report_is_costed_on_the_projections_he_decided_on(monkeypatch, tmp_path):

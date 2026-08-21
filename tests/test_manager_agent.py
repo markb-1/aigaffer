@@ -59,6 +59,7 @@ from aigaffer.manager.tools import SYSTEM_PROMPT, TOOLS
 from aigaffer.model.xp import PlayerProjection
 from aigaffer.orchestrator import PipelineInputs, SolveResult
 from aigaffer.solver.lineup import ChipEvs, Lineup
+from aigaffer.solver.multiweek import PlannedMove, PlannedPath
 from aigaffer.solver.optimizer import Plan
 from tests.fixtures import PIPELINE_BOOTSTRAP_JSON
 
@@ -567,6 +568,48 @@ def test_a_resolve_presents_its_plans_with_ids_that_go_on_counting():
     assert "plan 2: out Gale (id 7," in presented
     assert "plan 3: out Gale (id 7," in presented
     assert "plan 0" not in presented and "plan 1" not in presented
+
+
+def test_a_resolve_shows_where_its_fresh_plans_are_going():
+    # A re-solve runs the same solver the briefing's plans came off, so the
+    # plans it hands back carry paths of their own — planned on his minutes,
+    # which is the whole reason he re-solved.
+    ahead = replace(
+        FRESH,
+        path=PlannedPath(
+            moves=[
+                PlannedMove(event=3, transfers_in=[18], transfers_out=[15], hits=0)
+            ],
+            objective=FRESH.objective,
+            weekly_xp={},
+        ),
+    )
+    resolver = FakeResolver(
+        solved=replace(SOLVE1, plans=[ahead, FRESH_HIT], choice=ahead)
+    )
+
+    client, _ = converse(
+        [
+            reply(use("resolve", {})),
+            reply(use("finalize_decision", finalize(plan_id=2))),
+        ],
+        resolver,
+    )
+    presented = only_result(client.requests[1])["content"]
+
+    assert "plan 2: out Gale (id 7," in presented
+    assert " | path: GW3 +Reid -Oduya" in presented
+    assert "plan 3: " in presented and presented.count("| path:") == 1
+
+
+def test_the_system_prompt_says_a_path_is_advice_and_not_a_commitment():
+    # He is choosing between openings on the strength of where they lead, so
+    # he has to know that only the opening is ever entered — and that asking
+    # for a re-solve plans the rest of it again on his own minutes.
+    assert "Some plans carry a path" in SYSTEM_PROMPT
+    assert "the coming gameweek's transfers are ever entered" in SYSTEM_PROMPT
+    assert "planned again from scratch every run" in SYSTEM_PROMPT
+    assert "resolve re-plans the paths" in SYSTEM_PROMPT
 
 
 def test_a_resolve_says_the_earlier_plans_are_still_on_the_board():

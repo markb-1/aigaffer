@@ -58,10 +58,11 @@ from aigaffer.data.fpl_api import FplClient
 from aigaffer.data.free_transfers import compute_free_transfers
 from aigaffer.data.models import Bootstrap, Event, Fixture, GwHistory, Player, Squad
 from aigaffer.model.minutes import expected_minutes
-from aigaffer.model.xp import PlayerProjection, project_all
+from aigaffer.model.xp import PlayerProjection, project_all, projected_events
 from aigaffer.report.render import render_report
 from aigaffer.report.telegram import send_report
 from aigaffer.solver.lineup import ChipEvs, Lineup, chip_evs, pick_lineup
+from aigaffer.solver.multiweek import PlannedMove
 from aigaffer.solver.optimizer import (
     AVAILABLE,
     CANDIDATES_PER_POSITION,
@@ -114,6 +115,12 @@ DRAFT_TRANSFERS = SQUAD_SIZE
 DRAFT_LABEL = "initial squad draft"
 
 NO_CHIPS = ChipEvs(bench_boost=0.0, triple_captain=0.0, free_hit=0.0, wildcard=0.0)
+
+# Which solver answered, for the record and for the report. It is read off the
+# recommendation rather than off the configuration, because asking for the
+# window and getting it are two different things: a plan that came off the
+# window carries a path and a plan off the single-week solver does not.
+MULTI, SINGLE = "multi", "single"
 
 # What a minute override may say. It is an absolute expectation, not a nudge,
 # and a match is ninety minutes long however confidently something outside
@@ -238,6 +245,11 @@ def run_pipeline(
         inputs.bootstrap,
         costed,
         gaffer,
+        # Asked for, which is not the same as answered. The report needs both
+        # halves to tell a window that fell over from a run that wanted the
+        # single-week solver; a draft is neither, since the window is never
+        # asked to buy fifteen players.
+        engine_expected=cfg.planner != SINGLE and not solved.draft_mode,
     )
     # Asked for, and not there at all. Not the same as the kill switch, no key
     # or a draft — those are choices, and the invariant is that they render
@@ -262,7 +274,13 @@ def run_pipeline(
         "objective": choice.objective,
         "chip_evs": asdict(solved.chips),
         "chip_baseline": _baseline_label(solved),
+        "engine": _engine(choice),
     }
+    # The rest of the window, when there was one: ids and gameweeks, which is
+    # what a later run can compare its own plan against. Names would be the
+    # report's job and would age worse than the ids do.
+    if choice.path is not None:
+        decision["path"] = [_planned(move) for move in choice.path.moves]
     if gaffer is not None:
         # Both halves of the record go in, superseded entries and all: the ones
         # a re-solve spent, and the ones he only wrote down. This is what
@@ -366,13 +384,18 @@ def solve(
 
     Pure, and cheap enough to run more than once: given other projections it
     answers the same question about a different week, which is how an opinion
-    about the team news becomes a different recommendation. ``cfg`` is not
-    read here — the horizon and the decay are spent in the projection — but
-    every stage takes it, so a caller re-running the last two has one shape
-    to call them by.
+    about the team news becomes a different recommendation. That is also why
+    the window the planner plans over is read off ``projections`` rather than
+    computed from ``cfg``: whatever gameweeks the caller has numbers for are
+    the gameweeks there is anything to plan with, and the two can then never
+    come to disagree.
+
+    ``cfg`` is read for the two things the shortlist is drawn up by and the
+    projection is not: which planner to ask, and what a gameweek further out is
+    worth against this one.
     """
     plans, choice = _plans(
-        inputs.players, projections, inputs.squad, inputs.free_transfers
+        inputs.players, projections, inputs.squad, inputs.free_transfers, cfg
     )
     positions = {pid: player.element_type for pid, player in inputs.players.items()}
     gw_xp = {
@@ -628,12 +651,15 @@ def _plans(
     xp: dict[int, PlayerProjection],
     squad: Squad | None,
     free_transfers: int | None,
+    cfg: Config,
 ) -> tuple[list[Plan], Plan]:
     """The shortlist, and the plan to recommend from it.
 
     ``free_transfers`` is None exactly when ``squad`` is, and then there is no
     shortlist to draw up: one draft is the whole answer, and it is its own
-    recommendation.
+    recommendation. A draft is also the one week the window is never asked
+    about — fifteen signings will not fit under a gameweek's transfer ceiling
+    — which is why the drafting branch below does not pass one.
     """
     if squad is None:
         draft = optimize(
@@ -648,10 +674,51 @@ def _plans(
             raise PipelineError("no legal fifteen fits the opening budget")
         return [draft], draft
 
-    plans = generate_plans(players, xp, squad.player_ids, squad.bank, free_transfers)
+    plans = generate_plans(
+        players,
+        xp,
+        squad.player_ids,
+        squad.bank,
+        free_transfers,
+        projections_events=projected_events(xp),
+        decay=cfg.decay,
+        planner=cfg.planner,
+    )
     if not plans:
         raise PipelineError("no legal squad is reachable from the current one")
     return plans, recommend(plans)
+
+
+def _engine(choice: Plan) -> str:
+    """Which solver the week's recommendation came off.
+
+    The plan itself is the evidence: the window hangs a path on what it
+    returns and the single-week solver has nothing to hang. So a run that
+    asked for the window and fell back on the other engine is recorded as what
+    happened rather than as what was configured, and a decision record can be
+    read a season later without the environment it was produced in.
+
+    A draft is the single-week solver too, and honestly so: fifteen signings
+    are not a window's question.
+    """
+    return MULTI if choice.path is not None else SINGLE
+
+
+def _planned(move: PlannedMove) -> dict:
+    """One future gameweek of the path, as the record keeps it.
+
+    Player ids and nothing else. A name is what the report is for, and a name
+    in the record would be the one field that stops meaning what it said when
+    the API renames somebody. ``in`` and ``out`` rather than the field's own
+    names, because this is read beside ``transfers_in`` and ``transfers_out``
+    — the moves that were actually made — and the two must not look alike.
+    """
+    return {
+        "event": move.event,
+        "in": move.transfers_in,
+        "out": move.transfers_out,
+        "hits": move.hits,
+    }
 
 
 def _chip_baseline(plans: list[Plan], choice: Plan) -> Plan:
