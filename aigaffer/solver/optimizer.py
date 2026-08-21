@@ -16,9 +16,12 @@ Two decisions are deliberately blunt:
   not an oversight.
 
 Left to itself the model will make at most ``MAX_TRANSFERS`` moves: past three
-a manager is wildcarding, not transferring. ``forced_transfers`` overrides
-that, which is also how a squad is drafted from nothing — pass an empty
-``current_squad`` and ``forced_transfers=15``.
+a manager is wildcarding, not transferring. A manager who *is* wildcarding
+says so by having more than three free transfers, and the cap follows him up
+— that is how a wildcard or free hit is valued, with fifteen free moves and
+the whole squad on the table. ``forced_transfers`` overrides both, which is
+also how a squad is drafted from nothing — pass an empty ``current_squad``
+and ``forced_transfers=15``.
 """
 
 from collections import defaultdict
@@ -156,7 +159,7 @@ def optimize(
     problem += pulp.lpSum(starting[p] for p in by_position[FORWARD]) >= MIN_XI_FORWARDS
 
     if forced_transfers is None:
-        problem += transfers <= MAX_TRANSFERS
+        problem += transfers <= max(MAX_TRANSFERS, free_transfers)
     else:
         problem += transfers == forced_transfers
     problem += hits >= transfers - free_transfers

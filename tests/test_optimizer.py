@@ -32,6 +32,10 @@ The squad is players 1-15, costing 910, lining up 4-4-2 as
 ``1 | 3 4 5 6 | 8 9 10 11 | 13 14`` — every alternative XI swaps a starter for
 a cheaper-scoring bench man. Its xP is 322 started plus 0.1 x 31 benched =
 325.1.
+
+Two boards this table cannot draw build their own and say so where they
+stand: ``four_upgrades`` adds three more cost-neutral signings, and
+``flat_squad`` is a fifteen priced so that only its projections matter.
 """
 
 from collections import Counter
@@ -100,6 +104,50 @@ def universe(*extra: int) -> tuple[dict[int, Player], dict[int, PlayerProjection
     """The current squad plus ``extra``, so a test can starve the solver."""
     ids = set(CURRENT) | set(extra)
     return {i: PLAYERS[i] for i in ids}, {i: XP[i] for i in ids}
+
+
+# Three more signings, each on a club of his own and each costing exactly what
+# the squad man he replaces sells for: 21 for 7, 22 for 15, 23 for 2. With 16
+# in for 12 that is four upgrades worth making and nothing else to buy.
+UPGRADES = [
+    (21, DEF, 8, 40, 60.0, "a"),
+    (22, FWD, 9, 45, 55.0, "a"),
+    (23, GK, 10, 40, 40.0, "a"),
+]
+
+
+def four_upgrades() -> tuple[dict[int, Player], dict[int, PlayerProjection]]:
+    """The current squad, 16, and the three ``UPGRADES``."""
+    players, xp = universe(16)
+    for pid, position, club, cost, points, status in UPGRADES:
+        players[pid] = _player(pid, position, club, cost, status)
+        xp[pid] = PlayerProjection(player_id=pid, per_gw={2: points}, total=points)
+    return players, xp
+
+
+FLAT_SQUAD = list(range(101, 116))
+
+
+def flat_squad(
+    points: list[float],
+) -> tuple[dict[int, Player], dict[int, PlayerProjection]]:
+    """A fifteen of its own — ids 101-115, two keepers, five defenders, five
+    midfielders, three forwards — projected ``points`` in that order.
+
+    Everyone costs 50 and comes three to a club, so nothing but the
+    projections can decide the shape of the XI. The table above does not
+    apply to these ids.
+    """
+    positions = [GK] * 2 + [DEF] * 5 + [MID] * 5 + [FWD] * 3
+    players = {
+        pid: _player(pid, position, (pid - FLAT_SQUAD[0]) // 3 + 1, 50, "a")
+        for pid, position in zip(FLAT_SQUAD, positions)
+    }
+    xp = {
+        pid: PlayerProjection(player_id=pid, per_gw={2: pts}, total=pts)
+        for pid, pts in zip(FLAT_SQUAD, points)
+    }
+    return players, xp
 
 
 def assert_legal(plan, budget: int) -> None:
@@ -246,6 +294,82 @@ def test_drafts_a_whole_squad_from_scratch():
     assert plan.xp_total == pytest.approx(428.5)
     assert plan.objective == pytest.approx(428.5)
     assert_legal(plan, budget=1000)
+
+
+def test_a_fourth_transfer_worth_making_is_still_capped_at_three():
+    # Four cost-neutral upgrades are on the table. The best three — 21 for 7,
+    # 16 for 12 and 22 for 15 — leave a squad worth 428.6, and the keeper
+    # swap that would follow is worth 12 more than the hit it costs. The cap
+    # takes it off the table anyway: past three moves you are wildcarding.
+    players, xp = four_upgrades()
+
+    plan = optimize(players, xp, CURRENT, bank=0, free_transfers=1)
+
+    assert plan.transfers_in == [16, 21, 22]
+    assert plan.transfers_out == [7, 12, 15]
+    assert plan.hits == 2
+    assert plan.xp_total == pytest.approx(428.6)
+    assert plan.objective == pytest.approx(420.6)
+
+    # And it really is the cap doing it: forced to four, the same board comes
+    # back worth more than the plan the cap allowed.
+    forced = optimize(
+        players, xp, CURRENT, bank=0, free_transfers=1, forced_transfers=4
+    )
+    assert forced.objective == pytest.approx(428.6)
+    assert forced.objective > plan.objective
+
+
+def test_fifteen_free_transfers_lift_the_cap():
+    # A wildcard or free hit is valued by asking for the best squad reachable
+    # in fifteen free moves, which is more than three: all four upgrades go
+    # through, none of them costs a hit, and the squad is worth 440.6.
+    players, xp = four_upgrades()
+
+    plan = optimize(players, xp, CURRENT, bank=0, free_transfers=15)
+
+    assert plan.transfers_in == [16, 21, 22, 23]
+    assert plan.transfers_out == [2, 7, 12, 15]
+    assert plan.hits == 0
+    assert plan.xi == [3, 4, 8, 9, 10, 13, 14, 16, 21, 22, 23]
+    assert plan.xp_total == pytest.approx(440.6)
+
+
+def test_the_xi_fields_one_keeper_and_three_defenders_whatever_the_points_say():
+    # Unconstrained, the best eleven here are both keepers, all five
+    # midfielders, all three forwards and the one defender worth anything. A
+    # team sheet cannot look like that: the second keeper (99) and two of the
+    # forwards make way for the next two defenders, leaving 3-5-2.
+    players, xp = flat_squad(
+        [100.0, 99.0]
+        + [10.0, 9.0, 8.0, 7.0, 6.0]
+        + [96.0, 95.0, 94.0, 93.0, 92.0]
+        + [91.0, 90.0, 89.0]
+    )
+
+    plan = optimize(
+        players, xp, FLAT_SQUAD, bank=0, free_transfers=1, forced_transfers=0
+    )
+
+    assert plan.xi == [101, 103, 104, 105, 108, 109, 110, 111, 112, 113, 114]
+
+
+def test_the_xi_always_fields_a_forward():
+    # Here the eleven best are both keepers, four defenders and every
+    # midfielder, with the forwards nowhere near. Somebody has to play up
+    # front, so the second keeper drops out for a 5.0 forward: 4-5-1.
+    players, xp = flat_squad(
+        [100.0, 99.0]
+        + [91.0, 90.0, 89.0, 88.0, 87.0]
+        + [96.0, 95.0, 94.0, 93.0, 92.0]
+        + [5.0, 4.0, 3.0]
+    )
+
+    plan = optimize(
+        players, xp, FLAT_SQUAD, bank=0, free_transfers=1, forced_transfers=0
+    )
+
+    assert plan.xi == [101, 103, 104, 105, 106, 108, 109, 110, 111, 112, 113]
 
 
 def test_candidate_pool_keeps_the_squad_and_the_best_available():
