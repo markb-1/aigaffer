@@ -318,7 +318,10 @@ class _Conversation:
             # the decision is taken out of his hands with tool_choice, and stays
             # out of them for as long as he keeps talking.
             self._append(response)
-            self.messages.append({"role": "user", "content": NUDGE})
+            # A block list rather than a bare string, like every other message
+            # this loop writes: the request marks the last block of the last
+            # message, and a string has no blocks to mark.
+            self.messages.append({"role": "user", "content": [_text(NUDGE)]})
             if nudged:
                 forced = True
             nudged = True
@@ -358,14 +361,30 @@ class _Conversation:
     def _request(self, forced: bool) -> dict:
         """The request, byte-stable where it can be: the system block never
         moves, so the prefix caches, and the messages are copied so that a
-        request already sent cannot be edited by the turn after it."""
+        request already sent cannot be edited by the turn after it.
+
+        Three cache breakpoints, of the four the API allows. Two never move —
+        the system prompt and the briefing, which is the whole of what cannot
+        change once the conversation has started. The third rides the end of
+        the messages, and it is the one that matters by the twelfth turn: the
+        conversation is resent in full every time, so the prefix that grows is
+        the expensive one, and a marker only on the fixed head of it leaves
+        every turn's searches and tool results to be paid for again on the next.
+
+        It moves rather than multiplies. The marker is put on the copy this
+        request sends and never on ``self.messages``, so nothing accumulates,
+        nothing already sent is edited afterwards, and the count stays at three.
+        """
+        messages = list(self.messages)
+        if messages:
+            messages[-1] = _rolling(messages[-1])
         request = {
             "model": self.cfg.manager_model,
             "max_tokens": MAX_TOKENS,
             "output_config": EFFORT,
             "system": [_cached(SYSTEM_PROMPT)],
             "tools": TOOLS,
-            "messages": list(self.messages),
+            "messages": messages,
         }
         if forced:
             request["tool_choice"] = FORCE_FINALIZE
@@ -560,13 +579,44 @@ class _Conversation:
             self.messages.append({"role": "assistant", "content": content})
 
 
+def _rolling(message: dict) -> dict:
+    """``message`` with the moving cache marker on its last block.
+
+    A copy, always: the marker belongs to one request and the next one puts it
+    somewhere else, so writing it into the conversation would leave a trail of
+    breakpoints behind and edit requests that have already gone.
+
+    The last block of an assistant turn is the SDK's own object rather than a
+    dict of ours, and that is the one case this leaves alone — a resumed pause
+    is the only request that ends on one, it is a request in the middle of a
+    turn, and rewriting somebody else's model to save a cache read is not a
+    trade worth making. Marking the briefing block twice is not a case at all:
+    it already carries the marker, and setting it again sets the same value.
+    """
+    content = message.get("content")
+    if not isinstance(content, list) or not content:
+        return message
+    last = content[-1]
+    if not isinstance(last, dict):
+        return message
+    marked = list(content)
+    marked[-1] = {**last, "cache_control": {"type": "ephemeral"}}
+    return {**message, "content": marked}
+
+
+def _text(body: str) -> dict:
+    """A plain text block: what this loop writes instead of a bare string."""
+    return {"type": "text", "text": body}
+
+
 def _cached(text: str) -> dict:
     """A text block the server is asked to cache the prefix up to.
 
     Caching is a prefix match, so the two blocks this marks — the system
     prompt and the briefing, in that order — are exactly the part of the
-    request that cannot change once the conversation has started. Everything
-    volatile is after them: his turns, and the tool results answering them.
+    request that cannot change once the conversation has started. The third
+    breakpoint, on the growing end of the conversation, is placed per request
+    by :func:`_rolling` and never written into the conversation itself.
     """
     return {"type": "text", "text": text, "cache_control": {"type": "ephemeral"}}
 

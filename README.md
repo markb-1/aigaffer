@@ -133,12 +133,21 @@ a test holds it to that.
 
 ### What it costs
 
-Roughly **$0.50–2 per decision run** at Opus 5 rates, depending on how many
-searches the week needs — a quiet week is a couple, a week with three fitness
-doubts is a dozen. Two decision runs a gameweek (scout and deadline), so on the
-order of $1–4 a week, $40–150 for a season. The system prompt and the briefing
-are cached together as the request's stable prefix, which is most of the input
-on a dozen-turn conversation.
+**Typically well under $2 per decision run** at Opus 5 rates, and a search-heavy
+week can be a few dollars. The driver is not the searches themselves but that
+the conversation is resent in full on every turn: a quiet week that searches
+twice and decides in three turns is cents, and a pathological one — a dozen
+searches, two re-solves, twelve turns each re-reading everything before them —
+costs an order of magnitude more. Two decision runs a gameweek (scout and
+deadline), so on the order of $2–8 a week and $50–200 for a season, weighted
+towards the low end because most weeks are quiet.
+
+Three cache breakpoints hold it down, of the four the API allows. Two never
+move — the system prompt and the briefing, which are the whole of what cannot
+change once the conversation has started, and most of the input on turn one.
+The third rides the end of the messages and moves forward with every turn, so
+each turn's searches and tool results are read from cache by the turn after it
+instead of being paid for in full a dozen times.
 
 ### Turning it off
 

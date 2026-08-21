@@ -672,6 +672,67 @@ def test_without_a_resolve_the_lineup_stands_on_the_briefings_projections():
 # --- the shape of the request ----------------------------------------------
 
 
+def breakpoints(request: dict) -> int:
+    """How many cache breakpoints the request spends, the system block included.
+
+    Four is the API's cap, and this loop is meant to spend three: the system
+    prompt, the briefing, and one that rides the end of the conversation.
+    """
+    blocks = [*request["system"]]
+    for message in request["messages"]:
+        blocks += message["content"]
+    return sum(
+        isinstance(block, dict) and "cache_control" in block for block in blocks
+    )
+
+
+def test_the_end_of_the_conversation_is_cached_too():
+    # The prefix that grows is the expensive one: by the last turn every
+    # request is resending the whole conversation, and without a marker on the
+    # end of it only the briefing and the prompt are ever read from cache.
+    client, _ = converse(
+        [
+            reply(use("resolve", {})),
+            reply(use("adjust_players", adjust())),
+            reply(use("finalize_decision", finalize(plan_id=2))),
+        ]
+    )
+
+    for request in client.requests:
+        last = request["messages"][-1]["content"][-1]
+        assert last["cache_control"] == {"type": "ephemeral"}
+        assert breakpoints(request) <= 4, "four is the cap, and it is not ours to blow"
+
+
+def test_the_marker_on_the_end_moves_rather_than_accumulating():
+    client, _ = converse(
+        [
+            reply(use("resolve", {})),
+            reply(use("adjust_players", adjust())),
+            reply(use("finalize_decision", finalize(plan_id=2))),
+        ]
+    )
+    third = client.requests[2]["messages"]
+
+    # The briefing, the end of the conversation, and the system block: three,
+    # not one more for every turn that has been and gone.
+    assert breakpoints(client.requests[2]) == 3
+    assert "cache_control" not in third[-3]["content"][-1], "where it used to be"
+    assert third[0]["content"][0]["cache_control"] == {"type": "ephemeral"}
+    assert client.requests[2]["system"][0]["cache_control"] == {"type": "ephemeral"}
+
+
+def test_a_turn_that_cannot_be_marked_is_left_alone():
+    # A resumed pause ends the request on the assistant's own content blocks,
+    # which are the SDK's objects and not ours to rewrite. Two breakpoints then,
+    # and no crash.
+    paused = reply(text("Half a search in."), searched(), stop="pause_turn")
+    client, decision = converse([paused, reply(use("finalize_decision", finalize()))])
+
+    assert breakpoints(client.requests[1]) == 2
+    assert decision.source == "manager"
+
+
 def test_every_request_carries_the_same_cached_system_block():
     client, _ = converse(
         [
@@ -1121,7 +1182,8 @@ def test_a_turn_that_ends_without_a_decision_is_nudged_once_and_then_forced():
         ]
     )
 
-    assert "finalize_decision" in client.requests[1]["messages"][-1]["content"]
+    nudge = client.requests[1]["messages"][-1]["content"]
+    assert "finalize_decision" in nudge[-1]["text"]
     assert "tool_choice" not in client.requests[1]
     assert client.requests[2]["tool_choice"] == {
         "type": "tool",
