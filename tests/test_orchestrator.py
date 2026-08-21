@@ -825,6 +825,68 @@ def test_an_import_that_blows_up_is_a_fallback_and_not_a_lost_report(
     assert store.has_run(2, "scout") is True
 
 
+def test_a_manager_who_never_loaded_at_all_says_so_in_the_report(
+    monkeypatch, tmp_path
+):
+    # A dependency that will not import leaves no decision to hang a section
+    # on, so the report is Phase 1's — and a fork whose install broke could
+    # otherwise read a season of solver-only reports without ever being told.
+    # One line, in the document that actually goes to the phone.
+    def never(consult: Consult) -> ManagerDecision:
+        raise AssertionError("the manager was asked with his own module broken")
+
+    stub_gaffer(monkeypatch, never)
+    monkeypatch.setitem(sys.modules, "aigaffer.manager.agent", PoisonedModule())
+    store = Store(tmp_path / "aigaffer.db")
+
+    report = run_pipeline(
+        gaffer_cfg(tmp_path),
+        make_client(pipeline_routes()),
+        store,
+        "scout",
+        send=False,
+    )
+
+    assert "## The Gaffer's view" not in report
+    assert report.endswith(f"\n{orchestrator.MANAGER_UNAVAILABLE}\n")
+    written = (tmp_path / "reports" / "gw2-scout.md").read_text(encoding="utf-8")
+    assert written == report, "the diary and the phone read the same report"
+
+
+def test_a_manager_who_was_reached_never_gets_the_note(monkeypatch, tmp_path):
+    # The Gaffer's view says whose pick it is, in his own section. A second
+    # line saying the same thing would be the report explaining itself twice.
+    report, _, _ = gaffer_run(monkeypatch, tmp_path, decide=unavailable, send=False)
+
+    assert orchestrator.MANAGER_UNAVAILABLE not in report
+
+
+def test_a_run_with_no_manager_asked_for_carries_no_note(
+    monkeypatch, tmp_path, scout_run
+):
+    # No key is not a degradation, it is a configuration, and the invariant is
+    # that it renders Phase 1's report byte for byte.
+    assert orchestrator.MANAGER_UNAVAILABLE not in scout_run.report
+
+
+def test_a_draft_carries_no_note_either(monkeypatch, tmp_path):
+    # Fifteen players from nothing is not a week the manager is asked about,
+    # and the report says it is a draft in its own heading.
+    stub_gaffer(monkeypatch)
+    routes = pipeline_routes()
+    del routes[PICKS_PATH]
+
+    report = run_pipeline(
+        gaffer_cfg(tmp_path),
+        make_client(routes),
+        Store(tmp_path / "aigaffer.db"),
+        "scout",
+        send=False,
+    )
+
+    assert orchestrator.MANAGER_UNAVAILABLE not in report
+
+
 def test_a_chip_he_still_holds_is_played(monkeypatch, tmp_path):
     report, store, _ = gaffer_run(
         monkeypatch,

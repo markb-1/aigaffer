@@ -1,0 +1,23 @@
+name: tests
+
+# The suite is the only thing standing between a bad edit and a missed report,
+# and it runs offline in seconds, so it runs on everything: every push, and
+# every pull request against any branch.
+on: [push, pull_request]
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    # Four hundred tests that fake every HTTP call take seconds. Ten minutes is
+    # a cap on something having hung — a solve that will not converge, a
+    # download that will not finish — rather than a budget anything spends.
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      # The dev extra is pytest and the package itself, which is what the suite
+      # imports. No secrets: nothing here may reach Anthropic or the FPL API,
+      # and a job with no credentials is the cheapest way to keep it that way.
+      - run: pip install -e ".[dev]"
+      - run: pytest -q

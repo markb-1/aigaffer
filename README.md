@@ -120,8 +120,12 @@ exception's own words, which can carry a key or a token.
 **Never asked at all.** No key, the kill switch, an initial squad draft
 (fifteen players from nothing is not a week to read the news about), or a
 dependency that will not import. Then there is no decision object to hang a
-section on, the report is exactly Phase 1's, and the reason goes to stdout only.
-The import case is the one that deserves a look — see Deferred, below.
+section on and the report is exactly Phase 1's. The first three are choices,
+and they say nothing: that is the invariant below. The fourth is an accident,
+so the report carries one line — *"Note: the manager is configured but was
+unavailable this run; this is the solver's pick."* — because a fork whose
+`anthropic` install broke would otherwise read a season of solver-only reports
+and never be told.
 
 The rule underneath: the Phase 1 path is the invariant. With
 `AIGAFFER_MANAGER=0` the pipeline produces byte-identical output to Phase 1, and
@@ -218,16 +222,7 @@ head this list went in with Phase 2 — it is what `resolve` re-solves through.
    ships is a single-gameweek ranking sanity check against the live API (above),
    which cannot say whether the bot would have beaten the average manager over a
    season — the question the spec actually asks.
-3. **Silent degrading on a broken install.** A dependency that will not import
-   drops the manager and says so on stdout, but the report that goes to the
-   phone is then indistinguishable from a Phase 1 one: no Gaffer's view, and no
-   line explaining the absence, because there was no decision object to hang one
-   on. The other two unasked cases are things somebody chose — no key, the kill
-   switch — and the draft says so in its own heading. This one is an accident,
-   and nothing but the log will ever mention it, so a fork whose `anthropic`
-   install broke could run a whole season without a manager and read the same as
-   one that had one.
-4. **Chip economics against the plan actually chosen.** The chip EV panel is
+3. **Chip economics against the plan actually chosen.** The chip EV panel is
    priced once, against the plan that rolls the transfer, before the manager is
    asked anything. If he picks a different plan and plays a chip on it, the
    numbers he argued from describe a squad he did not enter. Re-pricing the
@@ -237,7 +232,7 @@ head this list went in with Phase 2 — it is what `resolve` re-solves through.
    hits, and nothing here does that. The panel still prices both — the wildcard
    over the six-gameweek horizon, which is what the row says, and the other
    three over next gameweek — so the case can be made in the rationale.
-5. **The mid-season chip reset.** `played_chips` counts a chip as gone the
+4. **The mid-season chip reset.** `played_chips` counts a chip as gone the
    moment it appears in the season's history, without asking which half of the
    season it was played in. Modern FPL hands out a second set at the halfway
    point, so from GW20 the bot is too strict rather than too generous — it will
@@ -253,4 +248,6 @@ python3 -m venv .venv
 ```
 
 Requires Python 3.12 or newer. All tests run offline — HTTP is faked with
-`httpx.MockTransport`, never the live API.
+`httpx.MockTransport`, never the live API — which is why the same suite runs on
+every push and pull request in `.github/workflows/tests.yml`, with no secrets
+in the job at all.

@@ -85,6 +85,18 @@ SCOUT_WINDOW = (36, 60)
 
 NOT_CONFIGURED = "telegram not configured: the report was kept but not sent"
 
+# What the report says when a manager was asked for and never reached at all.
+# The labelled fallbacks explain themselves in the Gaffer's view section, but a
+# manager who could not even be imported leaves no decision to hang a section
+# on, and the report would then be Phase 1's exactly: a fork whose install
+# broke could run a season of solver-only weeks and never be told. The stdout
+# line is not enough — nobody is watching it — so the one document that
+# actually goes to the phone says it too.
+MANAGER_UNAVAILABLE = (
+    "Note: the manager is configured but was unavailable this run;"
+    " this is the solver's pick."
+)
+
 # What a run says about the manager, once, on stdout. A schedule nobody is
 # watching leaves the log as the only record of whether the week was decided
 # by a manager who read the news or by a solver that could not.
@@ -195,6 +207,10 @@ def run_pipeline(
     Neither flag reaches the manager. Asking him is reading and thinking, not
     sending or saving, and a dry run that skipped it would print a report
     nobody could check against the one the schedule will produce.
+
+    A manager who was configured and could not be reached at all adds one line
+    to the report before either flag is read, so that the file, the store and
+    the message all say the same thing about who decided this week.
     """
     inputs = fetch_inputs(cfg, client)
     xmins, projections = build_projections(inputs, cfg)
@@ -223,6 +239,15 @@ def run_pipeline(
         costed,
         gaffer,
     )
+    # Asked for, and not there at all. Not the same as the kill switch, no key
+    # or a draft — those are choices, and the invariant is that they render
+    # Phase 1's report byte for byte — and not the same as a labelled fallback
+    # either, which prints a section of its own. This is the accident, and it
+    # is said in the report itself so that the copy on the phone and the copy
+    # in the diary both carry it.
+    if gaffer is None and cfg.manager_enabled and not solved.draft_mode:
+        report += f"\n{MANAGER_UNAVAILABLE}\n"
+
     decision = {
         "mode": mode,
         "event": event.id,
