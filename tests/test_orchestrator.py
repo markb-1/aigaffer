@@ -238,8 +238,8 @@ def test_a_squad_the_api_will_not_show_is_drafted_instead(tmp_path):
 
     signings = bullets(report, "Recommendation")
     assert report.startswith("# AI Gaffer — GW2 scout — initial squad draft")
-    assert signings[0] == "- Out: "  # nobody to sell
-    assert signings[1].count("£") == 15  # a whole squad bought
+    assert signings == [signings[0]]  # nobody to sell, so no sales bullet
+    assert signings[0].count("£") == 15  # a whole squad bought
     assert store.last_runs(1)[0]["decision"]["free_transfers"] is None
 
 

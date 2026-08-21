@@ -146,6 +146,15 @@ TWO = Plan(
     xp_total=259.0,
     objective=255.0,
 )
+DRAFT = Plan(
+    squad=SQUAD,
+    xi=LINEUP.xi,
+    transfers_in=SQUAD,
+    transfers_out=[],
+    hits=0,
+    xp_total=252.0,
+    objective=252.0,
+)
 PLANS = [ONE, TWO, ROLL]
 
 
@@ -270,6 +279,21 @@ def test_a_plan_that_takes_a_hit_says_what_it_costs():
         "- Out: Fenn (DEF, BRW, £4.5m), Gale (DEF, CRV, £4.0m)",
         "- In: Pike (MID, ASH, £8.0m), Reid (FWD, CRV, £9.5m)",
     ]
+
+
+def test_an_opening_draft_buys_without_selling_anybody():
+    # Fifteen signings and nobody to sell. The bullet the sales would have gone
+    # in is left out rather than printed empty: "- Out: " with nothing after it
+    # is how a report that lost half its own list reads, and this is the first
+    # report of a season.
+    drafted = report(choice=DRAFT)
+    lines = section(drafted, "Recommendation")
+
+    assert lines[0] == "15 transfers, no hit."
+    assert lines[1].startswith("- In: ")
+    assert lines[1].count("£") == 15
+    assert len(lines) == 2
+    assert "- Out:" not in drafted
 
 
 def test_standing_still_says_roll_the_transfer():

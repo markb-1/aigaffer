@@ -126,7 +126,13 @@ def deadline(event: Event) -> str:
 def _recommendation(
     choice: Plan, players: dict[int, Player], clubs: dict[int, str]
 ) -> str:
-    """What to do, and what it costs."""
+    """What to do, and what it costs.
+
+    An opening draft buys fifteen and sells nobody, and it is the only plan
+    that does: every other week swaps like for like. So the sales bullet is
+    omitted when there are none rather than printed with nothing after it,
+    which is how a report that has lost half its own list reads.
+    """
     lines = ["## Recommendation", ""]
     if not choice.transfers_in and not choice.transfers_out:
         lines.append("Roll the transfer.")
@@ -134,12 +140,10 @@ def _recommendation(
 
     moves = plural(len(choice.transfers_in), "transfer")
     cost = f"-{choice.hits * HIT_POINTS} pts in hits" if choice.hits else "no hit"
-    lines += [
-        f"{moves}, {cost}.",
-        "",
-        "- Out: " + _listed(choice.transfers_out, players, clubs),
-        "- In: " + _listed(choice.transfers_in, players, clubs),
-    ]
+    lines += [f"{moves}, {cost}.", ""]
+    if choice.transfers_out:
+        lines.append("- Out: " + _listed(choice.transfers_out, players, clubs))
+    lines.append("- In: " + _listed(choice.transfers_in, players, clubs))
     return "\n".join(lines)
 
 
