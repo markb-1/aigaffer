@@ -32,10 +32,14 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
-    # A run is a couple of hundred API calls and a handful of MILP solves:
-    # minutes, not tens of them. A job still going after twenty is stuck, and
-    # it holds the concurrency group against every tick behind it.
-    timeout-minutes: 20
+    # The solver's half is a couple of hundred API calls and a handful of MILP
+    # solves: minutes, not tens of them. The manager's half is up to twelve
+    # unstreamed turns of an agent that searches the web between them, and
+    # twelve slow ones do not fit inside twenty minutes — a cap that cuts off a
+    # conversation we have already paid for is worse than one that never fires.
+    # Thirty is still a sixth of the three hours to the next tick, so the
+    # concurrency group is never the thing at risk.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -46,6 +50,16 @@ jobs:
           FPL_TEAM_ID: ${{ secrets.FPL_TEAM_ID }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          # The manager. An unset secret arrives here as the empty string,
+          # which Config reads as no key at all, and the run is the Phase 1
+          # one: a report, a little worse, on time.
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Set deliberately rather than left unset, so that the run has asked
+          # for a manager: a run that asked and has no key to reach him with
+          # says so on the log, and a missing secret looks like something
+          # rather than like nothing. The kill switch is a repository variable
+          # of the same name set to 0 — no edit to this file, no lost report.
+          AIGAFFER_MANAGER: ${{ vars.AIGAFFER_MANAGER || '1' }}
       - name: Commit state
         # Even when the run failed: it may have sent a report before it died,
         # and a report that went out but was never recorded is one the next

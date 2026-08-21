@@ -1,8 +1,9 @@
 # aigaffer
 
 An autonomous AI manager for Fantasy Premier League. It pulls FPL data, projects
-expected points, solves for the best transfers/lineup/captain, and sends a
-recommendation report to Telegram on a schedule.
+expected points, solves for the best transfers/lineup/captain, puts the result
+to a Claude agent who reads the week's team news and can overrule it, and sends
+a recommendation report to Telegram on a schedule.
 
 ## Phase 1 — "The Analyst"
 
@@ -25,6 +26,9 @@ No transfers are executed in Phase 1 — you make the final call.
 | `TELEGRAM_BOT_TOKEN` | Bot token for report delivery (optional) |
 | `TELEGRAM_CHAT_ID` | Chat to deliver reports to (optional) |
 | `AIGAFFER_STATE_DIR` | State directory (default `state`) |
+| `ANTHROPIC_API_KEY` | Turns the Phase 2 manager on. No key, no manager |
+| `AIGAFFER_MANAGER` | Set to `0` to run the solver alone even with a key |
+| `AIGAFFER_MANAGER_MODEL` | Which model the manager is (default `claude-opus-5`) |
 
 ### Backtest sanity check
 
@@ -62,12 +66,93 @@ optimistic: read it as a sanity check on ranking quality — is the order better
 than chance, and is it holding up week to week? — and never as an estimate of
 how the bot would have done.
 
+## Phase 2 — "The Gaffer"
+
+The solver says what is optimal under the model. Phase 2 adds the half it
+cannot do: what has happened since the numbers were computed. After the solve,
+the week goes to a Claude agent (`aigaffer/manager/`) with four things it may
+do and nothing else:
+
+1. **Read the briefing** — the deadline, the date it was written, the squad,
+   the candidate plans the solver reached, every player any of them would buy
+   or sell with the expected minutes behind him, the chip EV panel and the
+   chips already spent.
+2. **Search the web** for what the model cannot know: injuries, suspensions,
+   rotation, a press conference that made somebody a doubt.
+3. **Overrule the minutes and re-solve.** `adjust_players` sets a player's
+   expected minutes for the coming gameweek absolutely — 0 for a player who is
+   out, 20 for a substitute, 90 for a starter — and `resolve` re-projects and
+   re-solves with those in force, coming back with fresh plans under fresh ids.
+4. **Finalize** one plan, a captain and vice from that plan's eleven, a chip or
+   none, and the rationale.
+
+The guardrails are in code, not in the prompt. A plan is an id from a registry
+minted by the loop, so no amount of text in the conversation — a briefing
+quoting the FPL API, a web page quoting whoever wrote it — can pass for a plan
+that was never solved. The armbands are checked against the eleven of the plan
+he actually chose. A chip needs an argument, not a sentence, and is refused
+outright if the season's history says it is gone. Everything the solver already
+enforced — budget, club quotas, the hit cap — it still enforces, because he
+only ever picks from plans it produced.
+
+What comes back is printed in the report as **The Gaffer's view**: the
+rationale, the chip and its justification, the minute adjustments he settled on
+and how many searches it took.
+
+### The fallback doctrine
+
+A deadline is never silently missed, and a manager who cannot be reached is not
+a reason to miss one. **Every** failure degrades to the solver's own
+recommendation — the exact Phase 1 answer — and the report still goes out on
+time. There are two shapes of failure and they read differently:
+
+**Asked and it went wrong.** A rate limit, an authentication error, a refusal, a
+connection that dies, a turn the model never finishes, twelve turns that reach
+no decision, a re-solve that finds nothing, a chip he tried to play twice, a
+briefing that could not be built. The Gaffer's view section is still printed and
+says whose pick this actually is: *"The gaffer was unavailable (…); this is the
+solver's pick."* The reason is a class name or a phrase of ours — never an
+exception's own words, which can carry a key or a token.
+
+**Never asked at all.** No key, the kill switch, an initial squad draft
+(fifteen players from nothing is not a week to read the news about), or a
+dependency that will not import. Then there is no decision object to hang a
+section on, the report is exactly Phase 1's, and the reason goes to stdout only.
+The import case is the one that deserves a look — see Deferred, below.
+
+The rule underneath: the Phase 1 path is the invariant. With
+`AIGAFFER_MANAGER=0` the pipeline produces byte-identical output to Phase 1, and
+a test holds it to that.
+
+### What it costs
+
+Roughly **$0.50–2 per decision run** at Opus 5 rates, depending on how many
+searches the week needs — a quiet week is a couple, a week with three fitness
+doubts is a dozen. Two decision runs a gameweek (scout and deadline), so on the
+order of $1–4 a week, $40–150 for a season. The system prompt and the briefing
+are cached together as the request's stable prefix, which is most of the input
+on a dozen-turn conversation.
+
+### Turning it off
+
+`AIGAFFER_MANAGER=0` in the environment, or delete the `ANTHROPIC_API_KEY`
+secret. Either way the run is Phase 1's: a report goes out, a little worse, on
+time. On the workflow the switch is a **repository variable** — Settings →
+Secrets and variables → Actions → Variables → `AIGAFFER_MANAGER` = `0` — so the
+gaffer can be stood down mid-season without editing the workflow or throwing
+away the key.
+
+`AIGAFFER_MANAGER` is an opt-out rather than an opt-in, and the workflow sets it
+deliberately so that every scheduled run has *asked* for a manager: a run that
+asked and has no key to reach him with prints one line saying so, which is what
+a missing secret looks like from the outside instead of nothing at all.
+
 ## Operations
 
 The bot runs itself from `.github/workflows/gaffer.yml`. To set it up on a
 fork:
 
-1. **Settings → Secrets and variables → Actions → New repository secret**, three
+1. **Settings → Secrets and variables → Actions → New repository secret**, four
    of them:
 
    | Secret | Value |
@@ -75,10 +160,12 @@ fork:
    | `FPL_TEAM_ID` | your FPL entry id (the number in your team's URL) |
    | `TELEGRAM_BOT_TOKEN` | from [@BotFather](https://t.me/BotFather) |
    | `TELEGRAM_CHAT_ID` | the chat to send to — message the bot, then read `chat.id` from `https://api.telegram.org/bot<TOKEN>/getUpdates` |
+   | `ANTHROPIC_API_KEY` | from [the console](https://console.anthropic.com/settings/keys) — the Phase 2 manager. Already configured on this repo |
 
-   Set all three or none: a token without a chat id delivers nothing and says
-   so in the log. The workflow needs `contents: write` (already declared) to
-   commit `state/` back.
+   Set all three Telegram ones or none: a token without a chat id delivers
+   nothing and says so in the log. `ANTHROPIC_API_KEY` is independent of them
+   and optional — leave it out and every run is Phase 1's. The workflow needs
+   `contents: write` (already declared) to commit `state/` back.
 2. **Actions → gaffer → Run workflow** to try it by hand; the `mode` input runs
    one report by name instead of asking the clock.
 
@@ -112,22 +199,42 @@ These are deliberate. Do not "fix" them without revisiting the design:
    endpoint lags to the last deadline, so any transfer you make during the
    current gameweek is not reflected until the next deadline passes.
 
-## Deferred to Phase 2
+## Deferred
 
-Three things the spec wants that Phase 1 deliberately does not ship:
+Still not shipped, deliberately. The fetch / project / solve seam that used to
+head this list went in with Phase 2 — it is what `resolve` re-solves through.
 
 1. **Weekly input-data snapshots.** The store keeps the report and the decision
    for each run, not the bootstrap and histories they were computed from, so a
    past recommendation can be read but not recomputed. Snapshotting the inputs
-   is what would make a run reproducible after the API has moved on.
+   is what would make a run reproducible after the API has moved on. Phase 2
+   sharpens this: the decision record now holds the manager's minute
+   adjustments, but not the projections they were applied to, so his week can be
+   read and not rebuilt.
 2. **A full-season vaastav backtest with a beat-the-average benchmark.** What
    ships is a single-gameweek ranking sanity check against the live API (above),
    which cannot say whether the bot would have beaten the average manager over a
    season — the question the spec actually asks.
-3. **A fetch / project / solve seam in `run_pipeline`.** Phase 2 wants an LLM to
-   override an input — a minutes estimate, an availability — and re-solve from
-   there. Today the pipeline is one straight-through function, so there is
-   nowhere to inject a changed projection and ask for the answer again.
+3. **Silent degrading on a broken install.** A dependency that will not import
+   drops the manager and says so on stdout, but the report that goes to the
+   phone is then indistinguishable from a Phase 1 one: no Gaffer's view, and no
+   line explaining the absence, because there was no decision object to hang one
+   on. The other two unasked cases are things somebody chose — no key, the kill
+   switch — and the draft says so in its own heading. This one is an accident,
+   and nothing but the log will ever mention it, so a fork whose `anthropic`
+   install broke could run a whole season without a manager and read the same as
+   one that had one.
+4. **Chip economics against the plan actually chosen.** The chip EV panel is
+   priced once, against the plan that rolls the transfer, before the manager is
+   asked anything. If he picks a different plan and plays a chip on it, the
+   numbers he argued from describe a squad he did not enter. Re-pricing the
+   chips per plan is a solve per chip per plan, which is why it is not done yet.
+5. **The mid-season chip reset.** `played_chips` counts a chip as gone the
+   moment it appears in the season's history, without asking which half of the
+   season it was played in. Modern FPL hands out a second set at the halfway
+   point, so from GW20 the bot is too strict rather than too generous — it will
+   decline to recommend a chip it actually holds. That is the safer of the two
+   mistakes, and it is still a mistake.
 
 ## Development
 
