@@ -58,6 +58,7 @@ from aigaffer.data.free_transfers import MAX_FREE_TRANSFERS
 from aigaffer.data.models import Player
 from aigaffer.model.xp import PlayerProjection, decayed_total
 from aigaffer.solver.multiweek import (
+    CHURN_EPSILON,
     MAX_HITS,
     SOLVER,
     PlannedMove,
@@ -137,7 +138,13 @@ SPINE_WEEK_XI = 61.0
 def spine(
     events: list[int], spare: float = 0.4
 ) -> tuple[dict[int, Player], dict[int, PlayerProjection]]:
-    """The fifteen, plus one midfielder at ``spare`` nobody would want."""
+    """The fifteen, plus one midfielder at ``spare``.
+
+    Nobody worth having, at the default 0.4. At 5.6 he is instead the exact
+    twin of 8, the cheapest starter here — which makes a transfer between them
+    worth nothing at all rather than worth less than nothing, and that is the
+    board a tiebreak has to be tested on.
+    """
     rows = [
         (pid, position, 50, {event: points for event in events})
         for pid, position, points in SPINE
@@ -437,7 +444,8 @@ def test_free_transfers_are_banked_for_a_double_move_next_week():
     # 2.09 — and buys nothing, so the plan rolls its free transfer and spends
     # two of them in GW6 for no hit at all. Once they are in, a gameweek is
     # worth 83.7 started, 20.0 for the captain and 0.54 benched: 61.54 + 0.85 x
-    # 104.24 + 0.7225 x 104.24 = 225.4574.
+    # 104.24 + 0.7225 x 104.24 = 225.4574, less a hundredth of a point for each
+    # of the two men bought: 225.4374.
     players, projections = blooming([5, 6, 7], count=2)
 
     plan, path = optimize_path(
@@ -450,7 +458,7 @@ def test_free_transfers_are_banked_for_a_double_move_next_week():
     assert path.moves == [
         PlannedMove(event=6, transfers_in=[16, 17], transfers_out=[8, 9], hits=0)
     ]
-    assert plan.objective == pytest.approx(225.4574, abs=1e-4)
+    assert plan.objective == pytest.approx(225.4374, abs=1e-4)
     assert_legal_path(players, SQUAD, 0, 1, [5, 6, 7], plan, path)
 
 
@@ -486,6 +494,13 @@ def test_a_gameweek_that_cannot_hold_five_moves_starts_early():
     # free transfers and two hits — 61.54 + 0.85 x 132.54 - 8 = 166.199, which
     # is the number to beat. Opening with one move is 164.409 and with three is
     # 163.959.
+    #
+    # Every figure above is before the churn tiebreak, which charges a
+    # hundredth of a point a buy. This plan buys five men (169.309 - 0.05 =
+    # 169.259); the rival buys four (166.199 - 0.04 = 166.159); the one-move
+    # opening buys four (164.369) and the three-move opening five (163.909).
+    # Three points of margin against five hundredths of a point of tiebreak,
+    # which is the whole argument for the size of it.
     players, projections = blooming([5, 6], count=5, early=3.0)
 
     plan, path = optimize_path(
@@ -506,7 +521,7 @@ def test_a_gameweek_that_cannot_hold_five_moves_starts_early():
     assert set(bloomers(5)) <= set(plan.squad) | set(path.moves[0].transfers_in)
     assert plan.hits <= MAX_HITS
     assert all(move.hits <= MAX_HITS for move in path.moves)
-    assert plan.objective == pytest.approx(169.309, abs=1e-4)
+    assert plan.objective == pytest.approx(169.259, abs=1e-4)
     assert_legal_path(players, SQUAD, 0, 1, [5, 6], plan, path)
 
 
@@ -536,7 +551,8 @@ def test_a_sixth_move_costs_a_hit_because_the_bank_stops_at_five():
     # uncapped bank would carry 5 - 0 + 1 = 6 into GW6 and buy all six for
     # nothing; the real one carries five, so the sixth move is a hit. It is
     # still worth making: 0.85 x (162.55 - 146.54) = 13.61 against four points.
-    # 61.54 + 0.85 x 162.55 - 4 = 195.7075.
+    # 61.54 + 0.85 x 162.55 - 4 = 195.7075, less six hundredths for the six men
+    # bought: 195.6475.
     players, projections = six_arrivals([5, 6])
 
     plan, path = optimize_path(
@@ -552,7 +568,7 @@ def test_a_sixth_move_costs_a_hit_because_the_bank_stops_at_five():
             hits=1,
         )
     ]
-    assert plan.objective == pytest.approx(195.7075, abs=1e-4)
+    assert plan.objective == pytest.approx(195.6475, abs=1e-4)
     banked = assert_legal_path(
         players, SQUAD, 0, MAX_FREE_TRANSFERS, [5, 6], plan, path
     )
@@ -571,8 +587,9 @@ def test_a_bank_bigger_than_the_game_allows_is_taken_as_five():
     # against 3.9, beats a fifth midfielder by 2.01), keeping 12 as the fifth:
     # 128.0 started + 20.0 for the captain + 0.55 benched = 148.55. GW6 rolls
     # the one free transfer into the last arrival for 12: 162.55.
-    # 148.55 + 0.85 x 162.55 = 286.7175. Read literally, fifteen free moves
-    # would have bought all six in GW5 for nothing: 300.7175.
+    # 148.55 + 0.85 x 162.55 = 286.7175, less six hundredths for the six men
+    # bought: 286.6575. Read literally, fifteen free moves would have bought all
+    # six in GW5 for nothing: 300.7175, or 300.6575 net of the same six.
     players, projections = six_arrivals([5, 6], opening=20.0)
 
     plan, path = optimize_path(
@@ -591,7 +608,7 @@ def test_a_bank_bigger_than_the_game_allows_is_taken_as_five():
             hits=0,
         )
     ]
-    assert plan.objective == pytest.approx(286.7175, abs=1e-4)
+    assert plan.objective == pytest.approx(286.6575, abs=1e-4)
     assert_legal_path(
         players, SQUAD, 0, MAX_FREE_TRANSFERS, [5, 6], plan, path
     )
@@ -624,6 +641,8 @@ def test_week_one_proceeds_pay_for_a_week_two_signing():
     # move banks 75. In GW6, 17 arrives on 12.0 for 115 — and 12 raises only 40,
     # so 75 of the money that pays for him was raised a gameweek earlier.
     # 56.65 + 0.85 x 70.7 = 116.745, against 112.445 for leaving GW5 alone.
+    # Both buy two men, so the churn tiebreak takes two hundredths off each and
+    # the margin is untouched: 116.725 against 112.425.
     rows = [
         (1, GK, 50, {5: 5.0, 6: 5.0}),
         (2, GK, 50, {5: 0.5, 6: 0.5}),
@@ -658,7 +677,7 @@ def test_week_one_proceeds_pay_for_a_week_two_signing():
     ]
     # 17 costs 115 and 12 sells for 40: the other 75 came out of GW5's sale.
     assert players[17].now_cost - players[12].now_cost == 75
-    assert plan.objective == pytest.approx(116.745, abs=1e-4)
+    assert plan.objective == pytest.approx(116.725, abs=1e-4)
     assert_legal_path(players, SQUAD, 0, 1, [5, 6], plan, path)
 
 
@@ -679,6 +698,12 @@ def test_it_stages_a_transfer_early_for_a_double_gameweek():
     # GW11: out 10, 11, 12, in 18, 19, 20 — two hits, and the bank returns to 0.
     # 53.1 + 0.85 x 139.9 - 12 = 160.015. Three doubles bought in GW11 alone is
     # 155.755; opening with three instead of two is 157.215.
+    #
+    # Net of the churn tiebreak, a hundredth of a point a buy: this plan buys
+    # five men for 159.965, the GW11-only rival three for 155.725, and the
+    # three-move opening five for 157.165. Four points of margin against five
+    # hundredths — the tiebreak cannot reach a decision like this one, which is
+    # what this test is here to keep true.
     players, projections = double_gameweek()
 
     plan, path = optimize_path(
@@ -695,8 +720,8 @@ def test_it_stages_a_transfer_early_for_a_double_gameweek():
         )
     ]
     assert {17, 18, 19, 20} <= set(plan.squad) | set(path.moves[0].transfers_in)
-    assert plan.objective == pytest.approx(160.015, abs=1e-4)
-    assert plan.xp_total == pytest.approx(172.015, abs=1e-4)
+    assert plan.objective == pytest.approx(159.965, abs=1e-4)
+    assert plan.xp_total == pytest.approx(171.965, abs=1e-4)
     assert path.weekly_xp[10] == pytest.approx(52.7, abs=1e-4)
     assert path.weekly_xp[11] == pytest.approx(139.5, abs=1e-4)
     assert_legal_path(players, SQUAD, 0, 1, DOUBLE_EVENTS, plan, path)
@@ -766,6 +791,60 @@ def test_a_forced_opening_is_not_bound_by_that_cap():
 
     assert len(plan.transfers_in) == 7
     assert plan.hits == MAX_HITS
+
+
+# --------------------------------------------------------------------------
+# A gameweek with nothing to do does nothing
+# --------------------------------------------------------------------------
+
+
+def test_a_pointless_round_trip_is_not_planned():
+    # 16 here is projected at exactly 5.6 in every gameweek: the twin of 8, the
+    # cheapest starter the spine has. One opening move is demanded, so 8 goes
+    # and 16 arrives and the eleven is worth exactly what it was worth before.
+    #
+    # From GW6 on there is nothing left to decide. Buying 8 straight back is
+    # worth precisely nothing, and before the churn tiebreak the model had no
+    # reason not to and did — a round trip printed under "the road ahead" as
+    # though it were advice, when it was only the solver reporting which of a
+    # great many equal optima it happened to land on. Now the quiet gameweeks
+    # are empty, and the objective is the do-nothing 158.31165 less the one
+    # hundredth of a point the one forced buy is charged.
+    players, projections = spine([5, 6, 7], spare=5.6)
+
+    plan, path = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[5, 6, 7],
+        decay=DECAY, forced_first_transfers=1,
+    )
+
+    assert plan.transfers_in == [16]
+    assert plan.transfers_out == [8]
+    assert path.moves == []
+    assert plan.objective == pytest.approx(158.31165 - CHURN_EPSILON, abs=1e-4)
+    assert_legal_path(players, SQUAD, 0, 1, [5, 6, 7], plan, path)
+
+
+def test_the_tiebreak_is_too_small_to_reach_a_real_decision():
+    # The other half of the epsilon's contract, on the board the whole model
+    # exists for: it still stages the funding move a gameweek early. The plan
+    # that does not stage it — the one that rolls GW10 and buys what it can
+    # afford in GW11 — is more than four points worse, and no plan on this
+    # board buys more than five men, so the most the tiebreak can move any
+    # number here is five hundredths of a point. A hundred epsilons is the
+    # margin asked for below, and the real one is eighty-five times that.
+    players, projections = double_gameweek()
+
+    plan, _ = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1,
+        events=DOUBLE_EVENTS, decay=DECAY,
+    )
+    rolled, _ = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1,
+        events=DOUBLE_EVENTS, decay=DECAY, forced_first_transfers=0,
+    )
+
+    assert plan.transfers_in == [16, 17]
+    assert plan.objective - rolled.objective > 100 * CHURN_EPSILON
 
 
 # --------------------------------------------------------------------------
@@ -865,7 +944,9 @@ def test_a_gameweek_a_player_has_no_projection_for_is_a_blank():
     # 16's projection stops after GW5: 9.0 in the gameweek he has, nothing in
     # the two he does not. So he is worth signing for one week — 9.0 into the XI
     # for 8's 5.6, and the armband on top, 67.94 against 61.54 — and worth
-    # selling straight back out of it, which is what the plan does.
+    # selling straight back out of it, which is what the plan does. The two
+    # buys cost two hundredths of the churn tiebreak against 5.2 a gameweek of
+    # real gain, which is the ordering the size of it is chosen for.
     players, projections = spine([5, 6, 7])
     projections[16] = PlayerProjection(
         player_id=16, per_gw={5: 9.0}, total=decayed_total({5: 9.0}, DECAY)
@@ -885,4 +966,4 @@ def test_a_gameweek_a_player_has_no_projection_for_is_a_blank():
     assert path.weekly_xp[5] == pytest.approx(67.4, abs=1e-4)
     assert path.weekly_xp[6] == pytest.approx(SPINE_WEEK_XI, abs=1e-4)
     assert path.weekly_xp[7] == pytest.approx(SPINE_WEEK_XI, abs=1e-4)
-    assert plan.objective == pytest.approx(164.71165, abs=1e-4)
+    assert plan.objective == pytest.approx(164.69165, abs=1e-4)

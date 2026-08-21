@@ -60,6 +60,16 @@ vertices are single players, so the solver cannot gain by splitting an armband
 and never does. Leaving it continuous keeps a fifth of the binaries out of the
 branch-and-bound tree, which on a five-gameweek window is worth having.
 
+**And a transfer nobody wants still costs a hundredth of a point.** Nothing
+above prices a pointless move. A gameweek in which two men are projected the
+same — a blank week where both are worth nothing at all is the common case —
+can swap one for the other for free, so the window has a great many optima
+worth exactly the same and comes back with whichever one the search happened
+to land on. Some of them buy a player in one gameweek and sell him back in the
+next, and a path printed under "the road ahead" saying so is noise wearing the
+clothes of advice. So every buy in the window is charged
+:data:`CHURN_EPSILON`; see there for why it can never change a decision.
+
 Two approximations from the single-week model are inherited unchanged and are
 worse here than there, because they are compounded over the window: selling
 price is the current price, and prices do not move. Both are documented
@@ -103,6 +113,17 @@ CANDIDATES_PER_POSITION = 30
 # is the caller falling back on the single-week solver — never an exception.
 SOLVE_SECONDS = 60
 SOLVER = pulp.PULP_CBC_CMD(msg=0, timeLimit=SOLVE_SECONDS)
+
+# What a buy costs over and above what it costs. This is not a model of
+# anything — it is a tiebreak, and it is set two orders of magnitude below the
+# smallest gain any real transfer is made for. No gameweek can make more than
+# MAX_FREE_TRANSFERS + MAX_HITS moves, so the whole of a six-gameweek window
+# cannot spend more than forty-two hundredths of a point on this, and the
+# closest decision the test suite holds the solver to is three points wide. So
+# it never changes a plan that is chasing something; it only decides between
+# plans worth exactly the same, and it decides for the one that leaves the
+# squad alone.
+CHURN_EPSILON = 0.01
 
 
 def _solver(time_limit: int | None) -> pulp.LpSolver:
@@ -229,6 +250,12 @@ def optimize_path(
     # owing[w] = 1 when the gameweek's moves outran its free transfers. It is
     # what pins paid to the max() it stands for; see the module docstring.
     owing = {w: problem.add_variable(f"owing{w}", cat=pulp.LpBinary) for w in weeks}
+    # Big enough for both halves of the pin: the middle row has to cover
+    # ``banked[w] - moves[w]`` in a gameweek that owes nothing, and the last one
+    # ``paid[w]`` in a gameweek that owes something. The first of those is why
+    # the opening bank is clamped at the top of this function — a caller's
+    # fifteen free transfers, taken at face value, would stand above this M and
+    # the pin would quietly stop pinning.
     big_m = MAX_HITS + MAX_FREE_TRANSFERS
     # ft[1] is what the manager holds, a constant; the rest are carried.
     banked: dict[int, float | pulp.LpVariable] = {1: opening_bank}
@@ -258,6 +285,7 @@ def optimize_path(
             for w in weeks
         )
         - HIT_POINTS * pulp.lpSum(paid[w] for w in weeks)
+        - CHURN_EPSILON * pulp.lpSum(moves[w] for w in weeks)
     )
 
     by_position = _grouped(pool, lambda p: players[p].element_type)
@@ -324,9 +352,12 @@ def optimize_path(
         return None
 
     # The objective is added back up from the solution rather than read off the
-    # solver, so that the number a report prints is the one its own squads earn.
+    # solver, so that the number a report prints is the one its own squads earn
+    # — less the churn tiebreak, which is added back up here too, because a
+    # plan ought to be ranked on the number it was chosen by.
     objective = 0.0
     hits = 0
+    bought = 0
     weekly_xp: dict[int, float] = {}
     path_moves: list[PlannedMove] = []
     opening: list[int] = []
@@ -338,6 +369,8 @@ def optimize_path(
         chosen = _chosen(squad[w])
         eleven = _chosen(starting[w])
         bench = set(chosen) - set(eleven)
+        incoming = _chosen(buy[w])
+        outgoing = _chosen(sell[w])
 
         started = sum(points[p, w] for p in eleven)
         armband = sum(points[p, w] * (captain[w][p].value() or 0.0) for p in pool)
@@ -348,12 +381,11 @@ def optimize_path(
         weekly_xp[event] = started + armband
         objective += decay ** (w - 1) * (started + armband + BENCH_WEIGHT * benched)
         hits += taken
+        bought += len(incoming)
 
         if w == 1:
             opening, opening_xi, opening_hits = chosen, eleven, taken
             continue
-        incoming = _chosen(buy[w])
-        outgoing = _chosen(sell[w])
         if incoming or outgoing:
             path_moves.append(
                 PlannedMove(
@@ -364,7 +396,7 @@ def optimize_path(
                 )
             )
 
-    objective -= HIT_POINTS * hits
+    objective -= HIT_POINTS * hits + CHURN_EPSILON * bought
     path = PlannedPath(moves=path_moves, objective=objective, weekly_xp=weekly_xp)
     plan = Plan(
         squad=opening,
@@ -373,8 +405,10 @@ def optimize_path(
         transfers_out=sorted(current - set(opening)),
         hits=opening_hits,
         # The plan is ranked against single-week plans on ``objective``, so that
-        # stays the window's own number, hits and all; ``xp_total`` is it with
-        # the hits added back, which is what the field means everywhere else.
+        # stays the window's own number — hits, churn tiebreak and all;
+        # ``xp_total`` is it with the hits added back, which is what the field
+        # means everywhere else, to within the hundredth of a point a transfer
+        # that no printed figure is quoted closely enough to show.
         xp_total=objective + HIT_POINTS * hits,
         objective=objective,
         path=path,
