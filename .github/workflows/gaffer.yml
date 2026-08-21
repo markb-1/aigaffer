@@ -2,7 +2,10 @@ name: gaffer
 
 on:
   schedule:
-    - cron: "0 */6 * * *"
+    # Every three hours, so the six-hour deadline window gets two ticks and a
+    # dropped one costs nothing; seven past, off the on-the-hour crush. The
+    # store makes the second tick a no-op.
+    - cron: "7 */3 * * *"
   workflow_dispatch:
     inputs:
       mode:
