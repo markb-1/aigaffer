@@ -109,6 +109,14 @@ STATUS = {7: ("i", None), 4: ("d", 75)}
 HORIZON = 6
 TODAY = date(2025, 8, 21)
 
+# Expected minutes as the minutes model currently has them: ninety less the
+# id, so every player's number is unmistakably his own. Dodd carries a
+# fraction, because the column is minutes and a manager does not read
+# tenths of one; Costa is missing altogether, which is what a player the
+# fetch never asked for a history looks like.
+XMINS = {pid: 90.0 - pid for pid, *_ in UNIVERSE if pid != 3}
+XMINS[4] = 74.4
+
 
 def element(pid: int, name: str, club: int, position: int, prices: int) -> Player:
     """A bootstrap element; the stats the briefing never looks at are zeroed."""
@@ -254,6 +262,7 @@ def briefing(
     inputs: PipelineInputs | None = None,
     solve: SolveResult | None = None,
     free_transfers: int | None = 1,
+    xmins: dict[int, float] | None = None,
 ) -> str:
     """The briefing as Task 4 will ask for it."""
     return build_briefing(
@@ -262,6 +271,7 @@ def briefing(
         XP,
         free_transfers,
         today=TODAY,
+        xmins=xmins,
     )
 
 
@@ -473,6 +483,59 @@ def test_the_briefing_lists_every_relevant_player_exactly_once():
 
 def test_two_briefings_from_the_same_inputs_are_the_same_string():
     assert briefing() == briefing()
+
+
+# --- the number the manager is allowed to overwrite ------------------------
+
+
+def test_without_expected_minutes_nothing_about_the_briefing_changes():
+    # Task 5 supplies them; every other caller gets exactly what it got before.
+    assert briefing(xmins=None) == briefing()
+    assert "xMins" not in briefing()
+    assert squad_line(1) == (
+        "- Alvez (id 1, GKP, ASH, £5.5m) | 4.0 xP GW2 | 20.0 xP6 | fit"
+    )
+
+
+def test_expected_minutes_ride_on_every_squad_line():
+    # Between who he is and what he is worth, because it is the assumption the
+    # worth was computed from.
+    text = briefing(xmins=XMINS)
+
+    assert squad_line(1, text) == (
+        "- Alvez (id 1, GKP, ASH, £5.5m) | xMins 89 | 4.0 xP GW2 | 20.0 xP6 | fit"
+    )
+    squad = bullets(text, "Current squad")
+    assert len([line for line in squad if "xMins" in line]) == len(squad) == 15
+
+
+def test_expected_minutes_are_rounded_to_the_minute():
+    assert "| xMins 74 |" in squad_line(4, briefing(xmins=XMINS))
+
+
+def test_a_player_the_model_never_costed_reads_as_no_minutes():
+    # Costa has no entry, which is exactly how the projection treated him: at
+    # zero. Saying so is what tells the manager the number is worth a search.
+    assert "| xMins 0 |" in squad_line(3, briefing(xmins=XMINS))
+
+
+def test_the_research_list_carries_the_minutes_it_may_overwrite():
+    listed = " ".join(section(briefing(xmins=XMINS), "Relevant players"))
+
+    assert "Alvez (id 1, xMins 89)" in listed
+    assert "Costa (id 3, xMins 0)" in listed
+
+
+def test_the_team_sheet_is_left_clear_of_minutes():
+    # The eleven is a list of names to captain from, not a fitness report.
+    assert "xMins" not in " ".join(bullets(briefing(xmins=XMINS), "Solver XI"))
+
+
+def test_the_briefing_says_what_the_minutes_column_is_for():
+    text = briefing(xmins=XMINS)
+
+    assert '"xMins" is the expected minutes' in text
+    assert "adjust_players overwrites" in text
 
 
 def test_a_draft_briefing_says_there_is_no_squad_to_transfer_from():

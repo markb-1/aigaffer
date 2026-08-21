@@ -22,6 +22,10 @@ Three things follow from that.
   most lines — next gameweek alone, and the decayed horizon total the solver
   actually maximises — and a model that confuses them will argue for the
   wrong transfer with great confidence.
+* **The one number he can change is shown to him.** ``adjust_players`` sets a
+  player's expected minutes absolutely, so a briefing that hides what the
+  model currently assumes is asking him to overwrite a number he cannot see.
+  Pass ``xmins`` and every player he may adjust carries it.
 
 Nothing here decides anything, and nothing here talks to an API. The house
 formatting vocabulary — the price, the deadline, the plural — is imported
@@ -72,17 +76,20 @@ PICK_MARKER = "  <- solver pick"
 
 @dataclass(frozen=True)
 class _Board:
-    """The four lookups every line needs, carried together rather than threaded.
+    """The lookups every line needs, carried together rather than threaded.
 
     ``horizon`` is how many gameweeks the projections cover; it is read off
     them rather than passed in, because the number's only job is to label the
-    column it came from.
+    column it came from. ``xmins`` is None when the caller did not supply the
+    minutes, and then the minutes column does not exist at all — not a column
+    of blanks, which would be a column of questions nobody asked.
     """
 
     players: dict[int, Player]
     clubs: dict[int, str]
     projections: dict[int, PlayerProjection]
     horizon: int
+    xmins: dict[int, float] | None = None
 
 
 def build_briefing(
@@ -91,6 +98,7 @@ def build_briefing(
     projections: dict[int, PlayerProjection],
     free_transfers: int | None,
     today: date | None = None,
+    xmins: dict[int, float] | None = None,
 ) -> str:
     """The whole briefing as one plain-text string. Pure; no I/O.
 
@@ -101,6 +109,13 @@ def build_briefing(
     it without knowing what day it is. It defaults to today, which is what
     every real caller means.
 
+    ``xmins`` is the expected minutes the projections were built on — the
+    first half of what :func:`aigaffer.orchestrator.build_projections` returns.
+    Supplied, it appears against every player the manager may adjust, because
+    ``adjust_players`` sets that number absolutely and he cannot sensibly
+    overwrite what he was never shown. Omitted, the briefing is byte for byte
+    what it was without it.
+
     A draft — a run with no squad — is a different question and says so in
     its title: fifteen players from nothing, no bank to spend, no free
     transfers to weigh and no chips to price.
@@ -110,6 +125,7 @@ def build_briefing(
         clubs={team.id: team.short_name for team in inputs.bootstrap.teams},
         projections=projections,
         horizon=_horizon(projections),
+        xmins=xmins,
     )
     # A draft has no squad to list, so it lists the fifteen it just drafted.
     held = solve.choice.squad if inputs.squad is None else inputs.squad.player_ids
@@ -226,6 +242,17 @@ def _situation(
             f" | Squad value: {value}"
         )
 
+    # The minutes clause exists only when the minutes do: a briefing built
+    # without them must read exactly as it read before they were an option.
+    minutes = (
+        ""
+        if board.xmins is None
+        else (
+            ' "xMins" is the expected minutes the projection was built on, and'
+            " the one number adjust_players overwrites;"
+        )
+    )
+
     return "\n".join(
         [
             f"# AI Gaffer — manager briefing: GW{event.id}{draft_label}",
@@ -233,7 +260,8 @@ def _situation(
             f"Today: {today.strftime(DATE_FORMAT)}",
             f"Deadline: {deadline(event)}",
             money,
-            f'Numbers: "xP GW{event.id}" is next gameweek alone;'
+            f"Numbers:{minutes}"
+            f' "xP GW{event.id}" is next gameweek alone;'
             f' "xP{board.horizon}" is the decayed {board.horizon}-gameweek'
             " total the solver maximises.",
         ]
@@ -363,7 +391,10 @@ def _watchlist(held: list[int], board: _Board, event: int) -> str:
 def _relevant(solve: "SolveResult", board: _Board) -> str:
     """The research list, wrapped: names and ids and nothing else."""
     pids = relevant_players(solve)
-    entries = [_named(pid, board) for pid in pids]
+    entries = []
+    for pid in pids:
+        minutes = _minutes(pid, board)
+        entries.append(_named(pid, board, extra=f", {minutes}" if minutes else ""))
     lines = [
         "## Relevant players",
         "",
@@ -380,9 +411,16 @@ def _relevant(solve: "SolveResult", board: _Board) -> str:
 
 
 def _player_line(pid: int, board: _Board, event: int) -> str:
-    """``Alvez (id 1, GKP, ASH, £5.5m) | 4.0 xP GW2 | 20.0 xP6 | fit``."""
+    """``Alvez (id 1, GKP, ASH, £5.5m) | xMins 89 | 4.0 xP GW2 | 20.0 xP6 | fit``.
+
+    The minutes come between who he is and what he is worth, because they are
+    the assumption the worth was computed from: read left to right, the line
+    says who, for how long, to what end, and whether any of it is in doubt.
+    """
+    minutes = _minutes(pid, board)
     return (
         f"{_described(pid, board)}"
+        f"{f' | {minutes}' if minutes else ''}"
         f" | {_next_gw(pid, board, event):.1f} xP GW{event}"
         f" | {projected_points(board.projections, pid):.1f} xP{board.horizon}"
         f" | {_flag(board.players[pid])}"
@@ -437,9 +475,23 @@ def _described(pid: int, board: _Board, extra: str = "") -> str:
     return f"{player.web_name} (id {pid}, {position}, {club}, {cost}{extra})"
 
 
-def _named(pid: int, board: _Board) -> str:
+def _named(pid: int, board: _Board, extra: str = "") -> str:
     """``Alvez (id 1)`` — where the line has already said the rest."""
-    return f"{board.players[pid].web_name} (id {pid})"
+    return f"{board.players[pid].web_name} (id {pid}{extra})"
+
+
+def _minutes(pid: int, board: _Board) -> str:
+    """``xMins 89`` — what the model expects of him, or nothing to say at all.
+
+    Rounded to the minute: the column exists to be argued with, and nobody
+    argues in tenths. A player the fetch never asked for a history has no
+    entry and reads as zero, which is not a gap in the briefing but exactly
+    what the projection did with him — and therefore the number most worth a
+    search.
+    """
+    if board.xmins is None:
+        return ""
+    return f"xMins {round(board.xmins.get(pid, 0.0))}"
 
 
 def _flag(player: Player) -> str:
