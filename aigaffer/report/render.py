@@ -63,6 +63,13 @@ NO_CHIP = "none"
 OVERRULED = "Minutes he overruled:"
 NOT_APPLIED = "Noted but not applied (no re-solve followed):"
 
+# What the chip panel is measuring, said once above it. The wildcard is the odd
+# one out and carries its own units on its own line.
+CHIP_UNITS = (
+    "Points each chip would add this gameweek — except the wildcard, which is"
+    " priced over the whole horizon, because that is what a wildcard buys."
+)
+
 # What the shortlist says when the manager's own plan is not on it: he adjusted
 # somebody's minutes and solved again, and what came back was a fifteen this
 # list never reached.
@@ -106,7 +113,7 @@ def render_report(
         *([] if gaffer is None else [_gaffer(gaffer, players)]),
         _team_sheet(lineup, players, projections),
         _candidates(plans, choice, decided=gaffer is not None),
-        _chip_panel(chips),
+        _chip_panel(chips, horizon_of(projections)),
         _watchlist(choice.squad, players, clubs, projections),
     ]
     return "\n\n".join(sections) + "\n"
@@ -373,17 +380,41 @@ def _pick(plans: list[Plan], choice: Plan) -> int | None:
     return None
 
 
-def _chip_panel(chips: ChipEvs) -> str:
-    """The chip numbers, signed: a chip can be worth less than nothing."""
+def _chip_panel(chips: ChipEvs, horizon: int) -> str:
+    """The chip numbers, signed: a chip can be worth less than nothing.
+
+    Three of the four are next gameweek's: the bench that would have scored,
+    the captain counted once more, the eleven a free hit would field instead.
+    The wildcard is not, and never was — it is priced as the difference between
+    two decayed horizon totals, because a wildcard is bought for the run of
+    fixtures rather than for Saturday — so its row says which number it is.
+    Four figures under one heading, one of them measuring something else, is
+    how a chip gets played on a comparison nobody made.
+    """
     panel = {
         "Bench boost": chips.bench_boost,
         "Triple captain": chips.triple_captain,
         "Free hit": chips.free_hit,
-        "Wildcard": chips.wildcard,
     }
-    lines = ["## Chip EV", "", "Points each chip would add this gameweek.", ""]
+    lines = ["## Chip EV", "", CHIP_UNITS, ""]
     lines += [f"- {label}: {points:+.1f}" for label, points in panel.items()]
+    lines.append(f"- Wildcard: {wildcard_ev(chips.wildcard, horizon)}")
     return "\n".join(lines)
+
+
+def wildcard_ev(points: float, horizon: int) -> str:
+    """``+12.0 xP over 6 GWs (horizon)`` — the wildcard row, in its own units.
+
+    Public because the manager's briefing prints the same panel to a different
+    reader, and a number that means one thing in the report and another in the
+    briefing is worse than a number nobody prints.
+    """
+    return f"{points:+.1f} xP over {horizon} GWs (horizon)"
+
+
+def horizon_of(projections: dict[int, PlayerProjection]) -> int:
+    """How many gameweeks the projections cover, for the labels that say so."""
+    return max((len(p.per_gw) for p in projections.values()), default=0)
 
 
 def _watchlist(

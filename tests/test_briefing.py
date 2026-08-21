@@ -446,8 +446,28 @@ def test_the_chip_panel_signs_every_number():
         "- Bench boost: +3.2",
         "- Triple captain: +8.4",
         "- Free hit: -1.5",
-        "- Wildcard: +12.0",
+        "- Wildcard: +12.0 xP over 6 GWs (horizon)",
     ]
+
+
+def test_the_wildcard_is_labelled_as_the_horizon_number_it_is():
+    # He is asked to argue from this panel, and an argument that reads a
+    # six-gameweek total as a gameweek's is one no validator can catch.
+    panel = section(briefing(), "Chip EV")
+
+    assert "except the wildcard" in panel[0]
+    assert "horizon" not in " ".join(
+        line for line in panel if line.startswith("- ") and "Wildcard" not in line
+    )
+
+
+def test_the_panel_says_which_chips_he_can_actually_finalize():
+    # The validator refuses a wildcard or a free hit; meeting that rule as an
+    # error costs a turn, and the panel is where he looks a chip up.
+    panel = " ".join(section(briefing(), "Chip EV"))
+
+    assert "Only bench_boost and triple_captain can be finalized" in panel
+    assert "argue for it in your rationale" in panel
 
 
 def test_a_chip_already_played_is_priced_and_marked_gone():
@@ -462,20 +482,18 @@ def test_a_chip_already_played_is_priced_and_marked_gone():
         "- Bench boost: +3.2",
         "- Triple captain: +8.4 (already played)",
         "- Free hit: -1.5",
-        "- Wildcard: +12.0",
+        "- Wildcard: +12.0 xP over 6 GWs (horizon)",
     ]
     assert "already played" in section(played, "Chip EV")[-1], "and a guardrail"
 
 
 def test_a_panel_with_nothing_played_says_nothing_about_it():
     # A guardrail about a chip nobody has played is a sentence about nothing.
-    assert section(briefing(), "Chip EV") == [
-        "Points each chip would add next gameweek.",
-        "- Bench boost: +3.2",
-        "- Triple captain: +8.4",
-        "- Free hit: -1.5",
-        "- Wildcard: +12.0",
-    ]
+    # The one about which chips can be finalized is about all of them, always.
+    panel = section(briefing(), "Chip EV")
+
+    assert "already played" not in " ".join(panel)
+    assert panel[-1].startswith("Only bench_boost and triple_captain")
 
 
 @pytest.mark.parametrize(

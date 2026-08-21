@@ -18,6 +18,9 @@ Three boundaries matter more than the rest.
 * **A chip is a season's worth of points.** It costs nothing to ask for one and
   it can only be played once, so the justification is measured before it is
   accepted: long enough to be an argument, and about the chip it is playing.
+  Two of them are refused whatever the argument — a wildcard or a free hit
+  suspends the transfer rules every plan on the board was solved under, and
+  this phase has no chip-aware solve to replace them with.
 
 Everything here is pure. Nothing imports the orchestrator, nothing talks to an
 API, and nothing renders a string that came off the FPL payload — plan lines go
@@ -73,6 +76,13 @@ the eleven is picked again from that plan's squad.
 why this gameweek rather than any other, what the chip EV panel in the briefing \
 says it is worth, and what you give up by burning it now. A sentence will be \
 rejected.
+- The only chips you may finalize are bench_boost and triple_captain. They are \
+played on the team as it stands, so any plan on the list is still the plan. A \
+wildcard or a free hit is a different squad — fifteen free transfers, a solve \
+nobody has run — and the plans you have been shown are not it, so finalizing \
+one would enter a team that was never costed. If you believe this is the week \
+for one, finalize with chip 'none' and make the case in your rationale: it is \
+read by the person whose team this is, and he can play the chip himself.
 
 Two habits, in the order they matter.
 
@@ -92,6 +102,25 @@ MAX_SEARCHES = 8
 
 CHIPS = ["none", "bench_boost", "triple_captain", "free_hit", "wildcard"]
 NO_CHIP = CHIPS[0]
+
+# The two that rewrite the squad, and are therefore not this phase's to play. A
+# bench boost or a triple captain is played on the eleven a plan already
+# fields, so any plan on the board is still the plan it was; a wildcard or a
+# free hit is fifteen free transfers, which is a different question and one the
+# solver has not been asked. Every plan he can finalize was costed with the
+# transfer rules in force, so a decision that pairs one with a chip that
+# suspends them describes a team nobody solved for.
+#
+# They stay in the enum and stay priced in the panel: the number is worth
+# reading and worth arguing about in the rationale, where a person can act on
+# it. It is finalizing on one that is refused.
+UNPLANNED_CHIPS = ("wildcard", "free_hit")
+NO_CHIP_WEEKS = (
+    "Phase 2 does not plan chip weeks: a wildcard/free-hit decision needs a"
+    " chip-aware solve that doesn't exist yet. Choose a plan with chip='none'"
+    " (or bench_boost/triple_captain if justified) and make the case for the"
+    " chip in your rationale instead."
+)
 
 # What the FPL API calls each chip, against what we call it. The two
 # vocabularies were never going to agree — "3xc" is somebody else's spelling of
@@ -348,6 +377,11 @@ def validate_finalize(
     chip = args.get("chip", NO_CHIP)
     if chip not in CHIPS:
         raise ToolError(f"'{chip}' is not a chip. Choose one of: {', '.join(CHIPS)}.")
+    if chip in UNPLANNED_CHIPS:
+        # Before the justification is weighed, because no argument makes this
+        # one coherent: the plan he is finalizing was not solved for a week
+        # with the transfer rules suspended.
+        raise ToolError(NO_CHIP_WEEKS)
     justification = _text(args.get("chip_justification"))
     if chip != NO_CHIP:
         _check_chip(chip, justification)

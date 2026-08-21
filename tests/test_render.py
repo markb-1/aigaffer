@@ -104,9 +104,16 @@ BOOTSTRAP = Bootstrap(
     elements=[element(*row[:5]) for row in UNIVERSE],
 )
 
-# The renderer reads ``total`` alone, so ``per_gw`` is left empty.
+# The renderer reads ``total`` for every number it prints. ``per_gw`` is here
+# for its length alone: it is how long the horizon is, which is what the chip
+# panel labels the wildcard's number with.
+HORIZON = 6
 XP = {
-    pid: PlayerProjection(player_id=pid, per_gw={}, total=points)
+    pid: PlayerProjection(
+        player_id=pid,
+        per_gw={gw: round(points / HORIZON, 1) for gw in range(2, 2 + HORIZON)},
+        total=points,
+    )
     for pid, _, _, _, _, points in UNIVERSE
 }
 
@@ -378,8 +385,19 @@ def test_the_chip_panel_signs_every_number():
         "- Bench boost: +3.2",
         "- Triple captain: +8.4",
         "- Free hit: -1.5",
-        "- Wildcard: +12.0",
+        "- Wildcard: +12.0 xP over 6 GWs (horizon)",
     ]
+
+
+def test_the_wildcard_row_says_it_is_not_a_gameweek_number():
+    # It is priced as the difference between two decayed horizon totals, and
+    # the three above it are next gameweek's. Four figures under one heading,
+    # one of them measuring something else, is a chip played on a comparison
+    # nobody made.
+    panel = section(report(), "Chip EV")
+
+    assert "except the wildcard" in panel[0]
+    assert "horizon" in panel[-1] and "horizon" not in " ".join(panel[1:-1])
 
 
 # --- the gaffer's view -----------------------------------------------------

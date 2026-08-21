@@ -261,7 +261,7 @@ def test_a_preseason_run_drafts_a_squad(tmp_path):
         "- Bench boost: +0.0",
         "- Triple captain: +0.0",
         "- Free hit: +0.0",
-        "- Wildcard: +0.0",
+        "- Wildcard: +0.0 xP over 6 GWs (horizon)",
     ]
     assert store.has_run(1, "scout") is True
 

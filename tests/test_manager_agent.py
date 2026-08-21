@@ -871,6 +871,35 @@ def test_a_long_justification_that_never_names_the_chip_is_refused():
     assert only_result(client.requests[1])["is_error"] is True
 
 
+@pytest.mark.parametrize("chip", ["wildcard", "free_hit"])
+def test_a_chip_that_rewrites_the_squad_is_refused_however_well_argued(chip: str):
+    # Every plan on the board was solved with the transfer rules in force. A
+    # wildcard or a free hit suspends them, so the plan he would be finalizing
+    # is a plan for a different week, and no argument makes that coherent.
+    argued = f"Playing the {chip.replace('_', ' ')} this week.{CHIP_CASE}"
+    client, decision = converse(
+        [
+            reply(
+                use("finalize_decision", finalize(chip=chip, justification=argued))
+            ),
+            reply(use("finalize_decision", finalize())),
+        ]
+    )
+    refusal = only_result(client.requests[1])
+
+    assert refusal["is_error"] is True
+    assert refusal["content"].startswith("Phase 2 does not plan chip weeks:")
+    assert "chip='none'" in refusal["content"]
+    assert "bench_boost/triple_captain" in refusal["content"]
+    assert decision.chip == "none" and decision.source == "manager"
+
+
+def test_the_system_prompt_names_the_two_chips_he_may_finalize():
+    assert "The only chips you may finalize are bench_boost and triple_captain" in (
+        SYSTEM_PROMPT
+    )
+
+
 def test_a_chip_argued_properly_is_played():
     _, decision = converse(
         [

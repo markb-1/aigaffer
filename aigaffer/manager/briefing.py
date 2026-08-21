@@ -41,7 +41,14 @@ from typing import TYPE_CHECKING
 from aigaffer.data.models import Player
 from aigaffer.manager.tools import played_chips
 from aigaffer.model.xp import PlayerProjection
-from aigaffer.report.render import POSITIONS, deadline, plural, price
+from aigaffer.report.render import (
+    POSITIONS,
+    deadline,
+    horizon_of,
+    plural,
+    price,
+    wildcard_ev,
+)
 from aigaffer.solver.lineup import ChipEvs, Lineup
 from aigaffer.solver.optimizer import AVAILABLE, Plan, projected_points
 
@@ -81,6 +88,25 @@ PLAYED_MARK = " (already played)"
 PLAYED_GUARD = (
     "A chip marked (already played) has been used this season and is gone,"
     " whatever it is priced at above. Finalize with chip 'none' instead."
+)
+
+# What the panel is measuring, and which of it he may actually play. The
+# wildcard is priced over the horizon and the other three over one gameweek, so
+# the four numbers are not comparable and the line above them says so; and two
+# of the four are refused by finalize_decision, so the panel says that too
+# rather than leaving him to meet the rule as an error.
+CHIP_UNITS = (
+    "Points each chip would add next gameweek — except the wildcard, which is a"
+    " horizon number: the decayed total of the best squad fifteen free"
+    " transfers could reach, against the plan in hand. It is not comparable"
+    " with the three above it."
+)
+PLANNED_GUARD = (
+    "Only bench_boost and triple_captain can be finalized: they are played on"
+    " the team a plan already fields. A wildcard or a free hit is a different"
+    " squad, and no plan on this board was solved for one, so"
+    " finalize_decision refuses them. If you think this is the week for one,"
+    " finalize with chip 'none' and argue for it in your rationale."
 )
 
 # The longest a name, club or status out of the payload may be before it is
@@ -139,7 +165,7 @@ def build_briefing(
         players=inputs.players,
         clubs={team.id: team.short_name for team in inputs.bootstrap.teams},
         projections=projections,
-        horizon=_horizon(projections),
+        horizon=horizon_of(projections),
         xmins=xmins,
     )
     # A draft has no squad to list, so it lists the fifteen it just drafted.
@@ -155,7 +181,12 @@ def build_briefing(
         _squad(held, board, event, solve.draft_mode),
         _team_sheet(solve.lineup, board, event, pick),
         _candidates(numbered, board, pick),
-        _chip_panel(solve.chips, solve.draft_mode, played_chips(inputs.chips_used)),
+        _chip_panel(
+            solve.chips,
+            solve.draft_mode,
+            played_chips(inputs.chips_used),
+            board.horizon,
+        ),
         _watchlist(held, board, event),
         _relevant(solve, board),
     ]
@@ -193,7 +224,7 @@ def format_plans(
     if not plans:
         return ""
 
-    board = _Board(players, clubs, projections, _horizon(projections))
+    board = _Board(players, clubs, projections, horizon_of(projections))
     baseline_id, baseline = min(
         plans, key=lambda pair: (len(pair[1].transfers_in), pair[0])
     )
@@ -373,8 +404,19 @@ def _candidates(plans: list[tuple[int, Plan]], board: _Board, pick: int | None) 
     )
 
 
-def _chip_panel(chips: ChipEvs, drafting: bool, played: set[str]) -> str:
+def _chip_panel(
+    chips: ChipEvs, drafting: bool, played: set[str], horizon: int
+) -> str:
     """The chip numbers, signed: a chip can be worth less than nothing.
+
+    Three of the four are next gameweek's and the wildcard is a horizon total,
+    so it is labelled rather than left to be read as the other three are — the
+    manager is asked to argue from these numbers, and an argument from the
+    wrong units is one the code cannot catch.
+
+    Two of the four are also not his to finalize, and the panel says so where
+    he looks them up: the validator refuses a wildcard or a free hit, and a
+    rule he meets first as an error is a turn spent learning it.
 
     A chip already spent is priced anyway and then marked. The number is worth
     reading — it says what this week would have been worth with it — but the
@@ -390,16 +432,17 @@ def _chip_panel(chips: ChipEvs, drafting: bool, played: set[str]) -> str:
         )
 
     panel = {
-        "bench_boost": ("Bench boost", chips.bench_boost),
-        "triple_captain": ("Triple captain", chips.triple_captain),
-        "free_hit": ("Free hit", chips.free_hit),
-        "wildcard": ("Wildcard", chips.wildcard),
+        "bench_boost": ("Bench boost", f"{chips.bench_boost:+.1f}"),
+        "triple_captain": ("Triple captain", f"{chips.triple_captain:+.1f}"),
+        "free_hit": ("Free hit", f"{chips.free_hit:+.1f}"),
+        "wildcard": ("Wildcard", wildcard_ev(chips.wildcard, horizon)),
     }
-    lines = ["## Chip EV", "", "Points each chip would add next gameweek.", ""]
+    lines = ["## Chip EV", "", CHIP_UNITS, ""]
     lines += [
-        f"- {label}: {points:+.1f}{PLAYED_MARK if chip in played else ''}"
+        f"- {label}: {points}{PLAYED_MARK if chip in played else ''}"
         for chip, (label, points) in panel.items()
     ]
+    lines += ["", PLANNED_GUARD]
     if played:
         lines += ["", PLAYED_GUARD]
     return "\n".join(lines)
@@ -615,8 +658,3 @@ def _next_gw(pid: int, board: _Board, event: int) -> float:
     nothing, not a guess."""
     projection = board.projections.get(pid)
     return projection.per_gw.get(event, 0.0) if projection else 0.0
-
-
-def _horizon(projections: dict[int, PlayerProjection]) -> int:
-    """How many gameweeks the projections cover, for the column label."""
-    return max((len(p.per_gw) for p in projections.values()), default=0)

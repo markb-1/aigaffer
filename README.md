@@ -91,7 +91,10 @@ minted by the loop, so no amount of text in the conversation — a briefing
 quoting the FPL API, a web page quoting whoever wrote it — can pass for a plan
 that was never solved. The armbands are checked against the eleven of the plan
 he actually chose. A chip needs an argument, not a sentence, and is refused
-outright if the season's history says it is gone. Everything the solver already
+outright if the season's history says it is gone — or if it is a wildcard or a
+free hit, which suspend the transfer rules every plan on the board was solved
+under. Those two go in the rationale for Mark to act on rather than into the
+decision, because a chip-aware solve is not a thing Phase 2 has. Everything the solver already
 enforced — budget, club quotas, the hit cap — it still enforces, because he
 only ever picks from plans it produced.
 
@@ -229,6 +232,11 @@ head this list went in with Phase 2 — it is what `resolve` re-solves through.
    asked anything. If he picks a different plan and plays a chip on it, the
    numbers he argued from describe a squad he did not enter. Re-pricing the
    chips per plan is a solve per chip per plan, which is why it is not done yet.
+   The same missing piece is why a wildcard or a free hit cannot be finalized at
+   all: planning one means solving the week with fifteen free transfers and no
+   hits, and nothing here does that. The panel still prices both — the wildcard
+   over the six-gameweek horizon, which is what the row says, and the other
+   three over next gameweek — so the case can be made in the rationale.
 5. **The mid-season chip reset.** `played_chips` counts a chip as gone the
    moment it appears in the season's history, without asking which half of the
    season it was played in. Modern FPL hands out a second set at the halfway
