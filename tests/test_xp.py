@@ -194,6 +194,23 @@ def test_a_player_with_no_minutes_played_scores_no_bonus_or_defcon():
     assert defcon_points(fresh, 90.0) == 0.0
 
 
+def test_a_season_total_with_no_minutes_behind_it_is_not_a_rate():
+    # The live bootstrap serves a handful of these: a full season of
+    # defensive contributions against zero minutes played. Read as a rate
+    # they are worth thousands of points a game.
+    stale = player(minutes=0, bonus=9, defensive_contribution=232)
+    assert bonus_points(stale, 90.0) == 0.0
+    assert defcon_points(stale, 90.0) == 0.0
+
+
+def test_a_cameo_is_a_sample_not_a_rate():
+    # One defensive contribution in one minute on the pitch is one a game at
+    # the very most, not ninety.
+    cameo = player(minutes=1, bonus=1, defensive_contribution=1)
+    assert defcon_points(cameo, 90.0) == approx(1.0)
+    assert bonus_points(cameo, 90.0) == approx(1.0)
+
+
 def test_defcon_projects_the_season_rate_per_ninety():
     # 36 defcon points in 720 minutes is 4.5 a game.
     busy = player(minutes=720, defensive_contribution=36)

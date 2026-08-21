@@ -26,6 +26,12 @@ The universe:
 Field names, types and extra keys mirror a real bootstrap payload (checked
 against the live endpoint), including the per-90 stats arriving as JSON
 numbers and ``defensive_contribution`` as a season-total integer.
+
+Eight players cannot make a legal fifteen, so the end-to-end pipeline test
+runs on a second universe — the ``PIPELINE_*`` payloads — which is this one
+plus thirteen more players and three more clubs. It is kept separate rather
+than folded in because the unit tests above are pinned to the small universe:
+its league averages, its player count, its three clubs.
 """
 
 from typing import Any
@@ -323,4 +329,180 @@ ELEMENT_SUMMARY_JSON = {
         {"element": 5, "fixture": 1, "round": 1, "minutes": 90, "total_points": 12, "bonus": 3},
     ],
     "history_past": [{"season_name": "2024/25", "total_points": 210}],
+}
+
+
+# ---------------------------------------------------------------------------
+# The pipeline universe: the eight players above plus enough of a league to
+# field a legal fifteen — 21 players over 6 clubs, two keepers, five
+# defenders, five midfielders and three forwards to a squad, at most three
+# from any one club.
+# ---------------------------------------------------------------------------
+
+
+def _element(
+    pid: int,
+    name: str,
+    team: int,
+    element_type: int,
+    now_cost: int,
+    *,
+    minutes: int,
+    starts: int,
+    total_points: int,
+    bonus: int,
+    xg90: float = 0.0,
+    xa90: float = 0.0,
+    saves: int = 0,
+    saves_per_90: float = 0.0,
+    defcon: int = 0,
+) -> dict:
+    """An available bootstrap element, with every key the real payload has.
+
+    The eight players above are written out longhand because the tests that
+    read them read one field at a time; these thirteen exist to be counted,
+    priced and picked, so they are built from a table instead.
+    """
+    return {
+        "id": pid,
+        "web_name": name,
+        "first_name": name,
+        "team": team,
+        "element_type": element_type,
+        "now_cost": now_cost,
+        "status": "a",
+        "chance_of_playing_next_round": None,
+        "minutes": minutes,
+        "starts": starts,
+        "total_points": total_points,
+        "bonus": bonus,
+        "saves": saves,
+        "expected_goals_per_90": xg90,
+        "expected_assists_per_90": xa90,
+        "saves_per_90": saves_per_90,
+        "defensive_contribution": defcon,
+    }
+
+
+PIPELINE_TEAMS_JSON = TEAMS_JSON + [
+    {
+        "id": 4,
+        "name": "Dunmore",
+        "short_name": "DUN",
+        "strength": None,
+        "strength_overall_home": 4,
+        "strength_overall_away": 4,
+        "strength_attack_home": 1200,
+        "strength_attack_away": 1160,
+        "strength_defence_home": 1180,
+        "strength_defence_away": 1140,
+    },
+    {
+        "id": 5,
+        "name": "Eastvale",
+        "short_name": "EAS",
+        "strength": None,
+        "strength_overall_home": 3,
+        "strength_overall_away": 3,
+        "strength_attack_home": 1120,
+        "strength_attack_away": 1080,
+        "strength_defence_home": 1100,
+        "strength_defence_away": 1060,
+    },
+    {
+        "id": 6,
+        "name": "Fairhaven",
+        "short_name": "FAI",
+        "strength": None,
+        "strength_overall_home": 2,
+        "strength_overall_away": 2,
+        "strength_attack_home": 1040,
+        "strength_attack_away": 1010,
+        "strength_defence_home": 1060,
+        "strength_defence_away": 1000,
+    },
+]
+
+# Cravenside gains three fit players (its two above are a doubt and an injury),
+# and the three new clubs bring three or four each.
+PIPELINE_ELEMENTS_JSON = ELEMENTS_JSON + [
+    _element(9, "Jarvis", 3, 1, 50, minutes=810, starts=9, total_points=38, bonus=3,
+             saves=26, saves_per_90=2.9),
+    _element(10, "Kelly", 3, 2, 45, minutes=810, starts=9, total_points=34, bonus=2,
+             xg90=0.04, xa90=0.09, defcon=26),
+    _element(11, "Lozano", 3, 3, 70, minutes=760, starts=9, total_points=44, bonus=4,
+             xg90=0.22, xa90=0.26, defcon=14),
+    _element(12, "Meier", 4, 2, 55, minutes=900, starts=10, total_points=41, bonus=4,
+             xg90=0.09, xa90=0.11, defcon=33),
+    _element(13, "Novak", 4, 2, 40, minutes=700, starts=8, total_points=26, bonus=1,
+             xg90=0.03, xa90=0.05, defcon=22),
+    _element(14, "Ozturk", 4, 3, 85, minutes=880, starts=10, total_points=58, bonus=7,
+             xg90=0.35, xa90=0.28, defcon=10),
+    _element(15, "Pryce", 4, 4, 65, minutes=640, starts=7, total_points=35, bonus=3,
+             xg90=0.38, xa90=0.12, defcon=3),
+    _element(16, "Quill", 5, 2, 50, minutes=850, starts=10, total_points=37, bonus=3,
+             xg90=0.06, xa90=0.10, defcon=28),
+    _element(17, "Reyes", 5, 3, 95, minutes=900, starts=10, total_points=66, bonus=8,
+             xg90=0.45, xa90=0.33, defcon=9),
+    _element(18, "Sarr", 5, 4, 60, minutes=590, starts=6, total_points=31, bonus=2,
+             xg90=0.34, xa90=0.15, defcon=2),
+    _element(19, "Tandy", 6, 2, 42, minutes=780, starts=9, total_points=29, bonus=2,
+             xg90=0.02, xa90=0.06, defcon=24),
+    _element(20, "Voss", 6, 3, 65, minutes=700, starts=8, total_points=39, bonus=3,
+             xg90=0.20, xa90=0.24, defcon=12),
+    _element(21, "Wynne", 6, 4, 55, minutes=520, starts=6, total_points=27, bonus=2,
+             xg90=0.30, xa90=0.10, defcon=2),
+]
+
+PIPELINE_BOOTSTRAP_JSON = {
+    "events": EVENTS_JSON,
+    "teams": PIPELINE_TEAMS_JSON,
+    "elements": PIPELINE_ELEMENTS_JSON,
+}
+
+# Every club plays once in GW1, GW2 and GW3, so no side is projected at
+# nothing for want of a fixture. Fixture 10 is postponed (``event`` is null).
+PIPELINE_FIXTURES_JSON = [
+    {"id": 1, "event": 1, "team_h": 1, "team_a": 3, "finished": True},
+    {"id": 2, "event": 1, "team_h": 2, "team_a": 4, "finished": True},
+    {"id": 3, "event": 1, "team_h": 5, "team_a": 6, "finished": True},
+    {"id": 4, "event": 2, "team_h": 1, "team_a": 2, "finished": False},
+    {"id": 5, "event": 2, "team_h": 3, "team_a": 5, "finished": False},
+    {"id": 6, "event": 2, "team_h": 4, "team_a": 6, "finished": False},
+    {"id": 7, "event": 3, "team_h": 2, "team_a": 1, "finished": False},
+    {"id": 8, "event": 3, "team_h": 5, "team_a": 3, "finished": False},
+    {"id": 9, "event": 3, "team_h": 6, "team_a": 4, "finished": False},
+    {"id": 10, "event": None, "team_h": 3, "team_a": 6, "finished": False},
+]
+
+# A legal fifteen worth £97.2m with £2.8m in the bank: 4-4-2, Ferrer captain
+# and Haas vice, the doubtful Dodd and the injured Ito on the bench.
+PICKS_15_JSON = {
+    "active_chip": None,
+    "automatic_subs": [],
+    "entry_history": {
+        "event": 1,
+        "points": 61,
+        "bank": 28,
+        "value": 1000,
+        "event_transfers": 1,
+        "event_transfers_cost": 0,
+    },
+    "picks": [
+        {"element": 1, "position": 1, "multiplier": 1, "is_captain": False, "is_vice_captain": False},
+        {"element": 3, "position": 2, "multiplier": 1, "is_captain": False, "is_vice_captain": False},
+        {"element": 13, "position": 3, "multiplier": 1, "is_captain": False, "is_vice_captain": False},
+        {"element": 16, "position": 4, "multiplier": 1, "is_captain": False, "is_vice_captain": False},
+        {"element": 19, "position": 5, "multiplier": 1, "is_captain": False, "is_vice_captain": False},
+        {"element": 5, "position": 6, "multiplier": 2, "is_captain": True, "is_vice_captain": False},
+        {"element": 6, "position": 7, "multiplier": 1, "is_captain": False, "is_vice_captain": False},
+        {"element": 11, "position": 8, "multiplier": 1, "is_captain": False, "is_vice_captain": False},
+        {"element": 14, "position": 9, "multiplier": 1, "is_captain": False, "is_vice_captain": False},
+        {"element": 7, "position": 10, "multiplier": 1, "is_captain": False, "is_vice_captain": True},
+        {"element": 15, "position": 11, "multiplier": 1, "is_captain": False, "is_vice_captain": False},
+        {"element": 2, "position": 12, "multiplier": 0, "is_captain": False, "is_vice_captain": False},
+        {"element": 4, "position": 13, "multiplier": 0, "is_captain": False, "is_vice_captain": False},
+        {"element": 20, "position": 14, "multiplier": 0, "is_captain": False, "is_vice_captain": False},
+        {"element": 8, "position": 15, "multiplier": 0, "is_captain": False, "is_vice_captain": False},
+    ],
 }

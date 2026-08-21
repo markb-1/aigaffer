@@ -32,6 +32,9 @@ MAX_FACTOR = 1.3
 GOALKEEPER = 1
 DEFENDER = 2
 
+# The fewest minutes a per-90 rate may be taken over: a full match.
+MIN_RATE_MINUTES = 90
+
 
 @dataclass
 class PlayerProjection:
@@ -240,7 +243,19 @@ def _mean(values: Iterable[int]) -> float:
 
 
 def _per_90(total: float, minutes: int) -> float:
-    return (total / max(1, minutes)) * 90
+    """A season total as a rate per ninety minutes, or 0.0 without one.
+
+    Two things the live bootstrap does and the fixtures never showed. A
+    player can carry a season of defensive contributions against zero minutes
+    played: the payload contradicts itself, and reading his whole season as
+    one game is how a £4.5m substitute comes to project four thousand points
+    and get himself drafted. And a player with a minute or two behind him has
+    a sample, not a rate. So no minutes is no evidence, and a rate is never
+    taken over less than a full match.
+    """
+    if minutes <= 0:
+        return 0.0
+    return (total / max(minutes, MIN_RATE_MINUTES)) * 90
 
 
 def _clamp(factor: float) -> float:
