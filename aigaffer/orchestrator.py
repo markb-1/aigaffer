@@ -37,7 +37,7 @@ the team news hangs off.
 """
 
 from collections import defaultdict
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 
 import httpx
@@ -99,6 +99,14 @@ class PipelineInputs:
     no squad has neither. ``histories`` covers the squad and the shortlist
     (see :func:`history_pool`) and nobody else; a player missing from it is a
     player nobody is thinking of buying.
+
+    ``chips_used`` is the season's chip history as the API serves it, and it
+    is here because two different readers need it: the free-transfer sum,
+    which is what a wildcard week means for the bank, and the manager, who
+    must not be offered a chip that has already been spent. It is empty for a
+    manager with no squad — nothing has been played by somebody who has not
+    played — and defaults to empty because a fetch that never asked has
+    nothing to say about it.
     """
 
     bootstrap: Bootstrap
@@ -108,6 +116,7 @@ class PipelineInputs:
     free_transfers: int | None
     histories: dict[int, list[GwHistory]]
     players: dict[int, Player]
+    chips_used: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -213,7 +222,11 @@ def fetch_inputs(cfg: Config, client: FplClient) -> PipelineInputs:
 
     players = {player.id: player for player in bootstrap.elements}
     squad = _current_squad(client, cfg.team_id, bootstrap)
-    free_transfers = _free_transfers(client, cfg.team_id, squad, event)
+    # Asked for once and read twice: the free-transfer sum spends it here and
+    # the manager's chip panel spends it later, and the entry endpoints do not
+    # answer at all for a manager who has no squad.
+    chips_used = [] if squad is None else client.chips_used(cfg.team_id)
+    free_transfers = _free_transfers(client, cfg.team_id, squad, event, chips_used)
 
     held = [] if squad is None else squad.player_ids
     histories = {pid: _history(client, pid) for pid in history_pool(players, held)}
@@ -227,6 +240,7 @@ def fetch_inputs(cfg: Config, client: FplClient) -> PipelineInputs:
         free_transfers=free_transfers,
         histories=histories,
         players=players,
+        chips_used=chips_used,
     )
 
 
@@ -339,15 +353,22 @@ def _current_squad(
 
 
 def _free_transfers(
-    client: FplClient, team_id: int, squad: Squad | None, event: Event
+    client: FplClient,
+    team_id: int,
+    squad: Squad | None,
+    event: Event,
+    chips_used: list[dict],
 ) -> int | None:
     """Free transfers for ``event``, or None when there is no squad: nothing
-    has been earned or spent by a manager who has not played yet."""
+    has been earned or spent by a manager who has not played yet.
+
+    ``chips_used`` is handed in rather than fetched: the caller needs the same
+    list for the manager's chip panel, and one season of chip history is worth
+    one request.
+    """
     if squad is None:
         return None
-    return compute_free_transfers(
-        client.transfers(team_id), client.chips_used(team_id), event.id
-    )
+    return compute_free_transfers(client.transfers(team_id), chips_used, event.id)
 
 
 def _history(client: FplClient, pid: int) -> list[GwHistory]:

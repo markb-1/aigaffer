@@ -12,6 +12,7 @@ by the unit tests of the modules that produce them.
 
 import copy
 import json
+from collections import Counter
 from datetime import UTC, datetime, timedelta
 from functools import partial
 from typing import NamedTuple
@@ -321,6 +322,43 @@ def seam(tmp_path_factory) -> Seam:
     which is the point of them being a value."""
     cfg = Config(team_id=TEAM_ID, state_dir=tmp_path_factory.mktemp("seam"))
     return Seam(cfg=cfg, inputs=fetch_inputs(cfg, make_client(pipeline_routes())))
+
+
+class CountingTransport(httpx.BaseTransport):
+    """The fake transport, with a tally of what was asked of it."""
+
+    def __init__(self, routes: dict) -> None:
+        self.inner = fake_fpl_transport(routes)
+        self.counts: Counter = Counter()
+
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        self.counts[request.url.path] += 1
+        return self.inner.handle_request(request)
+
+
+def test_the_chips_already_played_are_fetched_once_and_kept(tmp_path):
+    # The free-transfer sum reads them and so does the manager's chip panel;
+    # a season's chip history fetched twice is one request nobody needed.
+    transport = CountingTransport(pipeline_routes())
+    client = FplClient(http=httpx.Client(transport=transport), sleep=lambda _: None)
+
+    inputs = fetch_inputs(Config(team_id=TEAM_ID, state_dir=tmp_path), client)
+
+    assert inputs.chips_used == HISTORY_JSON["chips"]
+    assert transport.counts[HISTORY_PATH] == 1
+
+
+def test_a_manager_with_no_squad_has_played_no_chips(tmp_path):
+    # Nothing has been played by somebody who has not played, and the entry
+    # endpoints do not answer for him either.
+    routes = pipeline_routes()
+    del routes[PICKS_PATH]
+    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path)
+
+    inputs = fetch_inputs(cfg, make_client(routes))
+
+    assert inputs.squad is None
+    assert inputs.chips_used == []
 
 
 def test_the_fetch_gathers_everything_the_later_stages_need(seam):

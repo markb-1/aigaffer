@@ -39,6 +39,7 @@ from datetime import date
 from typing import TYPE_CHECKING
 
 from aigaffer.data.models import Player
+from aigaffer.manager.tools import played_chips
 from aigaffer.model.xp import PlayerProjection
 from aigaffer.report.render import POSITIONS, deadline, plural, price
 from aigaffer.solver.lineup import ChipEvs, Lineup
@@ -72,6 +73,15 @@ RELEVANT_PER_LINE = 6
 DATE_FORMAT = "%a %d %b %Y"
 
 PICK_MARKER = "  <- solver pick"
+
+# What a chip already spent this season is marked with, and the line that says
+# what the mark means. A chip is played once, so the panel has to distinguish
+# "worth nothing" from "not yours to play".
+PLAYED_MARK = " (already played)"
+PLAYED_GUARD = (
+    "A chip marked (already played) has been used this season and is gone,"
+    " whatever it is priced at above. Finalize with chip 'none' instead."
+)
 
 # The longest a name, club or status out of the payload may be before it is
 # cut short. Real ones are a dozen characters; the cap is not about tidiness
@@ -145,7 +155,7 @@ def build_briefing(
         _squad(held, board, event, solve.draft_mode),
         _team_sheet(solve.lineup, board, event, pick),
         _candidates(numbered, board, pick),
-        _chip_panel(solve.chips, solve.draft_mode),
+        _chip_panel(solve.chips, solve.draft_mode, played_chips(inputs.chips_used)),
         _watchlist(held, board, event),
         _relevant(solve, board),
     ]
@@ -363,8 +373,16 @@ def _candidates(plans: list[tuple[int, Plan]], board: _Board, pick: int | None) 
     )
 
 
-def _chip_panel(chips: ChipEvs, drafting: bool) -> str:
-    """The chip numbers, signed: a chip can be worth less than nothing."""
+def _chip_panel(chips: ChipEvs, drafting: bool, played: set[str]) -> str:
+    """The chip numbers, signed: a chip can be worth less than nothing.
+
+    A chip already spent is priced anyway and then marked. The number is worth
+    reading — it says what this week would have been worth with it — but the
+    chip is not on the table, and the manager is told so in the one place he
+    looks the chips up. The guardrail line is printed only when something has
+    actually been played, because a warning about nothing is a line of noise
+    in a document that is already long.
+    """
     if drafting:
         return (
             "## Chip EV\n\nChips are not priced for a draft:"
@@ -372,13 +390,18 @@ def _chip_panel(chips: ChipEvs, drafting: bool) -> str:
         )
 
     panel = {
-        "Bench boost": chips.bench_boost,
-        "Triple captain": chips.triple_captain,
-        "Free hit": chips.free_hit,
-        "Wildcard": chips.wildcard,
+        "bench_boost": ("Bench boost", chips.bench_boost),
+        "triple_captain": ("Triple captain", chips.triple_captain),
+        "free_hit": ("Free hit", chips.free_hit),
+        "wildcard": ("Wildcard", chips.wildcard),
     }
     lines = ["## Chip EV", "", "Points each chip would add next gameweek.", ""]
-    lines += [f"- {label}: {points:+.1f}" for label, points in panel.items()]
+    lines += [
+        f"- {label}: {points:+.1f}{PLAYED_MARK if chip in played else ''}"
+        for chip, (label, points) in panel.items()
+    ]
+    if played:
+        lines += ["", PLAYED_GUARD]
     return "\n".join(lines)
 
 

@@ -238,6 +238,7 @@ def pipeline_inputs(
     squad: Squad | None = HELD,
     event: Event | None = None,
     free_transfers: int | None = 1,
+    chips_used: list[dict] | None = None,
 ) -> PipelineInputs:
     """A fetch the briefing can be built from; the histories are never read."""
     return PipelineInputs(
@@ -248,6 +249,7 @@ def pipeline_inputs(
         free_transfers=free_transfers,
         histories={},
         players=PLAYERS,
+        chips_used=chips_used or [],
     )
 
 
@@ -446,6 +448,64 @@ def test_the_chip_panel_signs_every_number():
         "- Free hit: -1.5",
         "- Wildcard: +12.0",
     ]
+
+
+def test_a_chip_already_played_is_priced_and_marked_gone():
+    # The EV is still worth reading — it says what the chip would have been
+    # worth — but the manager may not play it, and the panel is where he finds
+    # that out. The API spells it "3xc"; we call it the triple captain.
+    played = briefing(
+        inputs=pipeline_inputs(chips_used=[{"name": "3xc", "event": 1}])
+    )
+
+    assert bullets(played, "Chip EV") == [
+        "- Bench boost: +3.2",
+        "- Triple captain: +8.4 (already played)",
+        "- Free hit: -1.5",
+        "- Wildcard: +12.0",
+    ]
+    assert "already played" in section(played, "Chip EV")[-1], "and a guardrail"
+
+
+def test_a_panel_with_nothing_played_says_nothing_about_it():
+    # A guardrail about a chip nobody has played is a sentence about nothing.
+    assert section(briefing(), "Chip EV") == [
+        "Points each chip would add next gameweek.",
+        "- Bench boost: +3.2",
+        "- Triple captain: +8.4",
+        "- Free hit: -1.5",
+        "- Wildcard: +12.0",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("api_name", "label"),
+    [
+        ("bboost", "Bench boost"),
+        ("3xc", "Triple captain"),
+        ("freehit", "Free hit"),
+        ("wildcard", "Wildcard"),
+    ],
+)
+def test_every_chip_the_api_names_is_recognised(api_name: str, label: str):
+    panel = bullets(
+        briefing(inputs=pipeline_inputs(chips_used=[{"name": api_name, "event": 3}])),
+        "Chip EV",
+    )
+
+    assert [line for line in panel if line.endswith("(already played)")] == [
+        next(line for line in panel if line.startswith(f"- {label}:"))
+    ]
+
+
+def test_a_chip_the_api_has_not_invented_yet_marks_nothing():
+    # The assistant-manager chip is played, priced by nobody here, and must
+    # not be mistaken for one of the four this panel is about.
+    panel = briefing(
+        inputs=pipeline_inputs(chips_used=[{"name": "manager", "event": 3}])
+    )
+
+    assert "already played" not in panel
 
 
 def test_the_watchlist_is_the_ten_best_players_we_do_not_own():
