@@ -18,9 +18,12 @@ class Config:
     manager_model: str = "claude-opus-5"
 
     def __post_init__(self) -> None:
+        # An empty key is no key: an unconfigured CI secret arrives exported and
+        # empty, and the rest of the code asks `is not None`.
+        self.anthropic_api_key = self.anthropic_api_key or None
         # No key, no manager. Asking for one without credentials is a run that
         # would die at the first API call, so it is a run without a manager.
-        self.manager_enabled = self.manager_enabled and self.anthropic_api_key is not None
+        self.manager_enabled = bool(self.manager_enabled) and self.anthropic_api_key is not None
 
     @classmethod
     def from_env(cls) -> "Config":

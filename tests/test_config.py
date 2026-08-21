@@ -63,6 +63,15 @@ def test_manager_cannot_be_switched_on_without_a_key(manager_env):
     assert Config.from_env().manager_enabled is False
 
 
+def test_an_empty_key_is_no_key(manager_env):
+    """An unconfigured CI secret arrives exported and empty, not absent."""
+    manager_env.setenv("ANTHROPIC_API_KEY", "")
+    manager_env.setenv("AIGAFFER_MANAGER", "1")
+    cfg = Config.from_env()
+    assert cfg.anthropic_api_key is None
+    assert cfg.manager_enabled is False
+
+
 def test_manager_enabled_for_any_value_but_zero(manager_env):
     manager_env.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
     manager_env.setenv("AIGAFFER_MANAGER", "yes")
