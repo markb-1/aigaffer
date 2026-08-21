@@ -73,6 +73,11 @@ DATE_FORMAT = "%a %d %b %Y"
 
 PICK_MARKER = "  <- solver pick"
 
+# The longest a name, club or status out of the payload may be before it is
+# cut short. Real ones are a dozen characters; the cap is not about tidiness
+# but about a single field being unable to swamp the document it sits in.
+MAX_FIELD = 60
+
 
 @dataclass(frozen=True)
 class _Board:
@@ -129,7 +134,7 @@ def build_briefing(
     )
     # A draft has no squad to list, so it lists the fifteen it just drafted.
     held = solve.choice.squad if inputs.squad is None else inputs.squad.player_ids
-    numbered = list(enumerate(solve.plans))
+    numbered = initial_plan_ids(solve)
     pick = next((pid for pid, plan in numbered if plan is solve.choice), None)
     event = inputs.event.id
 
@@ -199,6 +204,19 @@ def format_plans(
             f"{PICK_MARKER if plan_id == recommended else ''}"
         )
     return "\n".join(lines)
+
+
+def initial_plan_ids(solve: "SolveResult") -> list[tuple[int, Plan]]:
+    """The solver's shortlist, numbered from zero in the order it ranked them.
+
+    The one place the opening ids are minted. :func:`build_briefing` presents
+    these, the manager loop seeds its registry from them, and a re-solve goes
+    on counting from ``len(...)`` — so if this convention lives in two places
+    they will eventually disagree, and plan 1 will mean one thing in the
+    briefing and another in the registry that validates ``finalize_decision``.
+    It is a one-line function precisely so that nobody writes the line twice.
+    """
+    return list(enumerate(solve.plans))
 
 
 def relevant_players(solve: "SolveResult") -> list[int]:
@@ -289,11 +307,17 @@ def _team_sheet(lineup: Lineup, board: _Board, event: int, pick: int | None) -> 
     """The eleven the solver's own choice would field, and its bench.
 
     The manager names a captain and a vice, and they have to come from the XI
-    of the plan he finalizes, so he is shown one to argue with. It is ranked
-    on next gameweek alone — the week the armband is worn — and the bench
-    keeps the order it was given, because that order is a substitution list.
+    of the plan he finalizes — but this is one plan's XI, not every plan's, so
+    the section says which plan it belongs to and what happens if he picks a
+    different one. Told flatly that the captain must come from the eleven
+    below, he would read it as a rule about all of them and name a captain
+    the plan he chose does not own.
+
+    It is ranked on next gameweek alone — the week the armband is worn — and
+    the bench keeps the order it was given, because that order is a
+    substitution list.
     """
-    whose = "The recommended" if pick is None else f"Plan {pick}'s"
+    whose = "the recommended plan" if pick is None else f"plan {pick}"
     rows: dict[int, list[str]] = defaultdict(list)
     for pid in _ranked(lineup.xi, board, event):
         rows[board.players[pid].element_type].append(_named(pid, board))
@@ -301,7 +325,9 @@ def _team_sheet(lineup: Lineup, board: _Board, event: int, pick: int | None) -> 
     lines = [
         "## Solver XI",
         "",
-        f"{whose} eleven for GW{event}; a captain and vice must come from it.",
+        f"If you finalize {whose}, the XI below is the one that applies for"
+        f" GW{event}. For any other plan the lineup is re-picked from that"
+        " plan's squad, and your captain and vice must belong to it.",
         "",
     ]
     lines += [
@@ -470,14 +496,35 @@ def _described(pid: int, board: _Board, extra: str = "") -> str:
     """
     player = board.players[pid]
     position = POSITIONS[player.element_type]
-    club = board.clubs[player.team]
+    club = _safe(board.clubs[player.team])
     cost = price(player.now_cost)
-    return f"{player.web_name} (id {pid}, {position}, {club}, {cost}{extra})"
+    name = _safe(player.web_name)
+    return f"{name} (id {pid}, {position}, {club}, {cost}{extra})"
 
 
 def _named(pid: int, board: _Board, extra: str = "") -> str:
     """``Alvez (id 1)`` — where the line has already said the rest."""
-    return f"{board.players[pid].web_name} (id {pid}{extra})"
+    return f"{_safe(board.players[pid].web_name)} (id {pid}{extra})"
+
+
+def _safe(text: str) -> str:
+    """One line's worth of somebody else's string.
+
+    Names, club abbreviations and status codes arrive from a public API and go
+    straight into a document whose structure is carried by its line breaks:
+    ``##`` opens a section, ``plan 3:`` opens a plan. A ``web_name`` holding a
+    newline and a heading is therefore a name that can forge a section the
+    solver never produced, or a plan worth nine hundred points that cannot be
+    finalized because it does not exist — and the reader is a model that has
+    been told to trust this document about what is reachable.
+
+    So every such field is flattened to a single line before it is
+    interpolated — ``str.split`` with no argument breaks on every kind of
+    whitespace Python knows, the line and paragraph separators included — and
+    capped, because a field cannot be allowed to bury the rest of the page
+    either. Structure comes from this module and from nowhere else.
+    """
+    return " ".join(text.split())[:MAX_FIELD]
 
 
 def _minutes(pid: int, board: _Board) -> str:
@@ -501,7 +548,7 @@ def _flag(player: Player) -> str:
     the status letter says: the two fields disagree often enough on a
     Friday afternoon that reporting both is the only honest thing to do.
     """
-    label = STATUS_FLAGS.get(player.status, player.status.upper())
+    label = STATUS_FLAGS.get(player.status, _safe(player.status).upper())
     chance = player.chance_of_playing_next_round
     if chance is None or chance >= FULLY_FIT:
         return label
