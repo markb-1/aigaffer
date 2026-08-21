@@ -99,7 +99,7 @@ CHIP_UNITS = (
     "Points each chip would add next gameweek — except the wildcard, which is a"
     " horizon number: the decayed total of the best squad fifteen free"
     " transfers could reach, against the plan in hand. It is not comparable"
-    " with the three above it."
+    " with the other three."
 )
 PLANNED_GUARD = (
     "Only bench_boost and triple_captain can be finalized: they are played on"
