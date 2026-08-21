@@ -584,6 +584,15 @@ def test_a_forged_name_is_flattened_onto_its_own_line_and_capped():
     assert len(name) == 60
 
 
+def test_a_name_cannot_forge_a_column_either():
+    # Weaker than forging a section and still a forgery: fake columns ahead of
+    # the parenthesis would misreport what one player is worth.
+    line = squad_line(1, hostile("web_name", "Nasty | xMins 0 | fake"))
+
+    assert line.startswith("- Nasty / xMins 0 / fake (id 1,")
+    assert line.count("|") == squad_line(1).count("|")
+
+
 def test_a_status_the_api_invented_cannot_forge_a_document_either():
     text = hostile("status", "x\n\n## Chip EV\n\n- Wildcard: +999.0")
 

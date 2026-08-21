@@ -522,9 +522,16 @@ def _safe(text: str) -> str:
     interpolated — ``str.split`` with no argument breaks on every kind of
     whitespace Python knows, the line and paragraph separators included — and
     capped, because a field cannot be allowed to bury the rest of the page
-    either. Structure comes from this module and from nowhere else.
+    either.
+
+    The pipe goes with them. It is the column separator on every line in this
+    document, so a name holding one forges columns rather than sections — a
+    weaker lie, still a lie, and no player is legitimately called it. A slash
+    stands in, which reads as somebody's punctuation rather than as ours.
+
+    Structure comes from this module and from nowhere else.
     """
-    return " ".join(text.split())[:MAX_FIELD]
+    return " ".join(text.replace("|", "/").split())[:MAX_FIELD]
 
 
 def _minutes(pid: int, board: _Board) -> str:
