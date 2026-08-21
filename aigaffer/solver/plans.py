@@ -9,14 +9,24 @@ transfer count a manager would consider, and the results are laid out
 best first for the report to print.
 
 Past ``MAX_TRANSFERS`` moves the answer is a wildcard, not a transfer plan,
-which is why the shortlist stops at three.
+which is why the shortlist stops at three — unless the manager has more free
+transfers than that banked, in which case it stops where his bank does. Five
+free moves are five moves that cost nothing, and a shortlist that never asked
+for the fourth and fifth cannot recommend them.
 """
 
 from aigaffer.data.models import Player
 from aigaffer.model.xp import PlayerProjection
 from aigaffer.solver.optimizer import MAX_TRANSFERS, Plan, optimize
 
-TRANSFER_COUNTS = tuple(range(MAX_TRANSFERS + 1))
+
+def transfer_counts(free_transfers: int) -> tuple[int, ...]:
+    """The forced transfer counts worth solving for, none to the most.
+
+    The most is three, or the bank if it holds more: a plan that spends only
+    free transfers is never off the table for costing too much.
+    """
+    return tuple(range(max(MAX_TRANSFERS, free_transfers) + 1))
 
 
 def generate_plans(
@@ -42,7 +52,7 @@ def generate_plans(
     plans: list[Plan] = []
     seen: set[tuple[int, ...]] = set()
 
-    for count in TRANSFER_COUNTS:
+    for count in transfer_counts(free_transfers):
         plan = optimize(
             players, xp, current_squad, bank, free_transfers, forced_transfers=count
         )

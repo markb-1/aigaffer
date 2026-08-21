@@ -250,6 +250,10 @@ def history_pool(players: dict[int, Player], held: list[int]) -> list[int]:
     left out of this one projects at zero, so he is never the player the
     solver buys.
 
+    Between seasons every total is zero and the cut has nothing to rank on;
+    price breaks that tie, because a £14.5m striker is who the market expects
+    to score and an id is nobody in particular.
+
     Public because :mod:`aigaffer.backtest` scores this same population: the
     players the pipeline would actually consider are the ones whose ranking
     is worth grading.
@@ -261,7 +265,13 @@ def history_pool(players: dict[int, Player], held: list[int]) -> list[int]:
         if player.status == AVAILABLE:
             by_position[player.element_type].append(player)
     for candidates in by_position.values():
-        candidates.sort(key=lambda candidate: (-candidate.total_points, candidate.id))
+        candidates.sort(
+            key=lambda candidate: (
+                -candidate.total_points,
+                -candidate.now_cost,
+                candidate.id,
+            )
+        )
         pool.update(candidate.id for candidate in candidates[:CANDIDATES_PER_POSITION])
 
     return sorted(pool)

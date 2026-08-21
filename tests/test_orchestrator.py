@@ -23,7 +23,13 @@ from aigaffer import __main__ as cli
 from aigaffer import orchestrator
 from aigaffer.config import Config
 from aigaffer.data.fpl_api import FplClient
-from aigaffer.orchestrator import PipelineError, decide_mode, run_pipeline
+from aigaffer.data.models import Player
+from aigaffer.orchestrator import (
+    PipelineError,
+    decide_mode,
+    history_pool,
+    run_pipeline,
+)
 from aigaffer.report.telegram import send_report
 from aigaffer.store import Store
 from tests.fixtures import (
@@ -285,6 +291,43 @@ def test_a_dry_run_leaves_nothing_behind(tmp_path):
 
     assert store.last_runs() == []
     assert not (tmp_path / "reports").exists()
+
+
+# --- whose history to fetch ------------------------------------------------
+
+
+def forward(pid: int, points: int, cost: int) -> Player:
+    """An available forward, ranked only by what the pool ranks on."""
+    return Player(
+        id=pid,
+        web_name=f"P{pid}",
+        team=1,
+        element_type=4,
+        now_cost=cost,
+        status="a",
+        minutes=900,
+        starts=10,
+        total_points=points,
+        bonus=0,
+        saves=0,
+    )
+
+
+def test_the_history_pool_ranks_on_points_first():
+    # The highest scorers are the cheapest here, so a pool that led on price
+    # would come back with the other forty.
+    players = {pid: forward(pid, points=pid, cost=100 - pid) for pid in range(1, 51)}
+
+    assert history_pool(players, []) == list(range(11, 51))
+
+
+def test_a_pool_with_no_points_to_rank_on_falls_back_to_price():
+    # Between seasons every total is zero. Id order would spend the run's two
+    # hundred requests on whoever the API numbers first, which is nobody in
+    # particular; price is the market's own ranking and the only one left.
+    players = {pid: forward(pid, points=0, cost=40 + pid) for pid in range(1, 51)}
+
+    assert history_pool(players, []) == list(range(11, 51))
 
 
 # --- delivery --------------------------------------------------------------

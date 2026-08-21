@@ -72,6 +72,18 @@ def test_every_transfer_count_is_asked_for(monkeypatch):
     assert all(call["free_transfers"] == 2 for call in calls)
 
 
+def test_a_bank_of_free_transfers_is_asked_for_in_full(monkeypatch):
+    # Five banked free transfers are five moves that cost nothing, and a
+    # shortlist that stopped at three never asked for the best of them. The
+    # bank tops out at five, so five is as far as this goes.
+    calls = stub_optimize(monkeypatch, {n: canned(n, 100.0 + n) for n in range(6)})
+
+    result = generate_plans(PLAYERS, XP, SQUAD, bank=0, free_transfers=5)
+
+    assert [call["forced_transfers"] for call in calls] == [0, 1, 2, 3, 4, 5]
+    assert [len(plan.transfers_in) for plan in result] == [5, 4, 3, 2, 1, 0]
+
+
 def test_plans_come_back_best_objective_first(monkeypatch):
     stub_optimize(
         monkeypatch,

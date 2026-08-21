@@ -44,7 +44,7 @@ import pytest
 
 from aigaffer.data.models import Player
 from aigaffer.model.xp import PlayerProjection
-from aigaffer.solver.optimizer import candidate_pool, optimize
+from aigaffer.solver.optimizer import MAX_HITS, candidate_pool, optimize
 
 GK, DEF, MID, FWD = 1, 2, 3, 4
 
@@ -297,27 +297,49 @@ def test_drafts_a_whole_squad_from_scratch():
 
 
 def test_a_fourth_transfer_worth_making_is_still_capped_at_three():
-    # Four cost-neutral upgrades are on the table. The best three — 21 for 7,
-    # 16 for 12 and 22 for 15 — leave a squad worth 428.6, and the keeper
-    # swap that would follow is worth 12 more than the hit it costs. The cap
-    # takes it off the table anyway: past three moves you are wildcarding.
+    # Four cost-neutral upgrades are on the table and two free transfers to
+    # make them with. The best three — 21 for 7, 16 for 12 and 22 for 15 —
+    # leave a squad worth 428.6 for one hit, and the keeper swap that would
+    # follow is worth 12 more than the hit it costs. The cap takes it off the
+    # table anyway: past three moves you are wildcarding.
     players, xp = four_upgrades()
 
-    plan = optimize(players, xp, CURRENT, bank=0, free_transfers=1)
+    plan = optimize(players, xp, CURRENT, bank=0, free_transfers=2)
 
     assert plan.transfers_in == [16, 21, 22]
     assert plan.transfers_out == [7, 12, 15]
-    assert plan.hits == 2
+    assert plan.hits == 1
     assert plan.xp_total == pytest.approx(428.6)
-    assert plan.objective == pytest.approx(420.6)
+    assert plan.objective == pytest.approx(424.6)
 
     # And it really is the cap doing it: forced to four, the same board comes
-    # back worth more than the plan the cap allowed.
+    # back worth more than the plan the cap allowed — 440.6 for two hits.
     forced = optimize(
-        players, xp, CURRENT, bank=0, free_transfers=1, forced_transfers=4
+        players, xp, CURRENT, bank=0, free_transfers=2, forced_transfers=4
     )
-    assert forced.objective == pytest.approx(428.6)
+    assert forced.objective == pytest.approx(432.6)
     assert forced.objective > plan.objective
+
+
+def test_a_third_hit_is_never_worth_taking():
+    # Three moves with nothing banked is -12 in one gameweek, past the -8 the
+    # spec allows. It is not priced and rejected, it is not on the board: the
+    # count comes back infeasible and the shortlist simply has one fewer plan.
+    players, xp = four_upgrades()
+
+    assert (
+        optimize(players, xp, CURRENT, bank=0, free_transfers=0, forced_transfers=3)
+        is None
+    )
+
+
+def test_two_hits_are_the_edge_and_still_allowed():
+    players, xp = four_upgrades()
+
+    plan = optimize(players, xp, CURRENT, bank=0, free_transfers=0, forced_transfers=2)
+
+    assert plan.hits == MAX_HITS
+    assert len(plan.transfers_in) == 2
 
 
 def test_fifteen_free_transfers_lift_the_cap():

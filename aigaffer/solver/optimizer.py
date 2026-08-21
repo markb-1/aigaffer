@@ -15,13 +15,20 @@ Two decisions are deliberately blunt:
   paid, so a player who has risen is valued a shade high — an approximation,
   not an oversight.
 
-Left to itself the model will make at most ``MAX_TRANSFERS`` moves: past three
-a manager is wildcarding, not transferring. A manager who *is* wildcarding
-says so by having more than three free transfers, and the cap follows him up
-— that is how a wildcard or free hit is valued, with fifteen free moves and
-the whole squad on the table. ``forced_transfers`` overrides both, which is
-also how a squad is drafted from nothing — pass an empty ``current_squad``
-and ``forced_transfers=15``.
+Left to itself the model will make at most ``MAX_TRANSFERS`` moves and pay for
+at most ``MAX_HITS`` of them. Past three moves a manager is wildcarding rather
+than transferring, and eight points in one gameweek is as much as a plan is
+allowed to burn: a third hit is not priced and rejected, it is off the board.
+
+A manager with more than three free transfers banked lifts the move cap to
+what he holds — a free move costs nothing to consider, and the bank tops out
+at five (:data:`~aigaffer.data.free_transfers.MAX_FREE_TRANSFERS`), so that is
+five and not a wildcard. Fifteen free transfers is not a bank at all: it is
+how :mod:`aigaffer.solver.lineup` prices a wildcard or free hit, by asking for
+the best squad reachable with the whole fifteen on the table.
+``forced_transfers`` overrides the move cap, which is also how a squad is
+drafted from nothing — pass an empty ``current_squad`` and
+``forced_transfers=15``.
 """
 
 from collections import defaultdict
@@ -47,6 +54,9 @@ MIN_XI_FORWARDS = 1
 BENCH_WEIGHT = 0.1
 HIT_POINTS = 4
 MAX_TRANSFERS = 3
+# The spec's ceiling: -8 in a gameweek, whatever the projection says it would
+# earn back. Two hits is a considered gamble; three is a manager tilting.
+MAX_HITS = 2
 
 CANDIDATES_PER_POSITION = 40
 AVAILABLE = "a"
@@ -116,9 +126,9 @@ def optimize(
     """Best squad and XI reachable from ``current_squad``, or None.
 
     ``bank`` and prices are in tenths of a million. None means no legal squad
-    exists — usually a forced transfer count the budget or the pool cannot
-    support — which is an answer, not an error: the caller asks for several
-    transfer counts and keeps the ones that came back.
+    exists — usually a forced transfer count the budget, the pool or
+    :data:`MAX_HITS` cannot support — which is an answer, not an error: the
+    caller asks for several transfer counts and keeps the ones that came back.
     """
     pool = candidate_pool(players, xp, current_squad)
     current = {pid for pid in current_squad if pid in players}
@@ -163,6 +173,7 @@ def optimize(
     else:
         problem += transfers == forced_transfers
     problem += hits >= transfers - free_transfers
+    problem += hits <= MAX_HITS
 
     status = problem.solve(SOLVER)
     if pulp.LpStatus[status] != "Optimal":
