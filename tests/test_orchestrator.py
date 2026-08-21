@@ -25,6 +25,7 @@ from datetime import UTC, datetime, timedelta
 from functools import partial
 from typing import NamedTuple
 
+import anthropic
 import httpx
 import pytest
 
@@ -678,6 +679,24 @@ def test_the_gaffer_is_briefed_on_the_week_the_solver_solved(monkeypatch, tmp_pa
     # allowed to overwrite, and he cannot sensibly overwrite what he is not shown.
     assert "xMins" in his.briefing
     assert his.inputs.event.id == 2 and his.solve0.draft_mode is False
+
+
+def test_the_client_is_built_against_the_clock(monkeypatch, tmp_path):
+    # The SDK's own defaults are ten minutes and two retries, which is half an
+    # hour of one request — longer than the whole job is allowed to take. The
+    # loop's time budget bounds the conversation; this bounds the turn that is
+    # in flight when the budget runs out.
+    built: list[dict] = []
+
+    class Recorder:
+        def __init__(self, **kwargs) -> None:
+            built.append(kwargs)
+
+    monkeypatch.setattr(anthropic, "Anthropic", Recorder)
+    _, _, gaffer = gaffer_run(monkeypatch, tmp_path, send=False)
+
+    assert built == [{"api_key": "sk-test", "timeout": 120.0, "max_retries": 1}]
+    assert isinstance(gaffer.consults[0].client, Recorder), "and it is what he is given"
 
 
 def test_the_resolver_reprojects_and_resolves_on_his_minutes(monkeypatch, tmp_path):

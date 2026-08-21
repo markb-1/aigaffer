@@ -460,7 +460,14 @@ def _consult(
         from aigaffer.manager.briefing import build_briefing
 
         decision = run_manager(
-            anthropic.Anthropic(api_key=cfg.anthropic_api_key),
+            # Bounded, because the SDK is not by default: ten minutes a request
+            # and two retries is half an hour of one turn, inside a job that is
+            # given thirty for the whole run. Two minutes and one retry keeps a
+            # single hanging request from eating the loop's own time budget, and
+            # a turn that cannot be had in four minutes is a turn to give up on.
+            anthropic.Anthropic(
+                api_key=cfg.anthropic_api_key, timeout=120.0, max_retries=1
+            ),
             cfg,
             inputs,
             solved,

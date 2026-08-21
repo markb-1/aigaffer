@@ -23,14 +23,15 @@ the briefing quotes a public API, a tool result quotes a solver run, and a web
 page quotes whoever wrote it. None of it is a plan. The registry is.
 
 And the whole thing is optional. Every failure — a refusal, a rate limit, a
-connection that dies, twelve turns that reach no decision — degrades to the
-solver's own recommendation with the reason recorded in ``source``, because a
-deadline is never silently missed and a manager who cannot be reached is not a
-reason to miss one.
+connection that dies, twelve turns or twelve minutes that reach no decision —
+degrades to the solver's own recommendation with the reason recorded in
+``source``, because a deadline is never silently missed and a manager who
+cannot be reached is not a reason to miss one.
 """
 
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from time import monotonic
 from typing import TYPE_CHECKING, Any
 
 import anthropic
@@ -60,6 +61,18 @@ MAX_TURNS = 12
 # A turn the server pauses is resumed, and three times is generous: a fourth
 # pause on the same turn is a turn that is not coming back.
 MAX_RESUMPTIONS = 3
+
+# And the same conversation against the clock, because a cap on turns is not a
+# cap on minutes. Twelve unstreamed turns of an agent that searches the web
+# between them can run long, and the run they are inside has a deadline of its
+# own: the report is due before the gameweek's, and the workflow gives the whole
+# job thirty. Twelve minutes leaves room for the turn already in flight — the
+# client the orchestrator builds bounds that one at two minutes and one retry —
+# and for the solver's own week to be rendered and sent after it.
+#
+# A worse report on time beats a better one that missed, every week.
+TIME_BUDGET_SECONDS = 720
+OUT_OF_TIME = "out of time"
 
 # Non-streaming, so the ceiling stays under the SDK's HTTP timeout. Effort is
 # the depth control on this model; thinking is adaptive by default and an
@@ -247,11 +260,20 @@ class _Conversation:
         self.positions = {pid: p.element_type for pid, p in inputs.players.items()}
 
     def run(self) -> ManagerDecision:
-        """Turn after turn until he decides, or until we stop asking."""
+        """Turn after turn until he decides, or until we stop asking.
+
+        Two things stop us asking: :data:`MAX_TURNS`, and the clock. The clock
+        is read before each turn rather than after it, because a budget that is
+        already spent buys nothing by being spent again — and a turn that is
+        under way is left to finish, since its answer is paid for either way.
+        """
+        started = monotonic()
         forced = False
         nudged = False
 
         for turn in range(1, MAX_TURNS + 1):
+            if monotonic() - started > TIME_BUDGET_SECONDS:
+                return self.fallback(OUT_OF_TIME)
             response = self._ask(forced or turn == MAX_TURNS)
             # Forcing is one turn's worth of insistence, not a mode: a turn cut
             # off mid-sentence should not cost him the rest of his research.

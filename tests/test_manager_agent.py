@@ -53,6 +53,7 @@ import pytest
 
 from aigaffer.config import Config
 from aigaffer.data.models import Bootstrap, Pick, Player, Squad
+from aigaffer.manager import agent
 from aigaffer.manager.agent import ManagerDecision, run_manager
 from aigaffer.manager.tools import SYSTEM_PROMPT, TOOLS
 from aigaffer.model.xp import PlayerProjection
@@ -1142,6 +1143,52 @@ def test_a_decision_on_the_forced_turn_still_counts():
 
     assert decision.source == "manager"
     assert decision.plan is ROLL
+
+
+# --- the clock -------------------------------------------------------------
+
+
+class Clock:
+    """A monotonic clock the test winds by hand.
+
+    Each call reads the next figure and the last one repeats for ever, so a
+    test says what the loop should think the time is and stops worrying about
+    how many times it asks.
+    """
+
+    def __init__(self, *readings: float) -> None:
+        self.readings = list(readings)
+
+    def __call__(self) -> float:
+        return self.readings.pop(0) if len(self.readings) > 1 else self.readings[0]
+
+
+def test_a_conversation_that_runs_out_of_time_gives_the_week_back(monkeypatch):
+    # Twelve turns of an agent that searches the web between them can outlast
+    # the deadline it is being asked about. The budget is checked before every
+    # request, so the turn that would have blown it is never paid for.
+    monkeypatch.setattr(agent, "monotonic", Clock(0.0, 1.0, agent.TIME_BUDGET_SECONDS + 1))
+    client, decision = converse(
+        [
+            reply(use("adjust_players", adjust())),
+            reply(use("finalize_decision", finalize())),
+        ]
+    )
+
+    assert decision.source == "solver-fallback: out of time"
+    assert len(client.requests) == 1, "the second turn was never asked for"
+    assert decision.plan is SOLVE0.choice
+
+
+def test_a_conversation_inside_the_budget_is_never_interrupted(monkeypatch):
+    monkeypatch.setattr(agent, "monotonic", Clock(0.0, agent.TIME_BUDGET_SECONDS))
+    _, decision = converse([reply(use("finalize_decision", finalize()))])
+
+    assert decision.source == "manager"
+
+
+def test_the_budget_is_the_twelve_minutes_the_workflow_can_spare():
+    assert agent.TIME_BUDGET_SECONDS == 720
 
 
 # --- the fallback ----------------------------------------------------------
