@@ -1,6 +1,6 @@
 """Tests for the orchestrator: the clock that starts a run, and the run.
 
-``run_pipeline`` is the only place the whole of Phase 1 is assembled, so the
+``run_pipeline`` is the only place the whole of the bot is assembled, so the
 tests here are integration tests: a real ``FplClient`` over a fake transport,
 the real minutes model, the real solver and the real renderer, over the
 ``PIPELINE_*`` universe in :mod:`tests.fixtures`. What they assert is that the
@@ -8,6 +8,12 @@ pieces are wired to each other — the injured man we own is never fielded, the
 shortlist has more than one plan on it, the chip panel is priced off a squad
 that exists — rather than the numbers those pieces produce, which are pinned
 by the unit tests of the modules that produce them.
+
+The manager is the one piece stubbed rather than run. His loop is a
+conversation with an API and is tested against a scripted one in
+:mod:`tests.test_manager_agent`; what matters here is the wiring around it,
+which is why these runs hand a canned decision back and then ask what the
+report, the store and the phone did with it.
 """
 
 import copy
@@ -542,8 +548,10 @@ def decided(
         chip=chip,
         chip_justification=justification,
         rationale=GAFFER_RATIONALE,
+        # He changed his mind about Grant, which is what a conversation does.
         adjustments=[
-            {"player_id": GRANT, "expected_minutes": 0.0, "reason": "suspended (club)"}
+            {"player_id": GRANT, "expected_minutes": 20.0, "reason": "a doubt (paper)"},
+            {"player_id": GRANT, "expected_minutes": 0.0, "reason": "suspended (club)"},
         ],
         searches=searches,
         source="manager",
@@ -613,12 +621,48 @@ def test_the_record_keeps_the_words_as_well_as_the_numbers(monkeypatch, tmp_path
 
     assert decision["decision_source"] == "manager"
     assert decision["rationale"] == GAFFER_RATIONALE
+    # Whole, in the order he made them, the one he thought better of included:
+    # the record is what happened, and the report is where it reads tidily.
     assert decision["adjustments"] == [
-        {"player_id": GRANT, "expected_minutes": 0.0, "reason": "suspended (club)"}
+        {"player_id": GRANT, "expected_minutes": 20.0, "reason": "a doubt (paper)"},
+        {"player_id": GRANT, "expected_minutes": 0.0, "reason": "suspended (club)"},
     ]
     assert decision["chip"] == "none"
     assert decision["chip_justification"] == ""
     assert decision["searches"] == 2
+
+
+def test_the_report_prints_the_minutes_he_settled_on(monkeypatch, tmp_path):
+    report, _, _ = gaffer_run(monkeypatch, tmp_path, send=False)
+
+    assert bullets(report, "The Gaffer's view") == [
+        "- Set Grant to 0 mins — suspended (club)"
+    ]
+
+
+def test_the_kill_switch_leaves_the_solver_to_it(monkeypatch, tmp_path, scout_run):
+    # A key in the environment and AIGAFFER_MANAGER=0: the one way to turn the
+    # manager off on a machine that could perfectly well reach him.
+    def never(consult: Consult) -> ManagerDecision:
+        raise AssertionError("the manager was asked with the switch off")
+
+    stub_gaffer(monkeypatch, never)
+    cfg = Config(
+        team_id=TEAM_ID,
+        state_dir=tmp_path,
+        anthropic_api_key="sk-test",
+        manager_enabled=False,
+    )
+
+    report = run_pipeline(
+        cfg,
+        make_client(pipeline_routes()),
+        Store(tmp_path / "aigaffer.db"),
+        "scout",
+        send=False,
+    )
+
+    assert report == scout_run.report
 
 
 def test_the_gaffer_is_briefed_on_the_week_the_solver_solved(monkeypatch, tmp_path):
