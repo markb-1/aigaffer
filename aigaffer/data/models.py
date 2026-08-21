@@ -33,6 +33,10 @@ class Player(BaseModel):
 
 
 class Team(BaseModel):
+    """The four positional strength columns are 0 out of season, so the
+    coarser ``strength_overall_*`` pair is kept as a fallback for the xP
+    model."""
+
     id: int
     name: str
     short_name: str
@@ -40,6 +44,8 @@ class Team(BaseModel):
     strength_attack_away: int
     strength_defence_home: int
     strength_defence_away: int
+    strength_overall_home: int
+    strength_overall_away: int
 
 
 class Event(BaseModel):
