@@ -15,6 +15,12 @@ they travel as tenths of a million right up to the moment they are printed.
 
 The renderer decides nothing. It is handed the plans, the choice among them,
 the eleven and the chip numbers, and it says what they are.
+
+:func:`deadline`, :func:`price` and :func:`plural` are public because they are
+the house vocabulary rather than this module's private business: the manager's
+briefing (:mod:`aigaffer.manager.briefing`) says the same things to a different
+reader and must say them the same way. The deadline especially — reading a
+naive timestamp as the runner's local clock is a mistake worth making once.
 """
 
 from collections import defaultdict
@@ -73,20 +79,20 @@ def render_report(
 
 
 def _header(mode: str, event: Event) -> str:
-    return f"# AI Gaffer — GW{event.id} {mode}\n\nDeadline: {_deadline(event)}"
+    return f"# AI Gaffer — GW{event.id} {mode}\n\nDeadline: {deadline(event)}"
 
 
-def _deadline(event: Event) -> str:
+def deadline(event: Event) -> str:
     """The deadline in UTC, whatever clock it arrived on.
 
     A naive datetime is read as UTC rather than handed to ``astimezone``,
     which would take it for the runner's local time and quietly move the
     deadline by however many hours that machine happens to be out.
     """
-    deadline = event.deadline_time
-    if deadline.tzinfo is None:
-        deadline = deadline.replace(tzinfo=UTC)
-    return deadline.astimezone(UTC).strftime(DEADLINE_FORMAT)
+    stamp = event.deadline_time
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=UTC)
+    return stamp.astimezone(UTC).strftime(DEADLINE_FORMAT)
 
 
 def _recommendation(
@@ -98,7 +104,7 @@ def _recommendation(
         lines.append("Roll the transfer.")
         return "\n".join(lines)
 
-    moves = _plural(len(choice.transfers_in), "transfer")
+    moves = plural(len(choice.transfers_in), "transfer")
     cost = f"-{choice.hits * HIT_POINTS} pts in hits" if choice.hits else "no hit"
     lines += [
         f"{moves}, {cost}.",
@@ -148,8 +154,8 @@ def _candidates(plans: list[Plan], choice: Plan) -> str:
     for plan in plans:
         recommended = "  <- recommended" if plan is choice else ""
         lines.append(
-            f"- {_plural(len(plan.transfers_in), 'transfer')}"
-            f" | {_plural(plan.hits, 'hit')}"
+            f"- {plural(len(plan.transfers_in), 'transfer')}"
+            f" | {plural(plan.hits, 'hit')}"
             f" | {plan.xp_total:.1f} xP"
             f" | {plan.objective:.1f} net{recommended}"
         )
@@ -212,14 +218,14 @@ def _described(pid: int, players: dict[int, Player], clubs: dict[int, str]) -> s
     """``Reid (FWD, CRV, £9.5m)`` — who he is, in one parenthesis."""
     player = players[pid]
     position = POSITIONS[player.element_type]
-    price = _price(player.now_cost)
-    return f"{player.web_name} ({position}, {clubs[player.team]}, {price})"
+    club = clubs[player.team]
+    return f"{player.web_name} ({position}, {club}, {price(player.now_cost)})"
 
 
-def _price(now_cost: int) -> str:
+def price(now_cost: int) -> str:
     """Tenths of a million as a manager reads them: 55 is £5.5m."""
     return f"£{now_cost / 10:.1f}m"
 
 
-def _plural(count: int, noun: str) -> str:
+def plural(count: int, noun: str) -> str:
     return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
