@@ -81,6 +81,7 @@ from aigaffer.solver.optimizer import (
     HIT_POINTS,
     MAX_HITS,
     MAX_PER_CLUB,
+    MAX_TRANSFERS,
     MIN_XI_DEFENDERS,
     MIN_XI_FORWARDS,
     SQUAD_QUOTAS,
@@ -102,6 +103,20 @@ CANDIDATES_PER_POSITION = 30
 # is the caller falling back on the single-week solver — never an exception.
 SOLVE_SECONDS = 60
 SOLVER = pulp.PULP_CBC_CMD(msg=0, timeLimit=SOLVE_SECONDS)
+
+
+def _solver(time_limit: int | None) -> pulp.LpSolver:
+    """The module's solver, or one like it on a shorter leash.
+
+    A caller solving the same window half a dozen times over — which is what
+    :func:`~aigaffer.solver.plans.generate_plans` does — cannot give each of
+    them the minute a single decision is worth. The command wrapper keeps no
+    per-problem state, so a second one costs nothing to build and the silence
+    is the only thing it has to inherit.
+    """
+    if time_limit is None:
+        return SOLVER
+    return pulp.PULP_CBC_CMD(msg=0, timeLimit=time_limit)
 
 
 @dataclass
@@ -143,6 +158,7 @@ def optimize_path(
     events: list[int],
     decay: float,
     forced_first_transfers: int | None = None,
+    time_limit: int | None = None,
 ) -> tuple[Plan, PlannedPath] | None:
     """The best sequence of squads over ``events``, or None.
 
@@ -158,10 +174,20 @@ def optimize_path(
     A player with no projection for a gameweek is worth nothing in it, which is
     what a blank is.
 
+    ``forced_first_transfers`` pins the opening gameweek's moves; left alone,
+    the opening gameweek moves at most ``max(MAX_TRANSFERS, ft)`` times, which
+    is the single-week solver's ceiling and is here for the same reason it is
+    there — past three moves a manager is wildcarding — and for one more: the
+    two engines' answers are ranked against each other on one number, and a
+    window that outbids the other with moves the other was never allowed to
+    consider is not a comparison. A caller asking for a count above the cap is
+    asking a question, and gets an answer.
+
     None means no answer, not an error: an infeasible board, a
     ``forced_first_transfers`` the pool or the budget cannot support, or a
-    solve that ran out of its minute without an optimum. The caller falls back
-    on the single-week solver, which is the doctrine everywhere else too.
+    solve that ran out of ``time_limit`` seconds — a minute by default — with
+    nothing to show for it. The caller falls back on the single-week solver,
+    which is the doctrine everywhere else too.
     """
     if not events:
         return None
@@ -284,10 +310,12 @@ def optimize_path(
         if w > 1:
             problem += banked[w] <= banked[w - 1] - moves[w - 1] + paid[w - 1] + 1
 
-    if forced_first_transfers is not None:
+    if forced_first_transfers is None:
+        problem += moves[1] <= max(MAX_TRANSFERS, opening_bank)
+    else:
         problem += moves[1] == forced_first_transfers
 
-    status = problem.solve(SOLVER)
+    status = problem.solve(_solver(time_limit))
     # CBC stopped on its time limit with a squad in hand reports as Optimal
     # here, and that is the answer we want: a plan the solver could not prove
     # best is still a plan, and the alternative is the single-week solver.

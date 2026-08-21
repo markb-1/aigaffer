@@ -1,19 +1,26 @@
-"""Tests for candidate plan generation, with the MILP stubbed out.
+"""Tests for candidate plan generation, with both MILPs stubbed out.
 
-The optimizer has its own tests; what matters here is what the caller does
-with its answers, so ``optimize`` is replaced by a lookup from forced
-transfer count to a canned plan. That also lets a test hand back answers a
-real board would rarely produce — two counts landing on the same fifteen, or
-no feasible plan at all — and pin down what happens then.
+The two solvers have their own tests; what matters here is what the caller
+does with their answers, so each is replaced by a lookup from forced transfer
+count to a canned plan. That also lets a test hand back answers a real board
+would rarely produce — two counts landing on the same fifteen, or no feasible
+plan at all — and pin down what happens then.
+
+The fallback is the point of half of these. A window that answers nothing is
+a run that still has to recommend a transfer, so the single-week solver is
+asked the same questions instead, and the plans that come back say which
+engine ran by whether they carry a path.
 """
 
 from aigaffer.solver import plans as plans_module
+from aigaffer.solver.multiweek import PlannedMove, PlannedPath
 from aigaffer.solver.optimizer import Plan
-from aigaffer.solver.plans import generate_plans, recommend
+from aigaffer.solver.plans import SWEEP_TIME_LIMIT, generate_plans, recommend
 
 SQUAD = list(range(1, 16))
 PLAYERS = {"players": "stand-in"}
 XP = {"xp": "stand-in"}
+EVENTS = [10, 11, 12]
 
 
 def canned(transfers: int, objective: float, squad: list[int] | None = None) -> Plan:
@@ -57,6 +64,72 @@ def stub_optimize(monkeypatch, answers: dict[int, Plan | None]) -> list[dict]:
 
     monkeypatch.setattr(plans_module, "optimize", fake_optimize)
     return calls
+
+
+def canned_path(
+    transfers: int, objective: float, squad: list[int] | None = None
+) -> tuple[Plan, PlannedPath]:
+    """A window's answer: the opening plan and the path hanging off it.
+
+    The path holds one move a gameweek from now on, which is not arithmetic
+    any of these tests check — it is here so that a plan which came from the
+    window is telling a caller so.
+    """
+    plan = canned(transfers, objective, squad)
+    path = PlannedPath(
+        moves=[
+            PlannedMove(event=EVENTS[1], transfers_in=[201], transfers_out=[2], hits=0)
+        ],
+        objective=objective,
+        weekly_xp={event: objective / len(EVENTS) for event in EVENTS},
+    )
+    plan.path = path
+    return plan, path
+
+
+def stub_optimize_path(monkeypatch, answers: dict[int, Plan | None]) -> list[dict]:
+    """Answer each forced opening count from ``answers``; record the calls.
+
+    ``answers`` holds plans rather than the pairs the real solver returns,
+    since a None is the interesting half and a pair with a None in it is not a
+    thing :func:`~aigaffer.solver.multiweek.optimize_path` can hand back.
+    """
+    calls: list[dict] = []
+
+    def fake_optimize_path(
+        players,
+        projections,
+        current_squad,
+        bank,
+        free_transfers,
+        events,
+        decay,
+        forced_first_transfers=None,
+        time_limit=None,
+    ):
+        calls.append(
+            {
+                "players": players,
+                "projections": projections,
+                "current_squad": current_squad,
+                "bank": bank,
+                "free_transfers": free_transfers,
+                "events": events,
+                "decay": decay,
+                "forced_first_transfers": forced_first_transfers,
+                "time_limit": time_limit,
+            }
+        )
+        plan = answers[forced_first_transfers]
+        return None if plan is None else (plan, plan.path)
+
+    monkeypatch.setattr(plans_module, "optimize_path", fake_optimize_path)
+    return calls
+
+
+def windows(counts: range, objective=lambda n: 100.0 + n) -> dict[int, Plan]:
+    """A window answer for every count in ``counts``."""
+    return {n: canned_path(n, objective(n))[0] for n in counts}
 
 
 def test_every_transfer_count_is_asked_for(monkeypatch):
@@ -136,6 +209,168 @@ def test_the_same_fifteen_is_only_reported_once(monkeypatch):
 
     assert [plan.objective for plan in result] == [104.0, 100.0, 99.0]
     assert [len(plan.transfers_in) for plan in result] == [1, 0, 3]
+
+
+def test_the_window_is_solved_at_every_opening_count(monkeypatch):
+    single = stub_optimize(monkeypatch, {})
+    calls = stub_optimize_path(monkeypatch, windows(range(4)))
+
+    generate_plans(
+        PLAYERS, XP, SQUAD, bank=25, free_transfers=2,
+        projections_events=EVENTS, decay=0.9,
+    )
+
+    assert [call["forced_first_transfers"] for call in calls] == [0, 1, 2, 3]
+    assert all(call["players"] is PLAYERS for call in calls)
+    assert all(call["projections"] is XP for call in calls)
+    assert all(call["current_squad"] is SQUAD for call in calls)
+    assert all(call["bank"] == 25 for call in calls)
+    assert all(call["free_transfers"] == 2 for call in calls)
+    assert all(call["events"] is EVENTS for call in calls)
+    assert all(call["decay"] == 0.9 for call in calls)
+    # Half a dozen solves in a run that has one deadline to make: a minute
+    # apiece is the single solve's budget, not the sweep's.
+    assert all(call["time_limit"] == SWEEP_TIME_LIMIT for call in calls)
+    assert single == []
+
+
+def test_the_openings_asked_for_stop_where_the_free_transfer_bank_does(monkeypatch):
+    calls = stub_optimize_path(monkeypatch, windows(range(6)))
+
+    generate_plans(
+        PLAYERS, XP, SQUAD, bank=0, free_transfers=5, projections_events=EVENTS
+    )
+
+    assert [call["forced_first_transfers"] for call in calls] == [0, 1, 2, 3, 4, 5]
+
+    # Fifteen is how aigaffer.solver.lineup prices a wildcard and not a bank
+    # anybody holds. The window reads it as five, so a sixth opening move is a
+    # question about a board the solver does not believe in.
+    calls.clear()
+    generate_plans(
+        PLAYERS, XP, SQUAD, bank=0, free_transfers=15, projections_events=EVENTS
+    )
+
+    assert [call["forced_first_transfers"] for call in calls] == [0, 1, 2, 3, 4, 5]
+
+
+def test_window_plans_come_back_best_first_and_carry_their_paths(monkeypatch):
+    single = stub_optimize(monkeypatch, {})
+    stub_optimize_path(
+        monkeypatch,
+        windows(range(4), objective={0: 100.0, 1: 103.0, 2: 101.5, 3: 99.0}.get),
+    )
+
+    result = generate_plans(
+        PLAYERS, XP, SQUAD, bank=0, free_transfers=1, projections_events=EVENTS
+    )
+
+    assert [plan.objective for plan in result] == [103.0, 101.5, 100.0, 99.0]
+    assert [len(plan.transfers_in) for plan in result] == [1, 2, 0, 3]
+    assert all(plan.path is not None for plan in result)
+    assert result[0].path.moves[0].event == EVENTS[1]
+    assert single == []
+
+
+def test_an_opening_the_window_cannot_make_is_dropped(monkeypatch):
+    stub_optimize(monkeypatch, {})
+    stub_optimize_path(
+        monkeypatch,
+        {
+            0: canned_path(0, 100.0)[0],
+            1: canned_path(1, 102.0)[0],
+            2: None,
+            3: None,
+        },
+    )
+
+    result = generate_plans(
+        PLAYERS, XP, SQUAD, bank=0, free_transfers=1, projections_events=EVENTS
+    )
+
+    assert [plan.objective for plan in result] == [102.0, 100.0]
+    assert all(plan.path is not None for plan in result)
+
+
+def test_the_same_opening_fifteen_is_only_reported_once(monkeypatch):
+    # The window's answers are deduped the way the single-week solver's are:
+    # by the fifteen the first gameweek leaves behind, first sighting winning,
+    # which in ascending order is the one that got there in fewer moves.
+    squad = SQUAD[1:] + [101]
+    stub_optimize(monkeypatch, {})
+    stub_optimize_path(
+        monkeypatch,
+        {
+            0: canned_path(0, 100.0)[0],
+            1: canned_path(1, 104.0, squad=squad)[0],
+            2: canned_path(2, 104.0, squad=list(reversed(squad)))[0],
+            3: canned_path(3, 99.0)[0],
+        },
+    )
+
+    result = generate_plans(
+        PLAYERS, XP, SQUAD, bank=0, free_transfers=1, projections_events=EVENTS
+    )
+
+    assert [plan.objective for plan in result] == [104.0, 100.0, 99.0]
+    assert [len(plan.transfers_in) for plan in result] == [1, 0, 3]
+
+
+def test_a_window_that_answers_nothing_falls_back_on_the_single_week_solver(monkeypatch):
+    # An infeasible window, or six solves that all ran out of time, is still a
+    # gameweek with a deadline: the run asks the other engine the same
+    # questions rather than recommending nothing.
+    single = stub_optimize(monkeypatch, {n: canned(n, 100.0 + n) for n in range(4)})
+    window = stub_optimize_path(monkeypatch, dict.fromkeys(range(4)))
+
+    result = generate_plans(
+        PLAYERS, XP, SQUAD, bank=0, free_transfers=1, projections_events=EVENTS
+    )
+
+    assert [call["forced_first_transfers"] for call in window] == [0, 1, 2, 3]
+    assert [call["forced_transfers"] for call in single] == [0, 1, 2, 3]
+    assert [plan.objective for plan in result] == [103.0, 102.0, 101.0, 100.0]
+    # No path is how a caller knows which engine ended up answering.
+    assert all(plan.path is None for plan in result)
+
+
+def test_one_surviving_window_plan_is_enough_to_keep_the_other_engine_out(monkeypatch):
+    single = stub_optimize(monkeypatch, {})
+    stub_optimize_path(
+        monkeypatch, {0: None, 1: None, 2: canned_path(2, 99.0)[0], 3: None}
+    )
+
+    result = generate_plans(
+        PLAYERS, XP, SQUAD, bank=0, free_transfers=1, projections_events=EVENTS
+    )
+
+    assert [plan.objective for plan in result] == [99.0]
+    assert single == []
+
+
+def test_the_single_week_planner_never_looks_at_the_window(monkeypatch):
+    single = stub_optimize(monkeypatch, {n: canned(n, 100.0 + n) for n in range(4)})
+    window = stub_optimize_path(monkeypatch, windows(range(4)))
+
+    result = generate_plans(
+        PLAYERS, XP, SQUAD, bank=0, free_transfers=1,
+        projections_events=EVENTS, planner="single",
+    )
+
+    assert window == []
+    assert [call["forced_transfers"] for call in single] == [0, 1, 2, 3]
+    assert all(plan.path is None for plan in result)
+
+
+def test_without_a_window_there_is_only_the_single_week_solver(monkeypatch):
+    single = stub_optimize(monkeypatch, {n: canned(n, 100.0 + n) for n in range(4)})
+    window = stub_optimize_path(monkeypatch, windows(range(4)))
+
+    generate_plans(PLAYERS, XP, SQUAD, bank=0, free_transfers=1)
+    generate_plans(PLAYERS, XP, SQUAD, bank=0, free_transfers=1, projections_events=[])
+
+    assert window == []
+    assert len(single) == 8
 
 
 def test_recommend_takes_the_highest_objective():

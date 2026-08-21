@@ -16,6 +16,10 @@ class Config:
     # it with, and __post_init__ clamps this to the key either way.
     manager_enabled: bool = True
     manager_model: str = "claude-opus-5"
+    # "multi" plans the window and falls back on the single-week solver when it
+    # has no answer; "single" is that solver and nothing else. An escape hatch
+    # for a run that has to be quick or a week the window is misbehaving.
+    planner: str = "multi"
 
     def __post_init__(self) -> None:
         # An empty key is no key: an unconfigured CI secret arrives exported and
@@ -36,4 +40,11 @@ class Config:
             # Only "0" turns it off; unset or anything else leaves the key to decide.
             manager_enabled=os.environ.get("AIGAFFER_MANAGER") != "0",
             manager_model=os.environ.get("AIGAFFER_MANAGER_MODEL", "claude-opus-5"),
+            # AIGAFFER_MANAGER's convention: one literal value switches, and
+            # everything else — a typo, a "0", an empty export — leaves the
+            # default standing. Turning the better planner off by accident is
+            # not a thing a misspelling should be able to do.
+            planner=(
+                "single" if os.environ.get("AIGAFFER_PLANNER") == "single" else "multi"
+            ),
         )

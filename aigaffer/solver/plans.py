@@ -13,11 +13,34 @@ which is why the shortlist stops at three — unless the manager has more free
 transfers than that banked, in which case it stops where his bank does. Five
 free moves are five moves that cost nothing, and a shortlist that never asked
 for the fourth and fifth cannot recommend them.
+
+Two engines can answer. The window goes first: it plans several gameweeks at
+once and only the first of them is ever played, so what lands on the shortlist
+is that opening gameweek with the rest of the window hanging off it as a path.
+When the window has nothing to say — an infeasible board, or a sweep of solves
+that all ran out of time, or a manager who asked for the other engine — the
+same questions go to the single-week solver instead, because a gameweek with a
+deadline needs a recommendation more than it needs the better model.
+
+Which engine answered is written down nowhere. A plan off the window carries
+its path and a plan off the single-week solver does not, and a caller wanting
+to label a report reads that.
 """
 
+from collections.abc import Iterable
+
+from aigaffer.data.free_transfers import MAX_FREE_TRANSFERS
 from aigaffer.data.models import Player
 from aigaffer.model.xp import PlayerProjection
+from aigaffer.solver.multiweek import optimize_path
 from aigaffer.solver.optimizer import MAX_TRANSFERS, Plan, optimize
+
+# The window gets a minute for the one solve a decision is worth; a sweep is
+# half a dozen of them and the deadline does not move. Twenty seconds is enough
+# for every window the season has thrown at it, and a solve that overruns with
+# a squad in hand still comes back with it — only one that overruns with
+# nothing at all is dropped.
+SWEEP_TIME_LIMIT = 20
 
 
 def transfer_counts(free_transfers: int) -> tuple[int, ...]:
@@ -35,27 +58,76 @@ def generate_plans(
     current_squad: list[int],
     bank: int,
     free_transfers: int,
+    *,
+    projections_events: list[int] | None = None,
+    decay: float = 0.85,
+    planner: str = "multi",
 ) -> list[Plan]:
     """Candidate plans, best objective first.
+
+    ``projections_events`` is the window to plan over — gameweek ids in order,
+    the first of them the one being decided — and ``decay`` is what a gameweek
+    further out is worth against it. Without a window there is nothing for the
+    multi-week solver to plan across, so the single-week solver answers alone;
+    a ``planner`` of ``"single"`` says the same thing on purpose, and anything
+    else at all means the window, since a misspelling should not be able to
+    quietly turn the better engine off.
 
     A transfer count the budget or the pool cannot support comes back from
     the optimizer as None and is simply left out — infeasible is an answer,
     and a squad with nothing worth buying should say so by offering fewer
-    plans, not by failing.
+    plans, not by failing. A window where *every* count came back None is not
+    an answer at all, and the single-week solver is asked instead; one
+    surviving plan is enough to keep it out of it, since a shortlist of one
+    real window beats a shortlist of four guesses at the wrong question.
+    """
+    if planner != "single" and projections_events:
+        # The window reads a free-transfer bank as five at the most, so a sixth
+        # forced opening move is a question about a board it does not believe
+        # in. Below that the counts are the single-week solver's own.
+        opened: list[Plan | None] = []
+        for count in transfer_counts(min(free_transfers, MAX_FREE_TRANSFERS)):
+            answer = optimize_path(
+                players,
+                xp,
+                current_squad,
+                bank,
+                free_transfers,
+                projections_events,
+                decay,
+                forced_first_transfers=count,
+                time_limit=SWEEP_TIME_LIMIT,
+            )
+            # The path comes back beside the plan and is already on it, so the
+            # second half of the pair is nothing the shortlist has to carry.
+            opened.append(answer[0] if answer is not None else None)
+
+        planned = _shortlist(opened)
+        if planned:
+            return planned
+
+    return _shortlist(
+        optimize(
+            players, xp, current_squad, bank, free_transfers, forced_transfers=count
+        )
+        for count in transfer_counts(free_transfers)
+    )
+
+
+def _shortlist(candidates: Iterable[Plan | None]) -> list[Plan]:
+    """The plans worth printing out of what a sweep came back with.
 
     Two counts should not land on the same fifteen, since the moves a squad
-    took are implied by the squad itself, but nothing in the optimizer's
+    took are implied by the squad itself, but nothing in either solver's
     contract promises that and the same plan printed twice reads as a bug.
-    The first sighting wins, and because counts are tried in ascending order
-    and the sort is stable, that is the one that got there in fewer moves.
+    The first sighting wins, and because both sweeps hand their answers over
+    in ascending order of moves and the sort below is stable, that is the one
+    that got there in fewer moves.
     """
     plans: list[Plan] = []
     seen: set[tuple[int, ...]] = set()
 
-    for count in transfer_counts(free_transfers):
-        plan = optimize(
-            players, xp, current_squad, bank, free_transfers, forced_transfers=count
-        )
+    for plan in candidates:
         if plan is None:
             continue
         squad = tuple(sorted(plan.squad))

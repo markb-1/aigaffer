@@ -14,6 +14,14 @@ def manager_env(monkeypatch):
     return monkeypatch
 
 
+@pytest.fixture
+def planner_env(monkeypatch):
+    """A clean slate for the planner knob: the real environment may pin it."""
+    monkeypatch.setenv("FPL_TEAM_ID", "1")
+    monkeypatch.delenv("AIGAFFER_PLANNER", raising=False)
+    return monkeypatch
+
+
 def test_from_env_reads_values(monkeypatch):
     monkeypatch.setenv("FPL_TEAM_ID", "1234567")
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
@@ -82,6 +90,25 @@ def test_manager_model_default_and_override(manager_env):
     assert Config.from_env().manager_model == "claude-opus-5"
     manager_env.setenv("AIGAFFER_MANAGER_MODEL", "claude-sonnet-5")
     assert Config.from_env().manager_model == "claude-sonnet-5"
+
+
+def test_the_planner_looks_over_the_window_by_default(planner_env):
+    assert Config.from_env().planner == "multi"
+    assert Config(team_id=1).planner == "multi"
+
+
+def test_the_planner_can_be_pinned_to_the_single_week_solver(planner_env):
+    planner_env.setenv("AIGAFFER_PLANNER", "single")
+    assert Config.from_env().planner == "single"
+
+
+def test_only_the_word_single_switches_the_planner(planner_env):
+    """The AIGAFFER_MANAGER convention: one literal value, everything else the
+    default. A typo is a run of the planner that was already chosen, not a
+    silent fallback to the other engine."""
+    for value in ("Single", "SINGLE", "0", "greedy", ""):
+        planner_env.setenv("AIGAFFER_PLANNER", value)
+        assert Config.from_env().planner == "multi"
 
 
 def test_manager_enabled_follows_the_key_when_constructed_directly():

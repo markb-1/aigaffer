@@ -59,8 +59,10 @@ from aigaffer.data.models import Player
 from aigaffer.model.xp import PlayerProjection, decayed_total
 from aigaffer.solver.multiweek import (
     MAX_HITS,
+    SOLVER,
     PlannedMove,
     PlannedPath,
+    _solver,
     optimize_path,
 )
 from aigaffer.solver.optimizer import (
@@ -190,6 +192,28 @@ def six_arrivals(
         arrival = {events[0]: opening}
         arrival.update({event: 20.0 for event in events[1:]})
         rows.append((pid, position, 50, arrival))
+    return _build(rows)
+
+
+SEVEN = SIX + ((22, FWD),)
+
+
+def seven_arrivals(
+    events: list[int],
+) -> tuple[dict[int, Player], dict[int, PlayerProjection]]:
+    """The fifteen plus seven men worth 20.0 in every gameweek of the window.
+
+    Seven is what a full bank of five free transfers plus the two-hit ceiling
+    would buy in a single gameweek, and at 20.0 a man against four points a hit
+    every one of them is worth having at once. It is the board on which the
+    opening gameweek's transfer cap is the only thing standing in the way.
+    """
+    rows = [
+        (pid, position, 50, {event: points for event in events})
+        for pid, position, points in SPINE
+    ]
+    for pid, position in SEVEN:
+        rows.append((pid, position, 50, {event: 20.0 for event in events}))
     return _build(rows)
 
 
@@ -539,9 +563,16 @@ def test_a_bank_bigger_than_the_game_allows_is_taken_as_five():
     # 15 is how aigaffer.solver.lineup prices a wildcard, and it is not a bank:
     # this solver reads the number as the free transfers a manager actually
     # holds, so anything above the ceiling is the ceiling. Six arrivals worth
-    # 20.0 straight away are all worth signing at once, and the sixth is a hit —
-    # 162.55 + 0.85 x 162.55 - 4 = 296.7175. Read literally, fifteen free moves
-    # would have made it free, and 300.7175.
+    # 20.0 straight away are all worth signing, and a five-strong bank is what
+    # says five of them go now — the opening gameweek moves at most
+    # max(MAX_TRANSFERS, ft) times, and here that is the clamped five.
+    #
+    # GW5 takes four of the midfielders and the forward (21 for 15, worth 20.0
+    # against 3.9, beats a fifth midfielder by 2.01), keeping 12 as the fifth:
+    # 128.0 started + 20.0 for the captain + 0.55 benched = 148.55. GW6 rolls
+    # the one free transfer into the last arrival for 12: 162.55.
+    # 148.55 + 0.85 x 162.55 = 286.7175. Read literally, fifteen free moves
+    # would have bought all six in GW5 for nothing: 300.7175.
     players, projections = six_arrivals([5, 6], opening=20.0)
 
     plan, path = optimize_path(
@@ -549,10 +580,18 @@ def test_a_bank_bigger_than_the_game_allows_is_taken_as_five():
         decay=DECAY,
     )
 
-    assert plan.transfers_in == [16, 17, 18, 19, 20, 21]
-    assert plan.hits == 1
-    assert path.moves == []
-    assert plan.objective == pytest.approx(296.7175, abs=1e-4)
+    assert len(plan.transfers_in) == 5
+    assert 21 in plan.transfers_in
+    assert plan.hits == 0
+    assert path.moves == [
+        PlannedMove(
+            event=6,
+            transfers_in=sorted({16, 17, 18, 19, 20} - set(plan.transfers_in)),
+            transfers_out=[12],
+            hits=0,
+        )
+    ]
+    assert plan.objective == pytest.approx(286.7175, abs=1e-4)
     assert_legal_path(
         players, SQUAD, 0, MAX_FREE_TRANSFERS, [5, 6], plan, path
     )
@@ -682,6 +721,80 @@ def test_the_greedy_solver_never_makes_the_funding_move():
     assert 16 in plan.transfers_in
     assert len(set(greedy.squad) & {17, 18, 19, 20}) == 3
     assert {17, 18, 19, 20} <= set(path.moves[0].transfers_in) | set(plan.squad)
+
+
+# --------------------------------------------------------------------------
+# The opening gameweek plays by the single-week solver's rules
+# --------------------------------------------------------------------------
+
+
+def test_the_opening_gameweek_moves_no_more_than_the_single_week_solver_could():
+    # Seven men worth 20.0 straight away, a full bank of five free transfers and
+    # the two-hit ceiling: seven moves in GW5 are legal FPL, and at 20.0 a man
+    # against four points a hit the arithmetic wants all of them now. The
+    # single-week solver would never offer more than max(MAX_TRANSFERS, ft) —
+    # five here — and a window that outbids it with moves the other engine was
+    # never allowed to consider is not being ranked against it fairly. So the
+    # opening gameweek stops at five too, and the rest wait for GW6.
+    players, projections = seven_arrivals([5, 6])
+
+    plan, path = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=MAX_FREE_TRANSFERS,
+        events=[5, 6], decay=DECAY,
+    )
+
+    assert len(plan.transfers_in) == 5
+    assert plan.hits == 0
+    assert len(path.moves) == 1
+    assert len(path.moves[0].transfers_in) == 2
+    assert_legal_path(
+        players, SQUAD, 0, MAX_FREE_TRANSFERS, [5, 6], plan, path
+    )
+
+
+def test_a_forced_opening_is_not_bound_by_that_cap():
+    # The cap is on what the model chooses for itself, not on what a caller may
+    # ask it. A forced count is a question — what is the best window that opens
+    # with exactly this many moves? — and the answer to a legal question is a
+    # plan, hits and all.
+    players, projections = seven_arrivals([5, 6])
+
+    plan, _ = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=MAX_FREE_TRANSFERS,
+        events=[5, 6], decay=DECAY, forced_first_transfers=7,
+    )
+
+    assert len(plan.transfers_in) == 7
+    assert plan.hits == MAX_HITS
+
+
+# --------------------------------------------------------------------------
+# The leash on a solve
+# --------------------------------------------------------------------------
+
+
+def test_a_solve_can_be_put_on_a_shorter_leash():
+    # One solve is one gameweek's decision and can have the minute; a sweep is
+    # half a dozen of them and cannot. Nothing else about the solver changes,
+    # the silence included.
+    assert _solver(None) is SOLVER
+    assert _solver(20).timeLimit == 20
+    assert not _solver(20).msg
+
+
+def test_a_time_limit_reaches_the_solve_itself():
+    # Twenty seconds is far longer than the spine has ever needed, so the answer
+    # is the one the default leash gives. What this pins is that the parameter
+    # reaches the solver rather than being accepted and dropped.
+    players, projections = spine([5, 6])
+
+    plan, _ = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[5, 6],
+        decay=DECAY, time_limit=20,
+    )
+
+    assert plan.transfers_in == []
+    assert plan.objective == pytest.approx(113.849, abs=1e-4)
 
 
 # --------------------------------------------------------------------------
