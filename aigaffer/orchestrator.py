@@ -143,6 +143,14 @@ class PipelineInputs:
     (see :func:`history_pool`) and nobody else; a player missing from it is a
     player nobody is thinking of buying.
 
+    ``histories`` holds **finished** gameweeks only, and that is a promise
+    every reader of it may rely on. The API adds a history row the moment a
+    deadline goes — 0 minutes, 0 points, for a match that kicks off two days
+    later — and a row for a match nobody has played is not a gameweek a
+    player sat out. :func:`fetch_inputs` drops them on the way in (see
+    :func:`_played`), so no stage after the fetch has to know the difference
+    and no two of them can decide it differently.
+
     ``chips_used`` is the season's chip history as the API serves it, and it
     is here because two different readers need it: the free-transfer sum,
     which is what a wildcard week means for the bank, and the manager, who
@@ -310,6 +318,11 @@ def fetch_inputs(cfg: Config, client: FplClient) -> PipelineInputs:
     can be re-run for free. The histories are the expensive part — a request
     per player — and the bootstrap and the picks are asked for first because
     they are what decides whose history is worth asking for.
+
+    The histories are also cut down to the gameweeks that have been played
+    before they are handed on: what the API serves includes rounds that have
+    only been *entered*, and reading those as a season is the whole of the
+    bug :func:`_played` exists to fix.
     """
     bootstrap = client.bootstrap()
     event = bootstrap.next_event()
@@ -325,7 +338,8 @@ def fetch_inputs(cfg: Config, client: FplClient) -> PipelineInputs:
     free_transfers = _free_transfers(client, cfg.team_id, squad, event, chips_used)
 
     held = [] if squad is None else squad.player_ids
-    histories = {pid: _history(client, pid) for pid in history_pool(players, held)}
+    fetched = {pid: _history(client, pid) for pid in history_pool(players, held)}
+    histories = _played(fetched, bootstrap)
     fixtures = client.fixtures()
 
     return PipelineInputs(
@@ -624,6 +638,39 @@ def _history(client: FplClient, pid: int) -> list[GwHistory]:
         return client.element_history(pid)
     except httpx.HTTPStatusError:
         return []
+
+
+def _played(
+    histories: dict[int, list[GwHistory]], bootstrap: Bootstrap
+) -> dict[int, list[GwHistory]]:
+    """The histories with the gameweeks nobody has played taken out.
+
+    A history row appears the moment the deadline goes, not the moment the
+    match does: for the hours or days between the two it says 0 minutes and 0
+    points about a fixture that has not kicked off. Checked live on
+    2026-08-21, five hours after GW1's deadline: Haaland's entire history was
+    one round-1 row of 0 minutes for a match on the Sunday, while a player
+    whose match had been played that evening had his real 67 minutes in the
+    same round.
+
+    Nothing downstream can tell those two rows apart — a 0 is a 0 — and the
+    minutes model averages them as gameweeks the player sat out, so a fit
+    starter is marked down or written off for a match nobody has played. The
+    cut is made here, once, on the only thing in the payload that says
+    whether a round has happened: the event's own ``finished`` flag.
+
+    An event finishes when every one of its matches has, so a round in
+    progress is dropped whole rather than counted half — a Saturday
+    afternoon's evidence is not lost so much as held until Monday, and the
+    two runs a week the schedule makes both happen with the last gameweek
+    long finished. Conservative, in the direction the model can recover
+    from: the minutes it does not have it falls back on ``starts`` for.
+    """
+    finished = {event.id for event in bootstrap.events if event.finished}
+    return {
+        pid: [entry for entry in history if entry.round in finished]
+        for pid, history in histories.items()
+    }
 
 
 def history_pool(players: dict[int, Player], held: list[int]) -> list[int]:

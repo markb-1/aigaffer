@@ -83,9 +83,15 @@ def test_a_short_history_above_the_fallback_is_kept():
 
 # --- the early-season blend ------------------------------------------------
 #
-# GW1 of 2026-27: the World Cup ended eleven days before the season did not
-# wait for it, the rested internationals sat out the opening weekend, and one
-# gameweek of 0 minutes was the whole history. Every one of them projected zero.
+# Every history below is gameweeks that have been *played*. That is the
+# caller's promise, kept in ``aigaffer.orchestrator._played``, and it is the
+# half of the GW1 2026-27 case this module does not handle: the zeroes that
+# wrote off every premium in the gaffer's first live week were rows the API
+# had added for matches nobody had kicked off yet, not gameweeks anybody sat
+# out. Filtered out at the fetch, they never reach this model at all.
+#
+# What is left for the blend is a thin history of real gameweeks: a rotated
+# August, where a mean over one or two Saturdays is not evidence of a role.
 #
 # Every ``starts`` below is one the history under it could actually have
 # produced. It is a season-to-date count, so a player with two gameweeks
@@ -96,8 +102,8 @@ def test_a_short_history_above_the_fallback_is_kept():
 
 
 def test_one_rested_gameweek_does_not_zero_a_starter():
-    # GW2, and the shape the fix is for: he started the opener and was rested
-    # for the second, so the record is one start and a mean of 45 minutes. The
+    # GW3, and the shape the blend is for: he sat out the opener and started
+    # the second, so the record is one start and a mean of 45 minutes. The
     # floor holds him at what a starter is worth rather than halving him on the
     # strength of one Saturday.
     assert expected_minutes(history(0, 90), player(starts=1)) == 75.0
@@ -134,23 +140,24 @@ def test_the_blend_scales_by_availability_like_the_rest():
     assert expected_minutes(history(0, 90), doubtful) == 37.5
 
 
-def test_a_premium_rested_in_gameweek_one_is_understated_and_stays_so():
-    # The half of the GW1 case the blend cannot reach, written down because it
-    # is a limitation rather than a bug. A £14.5m striker rested for the
-    # opening weekend has one gameweek of 0 minutes *and* no starts to go with
-    # it — the two fields are both season-to-date and both say nothing — so the
-    # floor under him is the bench estimate, and the model believes 20 minutes
-    # of a player who will play ninety.
+def test_a_premium_on_the_opening_weekend_is_understated_and_stays_so():
+    # The GW1 limitation, written down because it is a limitation rather than
+    # a bug. Once the rows for unplayed matches are cut, a £14.5m striker on
+    # the opening weekend has no history at all *and* no starts to go with it
+    # — season-to-date fields say nothing about a season that has not started
+    # — so the floor under him is the bench estimate, and the model believes 20
+    # minutes of a player who will play ninety.
     #
     # There is nothing in the payload to be right with: last season is not in
     # it, and reading a role off a price or off total_points would be a guess
-    # wearing the clothes of a measurement. The mitigation is the gaffer, who
-    # reads the team news and sets the minutes by hand — the week a79b01d was
-    # written out of. From GW2 the blend takes over: one start on the record is
-    # all it needs, which is the test at the top of this block.
+    # wearing the clothes of a measurement. Prior-season history is the fix and
+    # is not written; until it is, the mitigation is the gaffer, who reads the
+    # team news and sets the minutes by hand. From GW2 there is a played
+    # gameweek to read and the blend takes over: one start on the record is all
+    # it needs, which is the test at the top of this block.
     premium = player(now_cost=145, starts=0, minutes=0, total_points=0)
 
-    assert expected_minutes(history(0), premium) == 20.0
+    assert expected_minutes([], premium) == 20.0
 
 
 def test_no_history_falls_back_to_a_starter_estimate():

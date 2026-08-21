@@ -305,6 +305,16 @@ These are deliberate. Do not "fix" them without revisiting the design:
 2. **Pre-deadline transfers by the user are invisible.** The public picks
    endpoint lags to the last deadline, so any transfer you make during the
    current gameweek is not reflected until the next deadline passes.
+3. **The opening weekend has no minutes to read.** Expected minutes are a mean
+   over the gameweeks a player has actually played. The API adds a history row
+   the moment a deadline goes — 0 minutes for a match that kicks off two days
+   later — and those rows are dropped on the way in, because a zero for a match
+   nobody has played is not a gameweek anybody sat out. That leaves GW1 with no
+   history at all, so every player falls back on the season's `starts`, which
+   is also zero for everybody, and the whole league is projected at a
+   substitute's twenty minutes. Prior-season history is what would fix it and
+   is not in the payload the bot reads; until it is, the gaffer's own minute
+   overrides are the mitigation.
 
 ## Deferred
 

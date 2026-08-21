@@ -7,30 +7,36 @@ role and scale it by the chance he features at all.
 
 Recent minutes are the right answer once there are some. Early in a season
 there are not, and a mean over one gameweek is not evidence of a role — it is
-a single Saturday, and the thing that most often makes it zero is the manager
-resting somebody he intends to play every week thereafter. So under
-:data:`BLEND_GAMEWEEKS` the history is a floor rather than the whole answer:
-what the season's ``starts`` count says about him wins if it is higher, and by
-the third gameweek the history has earned the right to speak for itself.
+a single Saturday, and a manager who rotates his squad in August has not
+dropped anybody. So under :data:`BLEND_GAMEWEEKS` the history is a floor
+rather than the whole answer: what the season's ``starts`` count says about
+him wins if it is higher, and by the third gameweek the history has earned the
+right to speak for itself.
 
-The case that bought this: GW1 of 2026-27, the first week the gaffer ran live.
-The World Cup had just finished, the internationals were rested for the opening
-weekend, and one gameweek of 0 minutes was the entire season history. Every one
-of them projected zero minutes and zero points; the solver benched a fit
-Haaland; and the gaffer spent his week overriding seven players by hand to
-undo it. A mean of one number was never a role estimate, and this stops it
-being read as one from the moment there is a start on the record to read.
+The history handed in is the gameweeks that have been **played**, and this
+module trusts its caller for that. The distinction is not pedantry: the API
+adds a history row the moment a deadline goes, so between a Friday deadline
+and a Sunday kickoff a fit player's season reads as a 0-minute gameweek he
+never had. Averaging those in is what wrote off every premium in GW1 of
+2026-27 — the first week the gaffer ran live, the solver benched a fit
+Haaland, and the gaffer spent his week overriding seven players by hand. The
+cause was rows for matches nobody had played, and the cure is in
+:func:`aigaffer.orchestrator._played`, which drops them at the fetch. The
+contract here stays what it says: the mean of the entries given.
 
-That last clause is the limit of the claim, and it is worth being plain about.
-``starts`` is season-to-date like everything else in the payload, so a player
-rested in GW1 has no starts either, and the floor under him is the bench
-estimate rather than the starter's: twenty minutes of a striker who will play
-ninety. From GW2 the blend bites — one start is all it needs — but the opening
-weekend it was written for is exactly the week it cannot rescue on its own.
+That leaves the blend the job it is actually good for — a thin history of
+played gameweeks — and leaves one limitation, which is worth being plain
+about. With the phantom rows gone, the opening weekend has no history at all,
+so every player falls back on ``starts``; and ``starts`` is season-to-date
+like everything else in the payload, so in GW1 it is zero for everybody. The
+floor under a £14.5m striker is then the bench estimate: twenty minutes of a
+man who will play ninety. From GW2 there is a played gameweek to read and the
+blend bites, but the opening weekend is the week nothing here can rescue.
 Nothing in the data can: last season is not in the payload, and reading a role
 off a price or off ``total_points`` would be a guess wearing the clothes of a
-measurement. The mitigation there is the gaffer, who reads the team news and
-sets the minutes by hand.
+measurement. Prior-season history is the fix, and it is not written yet; the
+mitigation until it is is the gaffer, who reads the team news and sets the
+minutes by hand.
 """
 
 from aigaffer.data.models import GwHistory, Player
@@ -65,21 +71,24 @@ def availability(player: Player) -> float:
 def expected_minutes(history: list[GwHistory], player: Player) -> float:
     """Minutes the player is expected to play in the next gameweek.
 
-    ``history`` is the player's season so far in gameweek order; only the
-    last :data:`FORM_GAMEWEEKS` count, so a lost or won place shows up fast.
-    With no history at all — pre-season, or a new signing — we fall back on
-    whether he has started a match this season.
+    ``history`` is the player's **played** gameweeks in order; only the last
+    :data:`FORM_GAMEWEEKS` count, so a lost or won place shows up fast. Every
+    entry is taken as a match he was available for, which is why a gameweek
+    that has only been entered must never reach here — the caller cuts those
+    out (:func:`aigaffer.orchestrator._played`). With no history at all —
+    pre-season, a new signing, or a deadline that has gone with nothing played
+    behind it — we fall back on whether he has started a match this season.
 
     That fallback is also a floor for the first :data:`BLEND_GAMEWEEKS` weeks,
-    and the higher of the two wins: a rested gameweek should not overrule the
-    fact that he has started, and a full ninety should not be dragged down to
-    75 by it. From the third gameweek on the mean stands alone.
+    and the higher of the two wins: one rotated gameweek should not overrule
+    the fact that he has started, and a full ninety should not be dragged down
+    to 75 by it. From the third gameweek on the mean stands alone.
 
     The floor is only as good as the count it is read off. Under three
-    gameweeks the season's ``starts`` is at most two, and in GW1 a rested
-    player's is zero — so the opening weekend lands on the bench estimate,
-    which is the limitation the module docstring sets out and the gaffer's own
-    minute overrides exist to cover.
+    gameweeks the season's ``starts`` is at most two, and in GW1 it is zero for
+    everybody — so the opening weekend lands on the bench estimate, which is
+    the limitation the module docstring sets out and the gaffer's own minute
+    overrides exist to cover.
     """
     fallback = (
         STARTER_FALLBACK_MINUTES if player.starts > 0 else BENCH_FALLBACK_MINUTES

@@ -33,7 +33,7 @@ from aigaffer import __main__ as cli
 from aigaffer import orchestrator
 from aigaffer.config import Config
 from aigaffer.data.fpl_api import FplClient
-from aigaffer.data.models import Player
+from aigaffer.data.models import GwHistory, Player
 from aigaffer.manager import agent
 from aigaffer.manager.agent import ManagerDecision
 from aigaffer.model.xp import PlayerProjection
@@ -576,6 +576,154 @@ def test_a_solve_with_no_squad_drafts_a_fifteen(tmp_path):
     assert solved.plans == [solved.choice]
     assert len(solved.choice.transfers_in) == 15
     assert solved.chips == NO_CHIPS  # no squad to play a chip against
+
+
+# --- rounds nobody has played yet ------------------------------------------
+#
+# The moment a deadline goes, element-summary grows a history row for that
+# gameweek with 0 minutes in it, for every player whose fixture has not
+# kicked off yet. Checked against the live endpoint on 2026-08-21, five hours
+# after GW1's deadline and two days before his match: Haaland's history was
+# one row — round 1, 0 minutes, 0 points, kickoff 2026-08-23T13:00Z — while
+# Saka, whose match had been played that evening, had a row of 67 minutes for
+# the same round.
+#
+# A row for a match nobody has played is not a gameweek the player sat out,
+# and the fetch takes them out so that nothing downstream has to know the
+# difference. The rule is the event's own ``finished`` flag, which is the
+# only thing in the payload that says whether a round has happened.
+
+
+def midweek_bootstrap() -> dict:
+    """GW1 played, GW2's deadline gone and none of its matches finished, GW3
+    next. Between a deadline and a kickoff is the whole of the bug."""
+    payload = copy.deepcopy(PIPELINE_BOOTSTRAP_JSON)
+    payload["events"][0].update(is_current=False, is_next=False, finished=True)
+    payload["events"][1].update(is_current=True, is_next=False, finished=False)
+    payload["events"].append(
+        {
+            "id": 3,
+            "name": "Gameweek 3",
+            "deadline_time": "2025-08-29T17:30:00Z",
+            "finished": False,
+            "is_previous": False,
+            "is_current": False,
+            "is_next": True,
+            "average_entry_score": 0,
+        }
+    )
+    return payload
+
+
+def opening_weekend_bootstrap() -> dict:
+    """GW1's deadline has gone and not a ball has been kicked; GW2 is next.
+    The live universe of 2026-08-21, and the run this fix came out of."""
+    payload = copy.deepcopy(PIPELINE_BOOTSTRAP_JSON)
+    payload["events"][0].update(finished=False)
+    return payload
+
+
+def summary(*rounds: tuple[int, int]) -> dict:
+    """An element-summary from ``(round, minutes)`` pairs."""
+    return {
+        "fixtures": [{"id": 7, "event": 3, "is_home": True}],
+        "history": [
+            {
+                "element": 5,
+                "fixture": rnd,
+                "round": rnd,
+                "minutes": minutes,
+                "total_points": 0,
+                "bonus": 0,
+            }
+            for rnd, minutes in rounds
+        ],
+        "history_past": [],
+    }
+
+
+def unplayed_routes(bootstrap: dict, *rounds: tuple[int, int]) -> dict:
+    """The universe of ``bootstrap``, with ``rounds`` as everybody's history."""
+    routes = pipeline_routes(bootstrap)
+    # The current gameweek moves, and the picks are asked for by its id.
+    routes[f"/api/entry/{TEAM_ID}/event/2/picks/"] = PICKS_15_JSON
+    routes.update(
+        {
+            f"/api/element-summary/{element['id']}/": summary(*rounds)
+            for element in PIPELINE_ELEMENTS_JSON
+        }
+    )
+    return routes
+
+
+def test_a_round_nobody_has_played_is_not_history(tmp_path):
+    # GW1 was played and GW2 has only been entered, so a history of both is a
+    # history of one.
+    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path)
+    routes = unplayed_routes(midweek_bootstrap(), (1, 90), (2, 0))
+
+    inputs = fetch_inputs(cfg, make_client(routes))
+
+    assert inputs.event.id == 3
+    assert inputs.histories
+    for history in inputs.histories.values():
+        assert [entry.round for entry in history] == [1]
+
+
+def test_an_unplayed_round_does_not_drag_the_minutes_down(tmp_path):
+    # Ninety minutes in the gameweek that happened, and a phantom nothing in
+    # the one that has not. The mean of what happened is ninety; averaging the
+    # phantom in halves him, and the starts floor then hides the damage at 75
+    # — a fit ninety-minute player marked down for a match nobody has played.
+    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path)
+    routes = unplayed_routes(midweek_bootstrap(), (1, 90), (2, 0))
+    inputs = fetch_inputs(cfg, make_client(routes))
+
+    xmins, _ = build_projections(inputs, cfg)
+
+    assert xmins[FERRER] == 90.0
+
+
+def test_a_history_of_played_rounds_is_kept_whole(seam):
+    # The other half of the claim: the filter takes out what has not happened
+    # and nothing else. The ordinary universe has one finished gameweek behind
+    # it and the history the API served for it arrives intact.
+    assert seam.inputs.histories[FERRER] == [
+        GwHistory.model_validate(entry) for entry in ELEMENT_SUMMARY_JSON["history"]
+    ]
+
+
+def test_the_opening_weekend_has_no_history_rather_than_a_history_of_zeroes(tmp_path):
+    # Friday's live universe: one row per player, 0 minutes, for matches that
+    # kick off tomorrow. None of it is evidence of anything, so none of it is
+    # kept, and the minutes model is left with the empty history it knows how
+    # to fall back from.
+    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path)
+    routes = unplayed_routes(opening_weekend_bootstrap(), (1, 0))
+
+    inputs = fetch_inputs(cfg, make_client(routes))
+
+    assert inputs.histories
+    assert all(history == [] for history in inputs.histories.values())
+
+
+def test_a_deadline_that_has_gone_does_not_bench_a_fit_starter(tmp_path):
+    # Friday's live run, end to end and offline. Every player's whole season
+    # is a row for a match that has not started, so nobody has a mean to be
+    # read off and everybody falls back on his starts — which for the fit
+    # premium is a starter's minutes and a place in the eleven, not the zero
+    # that sent the gaffer overriding seven players by hand.
+    store = Store(tmp_path / "aigaffer.db")
+    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path)
+    routes = unplayed_routes(opening_weekend_bootstrap(), (1, 0))
+
+    report = run_pipeline(cfg, make_client(routes), store, "scout", send=False)
+    decision = store.last_runs(1)[0]["decision"]
+
+    assert decision["event"] == 2
+    assert decision["captain"] == FERRER
+    assert any("Ferrer" in line for line in bullets(report, "Starting XI"))
+    assert decision["xp_total"] > 0
 
 
 # --- the gaffer ------------------------------------------------------------
