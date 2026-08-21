@@ -813,6 +813,12 @@ def test_the_client_is_built_against_the_clock(monkeypatch, tmp_path):
     # hour of one request — longer than the whole job is allowed to take. The
     # loop's time budget bounds the conversation; this bounds the turn that is
     # in flight when the budget runs out.
+    #
+    # Five minutes and not two. Two bounded a turn that hangs, and also every
+    # turn that works: this model at high effort runs its web searches before it
+    # answers at all, and against the live API it never once came back inside
+    # two — every run fell back to the solver with no turns and no searches on
+    # the clock. A ceiling low enough to catch the good case is not a ceiling.
     built: list[dict] = []
 
     class Recorder:
@@ -822,7 +828,7 @@ def test_the_client_is_built_against_the_clock(monkeypatch, tmp_path):
     monkeypatch.setattr(anthropic, "Anthropic", Recorder)
     _, _, gaffer = gaffer_run(monkeypatch, tmp_path, send=False)
 
-    assert built == [{"api_key": "sk-test", "timeout": 120.0, "max_retries": 1}]
+    assert built == [{"api_key": "sk-test", "timeout": 300.0, "max_retries": 1}]
     assert isinstance(gaffer.consults[0].client, Recorder), "and it is what he is given"
 
 

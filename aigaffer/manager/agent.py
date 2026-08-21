@@ -67,16 +67,24 @@ MAX_RESUMPTIONS = 3
 # between them can run long, and the run they are inside has a deadline of its
 # own: the report is due before the gameweek's, and the workflow gives the whole
 # job thirty. Twelve minutes leaves room for the turn already in flight — the
-# client the orchestrator builds bounds that one at two minutes and one retry —
-# and for the solver's own week to be rendered and sent after it.
+# client the orchestrator builds bounds that one at five minutes and one retry —
+# and for the solver's own week to be rendered and sent after it. The budget is
+# checked between turns, so a turn that starts inside it can finish outside it:
+# the worst case is one hung request's ten minutes on top, which is why the job
+# is given thirty and not fifteen.
 #
 # A worse report on time beats a better one that missed, every week.
 TIME_BUDGET_SECONDS = 720
 OUT_OF_TIME = "out of time"
 
-# Non-streaming, so the ceiling stays under the SDK's HTTP timeout. Effort is
-# the depth control on this model; thinking is adaptive by default and an
-# explicit configuration risks a 400, so the parameter is not sent at all.
+# Non-streaming, because the loop reads whole messages and shows nobody a
+# partial one. What that costs is a request the client has to wait out in
+# silence: a turn at this effort runs its searches on the server before a single
+# token comes back, and it is minutes rather than seconds. The orchestrator's
+# five-minute timeout is what makes it safe, and the two-minute one this was
+# first written with is what made it fail every time. Effort is the depth
+# control on this model; thinking is adaptive by default and an explicit
+# configuration risks a 400, so the parameter is not sent at all.
 MAX_TOKENS = 16000
 EFFORT = {"effort": "high"}
 

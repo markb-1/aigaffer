@@ -512,11 +512,22 @@ def _consult(
         decision = run_manager(
             # Bounded, because the SDK is not by default: ten minutes a request
             # and two retries is half an hour of one turn, inside a job that is
-            # given thirty for the whole run. Two minutes and one retry keeps a
-            # single hanging request from eating the loop's own time budget, and
-            # a turn that cannot be had in four minutes is a turn to give up on.
+            # given thirty for the whole run.
+            #
+            # Five minutes, not the two this was first written with. Two was
+            # chosen against a turn that hangs and never against a turn that
+            # works: a turn of this model at high effort, running its web
+            # searches on the server before a single token comes back, takes
+            # minutes on purpose. Live it never once finished — two attempts of
+            # two minutes each, no searches, no turns, and the fallback every
+            # time, which is a manager who can never be reached wearing the
+            # clothes of a manager who was unlucky. One retry stays: worst case
+            # a hung request burns ten minutes and the loop's own budget
+            # (:data:`~aigaffer.manager.agent.TIME_BUDGET_SECONDS`, twelve)
+            # catches it with time for the solver's week to be rendered and
+            # sent, which is the thing that must not be missed.
             anthropic.Anthropic(
-                api_key=cfg.anthropic_api_key, timeout=120.0, max_retries=1
+                api_key=cfg.anthropic_api_key, timeout=300.0, max_retries=1
             ),
             cfg,
             inputs,
