@@ -34,11 +34,15 @@ drafted from nothing — pass an empty ``current_squad`` and
 from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import pulp
 
 from aigaffer.data.models import Player
 from aigaffer.model.xp import PlayerProjection
+
+if TYPE_CHECKING:  # the multi-week solver imports this module, so never the reverse
+    from aigaffer.solver.multiweek import PlannedPath
 
 GOALKEEPER, DEFENDER, MIDFIELDER, FORWARD = 1, 2, 3, 4
 
@@ -72,6 +76,11 @@ class Plan:
 
     ``xp_total`` is the projection the plan earns — the XI in full, the bench
     at ``BENCH_WEIGHT`` — and ``objective`` is that net of the hits taken.
+
+    ``path`` is the rest of the story when a plan came from
+    :func:`~aigaffer.solver.multiweek.optimize_path`: the gameweeks after this
+    one, advisory and re-planned every run. A plan from the single-week solver
+    has none, which is how a caller tells the two engines apart.
     """
 
     squad: list[int]
@@ -81,6 +90,7 @@ class Plan:
     hits: int
     xp_total: float
     objective: float
+    path: "PlannedPath | None" = None
 
 
 def projected_points(xp: dict[int, PlayerProjection], player_id: int) -> float:
@@ -93,14 +103,19 @@ def candidate_pool(
     players: dict[int, Player],
     xp: dict[int, PlayerProjection],
     current_squad: list[int],
+    limit: int = CANDIDATES_PER_POSITION,
 ) -> list[int]:
     """The players the model is allowed to consider.
 
     Six hundred elements make for a slow program and most of them are never
-    the answer, so the field is cut to the best ``CANDIDATES_PER_POSITION``
-    available players in each position. Our own squad is always in the pool
-    whatever its state: an injured player we own is still a player we own, and
-    without him the model could not even leave the squad alone.
+    the answer, so the field is cut to the best ``limit`` available players in
+    each position. Our own squad is always in the pool whatever its state: an
+    injured player we own is still a player we own, and without him the model
+    could not even leave the squad alone.
+
+    ``limit`` is a parameter and not a constant because the multi-week solver
+    carries a copy of every one of these columns per gameweek and so cannot
+    afford as wide a field.
     """
     pool = {pid for pid in current_squad if pid in players}
 
@@ -110,7 +125,7 @@ def candidate_pool(
             by_position[player.element_type].append(pid)
     for candidates in by_position.values():
         candidates.sort(key=lambda pid: projected_points(xp, pid), reverse=True)
-        pool.update(candidates[:CANDIDATES_PER_POSITION])
+        pool.update(candidates[:limit])
 
     return sorted(pool)
 
