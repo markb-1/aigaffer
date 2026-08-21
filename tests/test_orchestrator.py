@@ -25,11 +25,17 @@ from aigaffer.config import Config
 from aigaffer.data.fpl_api import FplClient
 from aigaffer.data.models import Player
 from aigaffer.orchestrator import (
+    NO_CHIPS,
     PipelineError,
+    PipelineInputs,
+    build_projections,
     decide_mode,
+    fetch_inputs,
     history_pool,
     run_pipeline,
+    solve,
 )
+from aigaffer.report.render import render_report
 from aigaffer.report.telegram import send_report
 from aigaffer.store import Store
 from tests.fixtures import (
@@ -291,6 +297,121 @@ def test_a_dry_run_leaves_nothing_behind(tmp_path):
 
     assert store.last_runs() == []
     assert not (tmp_path / "reports").exists()
+
+
+# --- the seam: fetch, project, solve ---------------------------------------
+#
+# The three stages ``run_pipeline`` is made of, called on their own. What the
+# manager agent will do with them is re-project on minutes it has read the
+# team news for and solve again, so the tests here are about the two things
+# that makes possible: the fetch is a value the later stages can be re-run
+# over without touching the API, and an override reaches the projection.
+
+FERRER = 5  # the premium midfielder in the pipeline universe, and its captain
+
+
+class Seam(NamedTuple):
+    cfg: Config
+    inputs: PipelineInputs
+
+
+@pytest.fixture(scope="module")
+def seam(tmp_path_factory) -> Seam:
+    """One fetch, shared: every stage test below re-runs from these inputs,
+    which is the point of them being a value."""
+    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path_factory.mktemp("seam"))
+    return Seam(cfg=cfg, inputs=fetch_inputs(cfg, make_client(pipeline_routes())))
+
+
+def test_the_fetch_gathers_everything_the_later_stages_need(seam):
+    inputs = seam.inputs
+
+    assert inputs.event.id == 2
+    assert inputs.squad is not None
+    assert inputs.free_transfers == 1
+    assert inputs.players.keys() == {e["id"] for e in PIPELINE_ELEMENTS_JSON}
+    assert len(inputs.fixtures) == len(PIPELINE_FIXTURES_JSON)
+    # A history each for the squad and the shortlist, and nobody else.
+    assert list(inputs.histories) == history_pool(
+        inputs.players, inputs.squad.player_ids
+    )
+
+
+def test_the_stages_compose_to_the_report_the_pipeline_wrote(seam, scout_run):
+    # The seam is a refactor, not a rewrite: fetch, project and solve in that
+    # order still produce the report to the character.
+    _, projections = build_projections(seam.inputs, seam.cfg)
+    solved = solve(seam.inputs, projections, seam.cfg)
+
+    report = render_report(
+        "scout",
+        seam.inputs.event,
+        solved.plans,
+        solved.choice,
+        solved.lineup,
+        solved.chips,
+        seam.inputs.bootstrap,
+        projections,
+    )
+
+    assert report == scout_run.report
+    assert solved.draft_mode is False
+
+
+def test_an_override_of_no_minutes_writes_a_player_out(seam):
+    _, before = build_projections(seam.inputs, seam.cfg)
+
+    xmins, after = build_projections(seam.inputs, seam.cfg, {FERRER: 0.0})
+
+    assert before[FERRER].total > 0  # there was something to take away
+    assert xmins[FERRER] == 0.0
+    assert after[FERRER].total == 0.0
+    # Nobody else moved: an override is about one player's minutes.
+    assert {pid: p.total for pid, p in after.items() if pid != FERRER} == {
+        pid: p.total for pid, p in before.items() if pid != FERRER
+    }
+
+
+@pytest.mark.parametrize(
+    ("override", "expected"), [(120.0, 90.0), (-30.0, 0.0), (30.0, 30.0)]
+)
+def test_an_override_is_clamped_to_a_match(seam, override, expected):
+    # The overrides come from an agent reading team news; a match is ninety
+    # minutes long whatever it thinks it read.
+    xmins, _ = build_projections(seam.inputs, seam.cfg, {FERRER: override})
+
+    assert xmins[FERRER] == expected
+
+
+def test_a_player_given_no_minutes_is_not_fielded(seam, scout_run):
+    # Minutes to projection to lineup, which is the whole point of the seam:
+    # Ferrer captains the report the pipeline wrote, and told he is not
+    # playing the same solve leaves him out of the eleven altogether.
+    assert scout_run.store.last_runs(1)[0]["decision"]["captain"] == FERRER
+
+    _, projections = build_projections(seam.inputs, seam.cfg, {FERRER: 0.0})
+
+    solved = solve(seam.inputs, projections, seam.cfg)
+
+    assert FERRER not in solved.lineup.xi
+
+
+def test_a_solve_with_no_squad_drafts_a_fifteen(tmp_path):
+    # The draft path lives inside solve now, and says so.
+    routes = pipeline_routes()
+    del routes[PICKS_PATH]
+    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path)
+    inputs = fetch_inputs(cfg, make_client(routes))
+
+    _, projections = build_projections(inputs, cfg)
+    solved = solve(inputs, projections, cfg)
+
+    assert inputs.squad is None
+    assert inputs.free_transfers is None
+    assert solved.draft_mode is True
+    assert solved.plans == [solved.choice]
+    assert len(solved.choice.transfers_in) == 15
+    assert solved.chips == NO_CHIPS  # no squad to play a chip against
 
 
 # --- whose history to fetch ------------------------------------------------
