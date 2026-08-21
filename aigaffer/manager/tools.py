@@ -5,7 +5,7 @@ because a guardrail written into the system prompt is a request and a guardrail
 written into a validator is a boundary. The model may be persuaded, distracted
 or wrong; the code that turns his answer into a team cannot be.
 
-Three boundaries matter more than the rest.
+Four boundaries matter more than the rest.
 
 * **A plan is an id from the registry, and nothing else.** Everything else in
   the conversation is text — the briefing quotes an API that serves us player
@@ -21,6 +21,11 @@ Three boundaries matter more than the rest.
   Two of them are refused whatever the argument — a wildcard or a free hit
   suspends the transfer rules every plan on the board was solved under, and
   this phase has no chip-aware solve to replace them with.
+* **The rationale is the report.** It is the only thing the model writes that a
+  person ever reads, and the first live decision spent its reasoning on text
+  blocks the loop throws away and passed the field a placeholder. So the field
+  is measured too — see :data:`MIN_RATIONALE` — and the prompt says where the
+  report goes before the validator has to.
 
 Everything here is pure. Nothing imports the orchestrator, nothing talks to an
 API, and nothing renders a string that came off the FPL payload — plan lines go
@@ -100,7 +105,14 @@ injured and the solver does not know" is.
 
 Be honest in the rationale. It is read by the person whose team this is, after \
 the gameweek has been played, next to the score. Say what you did, what you \
-learned that made you do it, and what you were unsure about."""
+learned that made you do it, and what you were unsure about.
+
+Write it in the tool call itself: the rationale field IS your report, and \
+everything you want him to read has to be inside it — the news you found, the \
+minutes you adjusted and why, and why this plan rather than the others. \
+Anything you write outside a tool call is discarded and reaches nobody, so a \
+field that says "placeholder" with the reasoning around it publishes the word \
+placeholder and loses the reasoning."""
 
 # What the server tool is allowed to cost us in one request. ``max_uses`` is
 # per request — one assistant turn — and not a budget for the conversation: a
@@ -150,6 +162,15 @@ CHIP_API_NAMES = {
 # clever: they are the two vacuous answers — the one-liner, and the essay about
 # something else — and nothing longer or better-aimed is being claimed for them.
 MIN_JUSTIFICATION = 200
+
+# What the rationale has to be, at the very least. The first live decision came
+# back with rationale='placeholder' and four paragraphs of real reasoning in the
+# text blocks around the tool call — which the loop discards, because a text
+# block is not a decision and nothing downstream reads one. The report printed
+# the placeholder. So the field is measured too: not because a hundred
+# characters is a good report, but because it is longer than every way of not
+# writing one, and the error that comes back says where the report belongs.
+MIN_RATIONALE = 100
 
 # A match, and what a manager who is not playing plays. Expected minutes are
 # clamped here as well as in the projection so that the tool result can say what
@@ -400,6 +421,7 @@ def validate_finalize(
         _check_chip(chip, justification)
 
     rationale = _words(args.get("rationale"), "rationale")
+    _check_rationale(rationale)
     captain = _whole(args.get("captain_id"), "captain_id")
     vice = _whole(args.get("vice_id"), "vice_id")
     _check_armbands(captain, vice, plan_id, xi_for(plan))
@@ -435,6 +457,28 @@ def _check_chip(chip: str, justification: str) -> None:
     if _spoken(chip) not in _spoken(justification):
         raise ToolError(
             f"That justification never mentions the {_spoken(chip)}. {checklist}"
+        )
+
+
+def _check_rationale(rationale: str) -> None:
+    """The rationale is the report, so it has to be long enough to be one.
+
+    The failure this catches is not a short answer but a misplaced one: the
+    model writes its reasoning as prose around the tool call and drops a token
+    into the field, because from where it sits both look like output. Only the
+    field survives. So the error says that, in the words it would have needed
+    to read beforehand, and names what belongs in it — a model that is told
+    "too short" pads, and a model that is told "this is the report" writes one.
+    """
+    if len(rationale) < MIN_RATIONALE:
+        raise ToolError(
+            f"That rationale is {len(rationale)} characters, and it is the"
+            " whole of what the manager reads: the rationale field IS your"
+            " report. Anything you write outside a tool call is discarded and"
+            " never reaches him. Finalize again with the full reasoning in the"
+            f" field ({MIN_RATIONALE} characters at least): the news you found"
+            " and what it changed, the minutes you adjusted and why, and why"
+            " this plan rather than the others on the board."
         )
 
 

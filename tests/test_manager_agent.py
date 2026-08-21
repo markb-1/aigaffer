@@ -55,7 +55,7 @@ from aigaffer.config import Config
 from aigaffer.data.models import Bootstrap, Pick, Player, Squad
 from aigaffer.manager import agent
 from aigaffer.manager.agent import ManagerDecision, run_manager
-from aigaffer.manager.tools import SYSTEM_PROMPT, TOOLS
+from aigaffer.manager.tools import MIN_RATIONALE, SYSTEM_PROMPT, TOOLS
 from aigaffer.model.xp import PlayerProjection
 from aigaffer.orchestrator import PipelineInputs, SolveResult
 from aigaffer.solver.lineup import ChipEvs, Lineup
@@ -211,7 +211,12 @@ BRIEFING = "# AI Gaffer — manager briefing: GW2\n\n(the week, as he is told it
 CACHED_BRIEFING = [
     {"type": "text", "text": BRIEFING, "cache_control": {"type": "ephemeral"}}
 ]
-RATIONALE = "Gale is out for a month; Quinn plays every minute, and at home."
+# A rationale as the report prints it: long enough to clear the floor the
+# validator sets, because the field is the whole of what Mark reads.
+RATIONALE = (
+    "Gale is out for a month with a hamstring and the solver did not know it."
+    " Quinn comes in: he plays every minute, and he is at home on Saturday."
+)
 
 CFG = Config(team_id=42, anthropic_api_key="sk-test")
 
@@ -1135,6 +1140,13 @@ def test_a_chip_that_rewrites_the_squad_is_refused_however_well_argued(chip: str
     assert decision.chip == "none" and decision.source == "manager"
 
 
+def test_the_system_prompt_says_where_the_report_has_to_be_written():
+    # He wrote his reasoning in text blocks and 'placeholder' in the field. The
+    # prompt now says the field is the report and that the rest is thrown away.
+    assert "the rationale field IS your report" in SYSTEM_PROMPT
+    assert "discarded" in SYSTEM_PROMPT
+
+
 def test_the_system_prompt_names_the_two_chips_he_may_finalize():
     assert "The only chips you may finalize are bench_boost and triple_captain" in (
         SYSTEM_PROMPT
@@ -1171,6 +1183,54 @@ def test_a_decision_with_no_rationale_is_refused():
     )
 
     assert only_result(client.requests[1])["is_error"] is True
+
+
+def test_a_placeholder_rationale_is_refused_and_the_real_one_accepted():
+    # The live incident this guards: the model wrote 'placeholder' into the
+    # field and put its actual reasoning in text blocks, which are discarded.
+    client, decision = converse(
+        [
+            reply(
+                text("Gale is out; Quinn is the buy. Writing it up below."),
+                use("finalize_decision", finalize(rationale="placeholder")),
+            ),
+            reply(use("finalize_decision", finalize())),
+        ]
+    )
+    refusal = only_result(client.requests[1])
+
+    assert refusal["is_error"] is True
+    assert "rationale" in refusal["content"]
+    assert "report" in refusal["content"]
+    assert str(MIN_RATIONALE) in refusal["content"]
+    assert decision.source == "manager"
+    assert decision.rationale == RATIONALE
+
+
+# Whitespace cannot pad the floor: it is measured on the stripped text.
+@pytest.mark.parametrize("padding", ["", "   ", "\n\n"])
+def test_a_rationale_one_character_short_of_the_floor_is_refused(padding: str):
+    short = f"{padding}{'x' * (MIN_RATIONALE - 1)}{padding}"
+    client, _ = converse(
+        [
+            reply(use("finalize_decision", finalize(rationale=short))),
+            reply(use("finalize_decision", finalize())),
+        ]
+    )
+
+    assert only_result(client.requests[1])["is_error"] is True
+
+
+@pytest.mark.parametrize("padding", ["", "   ", "\n\n"])
+def test_a_rationale_exactly_at_the_floor_is_accepted(padding: str):
+    written = f"{padding}{'x' * MIN_RATIONALE}{padding}"
+    client, decision = converse(
+        [reply(use("finalize_decision", finalize(rationale=written)))]
+    )
+
+    assert decision.source == "manager"
+    assert decision.rationale == "x" * MIN_RATIONALE
+    assert len(client.requests) == 1, "it was accepted the first time"
 
 
 @pytest.mark.parametrize("written", ["bench boost", "bench-boost", "BENCH_BOOST"])
