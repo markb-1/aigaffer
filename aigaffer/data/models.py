@@ -12,7 +12,15 @@ from pydantic import BaseModel
 
 
 class Player(BaseModel):
-    """A bootstrap ``element``. ``element_type``: 1 GK, 2 DEF, 3 MID, 4 FWD."""
+    """A bootstrap ``element``. ``element_type``: 1 GK, 2 DEF, 3 MID, 4 FWD.
+
+    Every rate the model wants is taken here as a season total over season
+    ``minutes``, never as one of the API's own per-90 columns: the model has
+    one small-sample rule for turning a total into a rate (see
+    :func:`aigaffer.model.xp._per_90`) and a column that arrived already
+    divided has escaped it. The API serves the expected-goals family as
+    strings; pydantic coerces them.
+    """
 
     id: int
     web_name: str
@@ -26,9 +34,8 @@ class Player(BaseModel):
     total_points: int
     bonus: int
     saves: int
-    expected_goals_per_90: float = 0.0
-    expected_assists_per_90: float = 0.0
-    saves_per_90: float = 0.0
+    expected_goals: float = 0.0
+    expected_assists: float = 0.0
     defensive_contribution: float = 0.0
 
 

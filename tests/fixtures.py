@@ -24,8 +24,12 @@ The universe:
   ==  ============  ====  ===  ====  ======================================
 
 Field names, types and extra keys mirror a real bootstrap payload (checked
-against the live endpoint), including the per-90 stats arriving as JSON
-numbers and ``defensive_contribution`` as a season-total integer.
+against the live endpoint): ``expected_goals`` and ``expected_assists`` are
+season totals arriving as strings, ``saves`` and ``defensive_contribution``
+season totals as integers. Every one of them is consistent with the player's
+``minutes`` — Ferrer's 5.81 xG over 950 minutes is the 0.55 a game he is
+meant to be — because the model divides them itself and a fixture that
+disagreed with itself would pin the wrong number.
 
 Eight players cannot make a legal fifteen, so the end-to-end pipeline test
 runs on a second universe — the ``PIPELINE_*`` payloads — which is this one
@@ -139,9 +143,8 @@ ELEMENTS_JSON = [
         "total_points": 45,
         "bonus": 5,
         "saves": 30,
-        "expected_goals_per_90": 0.0,
-        "expected_assists_per_90": 0.01,
-        "saves_per_90": 3.0,
+        "expected_goals": "0.00",
+        "expected_assists": "0.10",
         "defensive_contribution": 0,
     },
     {
@@ -158,9 +161,8 @@ ELEMENTS_JSON = [
         "total_points": 20,
         "bonus": 1,
         "saves": 22,
-        "expected_goals_per_90": 0.0,
-        "expected_assists_per_90": 0.0,
-        "saves_per_90": 4.4,
+        "expected_goals": "0.00",
+        "expected_assists": "0.00",
         "defensive_contribution": 0,
     },
     {
@@ -177,9 +179,8 @@ ELEMENTS_JSON = [
         "total_points": 52,
         "bonus": 6,
         "saves": 0,
-        "expected_goals_per_90": 0.12,
-        "expected_assists_per_90": 0.18,
-        "saves_per_90": 0.0,
+        "expected_goals": "1.17",
+        "expected_assists": "1.76",
         "defensive_contribution": 30,
     },
     {
@@ -196,9 +197,8 @@ ELEMENTS_JSON = [
         "total_points": 30,
         "bonus": 2,
         "saves": 0,
-        "expected_goals_per_90": 0.05,
-        "expected_assists_per_90": 0.08,
-        "saves_per_90": 0.0,
+        "expected_goals": "0.39",
+        "expected_assists": "0.62",
         "defensive_contribution": 24,
     },
     {
@@ -215,9 +215,8 @@ ELEMENTS_JSON = [
         "total_points": 90,
         "bonus": 12,
         "saves": 0,
-        "expected_goals_per_90": 0.55,
-        "expected_assists_per_90": 0.4,
-        "saves_per_90": 0.0,
+        "expected_goals": "5.81",
+        "expected_assists": "4.22",
         "defensive_contribution": 8,
     },
     {
@@ -234,9 +233,8 @@ ELEMENTS_JSON = [
         "total_points": 40,
         "bonus": 3,
         "saves": 0,
-        "expected_goals_per_90": 0.25,
-        "expected_assists_per_90": 0.3,
-        "saves_per_90": 0.0,
+        "expected_goals": "1.67",
+        "expected_assists": "2.00",
         "defensive_contribution": 16,
     },
     {
@@ -253,9 +251,8 @@ ELEMENTS_JSON = [
         "total_points": 78,
         "bonus": 9,
         "saves": 0,
-        "expected_goals_per_90": 0.62,
-        "expected_assists_per_90": 0.22,
-        "saves_per_90": 0.0,
+        "expected_goals": "5.99",
+        "expected_assists": "2.13",
         "defensive_contribution": 4,
     },
     {
@@ -272,9 +269,8 @@ ELEMENTS_JSON = [
         "total_points": 10,
         "bonus": 0,
         "saves": 0,
-        "expected_goals_per_90": 0.3,
-        "expected_assists_per_90": 0.1,
-        "saves_per_90": 0.0,
+        "expected_goals": "0.67",
+        "expected_assists": "0.22",
         "defensive_contribution": 2,
     },
 ]
@@ -362,17 +358,18 @@ def _element(
     starts: int,
     total_points: int,
     bonus: int,
-    xg90: float = 0.0,
-    xa90: float = 0.0,
+    xg: float = 0.0,
+    xa: float = 0.0,
     saves: int = 0,
-    saves_per_90: float = 0.0,
     defcon: int = 0,
 ) -> dict:
     """An available bootstrap element, with every key the real payload has.
 
     The eight players above are written out longhand because the tests that
     read them read one field at a time; these thirteen exist to be counted,
-    priced and picked, so they are built from a table instead.
+    priced and picked, so they are built from a table instead. ``xg`` and
+    ``xa`` are season totals over ``minutes``, and go out as the strings the
+    live payload sends.
     """
     return {
         "id": pid,
@@ -388,9 +385,8 @@ def _element(
         "total_points": total_points,
         "bonus": bonus,
         "saves": saves,
-        "expected_goals_per_90": xg90,
-        "expected_assists_per_90": xa90,
-        "saves_per_90": saves_per_90,
+        "expected_goals": f"{xg:.2f}",
+        "expected_assists": f"{xa:.2f}",
         "defensive_contribution": defcon,
     }
 
@@ -438,31 +434,31 @@ PIPELINE_TEAMS_JSON = TEAMS_JSON + [
 # and the three new clubs bring three or four each.
 PIPELINE_ELEMENTS_JSON = ELEMENTS_JSON + [
     _element(9, "Jarvis", 3, 1, 50, minutes=810, starts=9, total_points=38, bonus=3,
-             saves=26, saves_per_90=2.9),
+             saves=26),
     _element(10, "Kelly", 3, 2, 45, minutes=810, starts=9, total_points=34, bonus=2,
-             xg90=0.04, xa90=0.09, defcon=26),
+             xg=0.36, xa=0.81, defcon=26),
     _element(11, "Lozano", 3, 3, 70, minutes=760, starts=9, total_points=44, bonus=4,
-             xg90=0.22, xa90=0.26, defcon=14),
+             xg=1.86, xa=2.20, defcon=14),
     _element(12, "Meier", 4, 2, 55, minutes=900, starts=10, total_points=41, bonus=4,
-             xg90=0.09, xa90=0.11, defcon=33),
+             xg=0.90, xa=1.10, defcon=33),
     _element(13, "Novak", 4, 2, 40, minutes=700, starts=8, total_points=26, bonus=1,
-             xg90=0.03, xa90=0.05, defcon=22),
+             xg=0.23, xa=0.39, defcon=22),
     _element(14, "Ozturk", 4, 3, 85, minutes=880, starts=10, total_points=58, bonus=7,
-             xg90=0.35, xa90=0.28, defcon=10),
+             xg=3.42, xa=2.74, defcon=10),
     _element(15, "Pryce", 4, 4, 65, minutes=640, starts=7, total_points=35, bonus=3,
-             xg90=0.38, xa90=0.12, defcon=3),
+             xg=2.70, xa=0.85, defcon=3),
     _element(16, "Quill", 5, 2, 50, minutes=850, starts=10, total_points=37, bonus=3,
-             xg90=0.06, xa90=0.10, defcon=28),
+             xg=0.57, xa=0.94, defcon=28),
     _element(17, "Reyes", 5, 3, 95, minutes=900, starts=10, total_points=66, bonus=8,
-             xg90=0.45, xa90=0.33, defcon=9),
+             xg=4.50, xa=3.30, defcon=9),
     _element(18, "Sarr", 5, 4, 60, minutes=590, starts=6, total_points=31, bonus=2,
-             xg90=0.34, xa90=0.15, defcon=2),
+             xg=2.23, xa=0.98, defcon=2),
     _element(19, "Tandy", 6, 2, 42, minutes=780, starts=9, total_points=29, bonus=2,
-             xg90=0.02, xa90=0.06, defcon=24),
+             xg=0.17, xa=0.52, defcon=24),
     _element(20, "Voss", 6, 3, 65, minutes=700, starts=8, total_points=39, bonus=3,
-             xg90=0.20, xa90=0.24, defcon=12),
+             xg=1.56, xa=1.87, defcon=12),
     _element(21, "Wynne", 6, 4, 55, minutes=520, starts=6, total_points=27, bonus=2,
-             xg90=0.30, xa90=0.10, defcon=2),
+             xg=1.73, xa=0.58, defcon=2),
 ]
 
 PIPELINE_BOOTSTRAP_JSON = {

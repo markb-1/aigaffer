@@ -71,8 +71,12 @@ HOME_FIXTURE = Fixture(id=1, event=2, team_h=1, team_a=2)
 
 
 def player(**overrides) -> Player:
-    """A Lions midfielder: 0.5 xG90, 0.3 xA90, 9 bonus and 120 defensive
-    actions in 900 minutes — twelve a game, which is his threshold exactly."""
+    """A Lions midfielder with a season of 900 minutes behind him — ten full
+    matches, so every season total below is ten times its rate per ninety.
+
+    5.0 xG and 3.0 xA are 0.5 and 0.3 a game; 9 bonus is 0.9 a game; 120
+    defensive actions are twelve a game, which is his threshold exactly.
+    """
     fields = {
         "id": 1,
         "web_name": "Test",
@@ -85,9 +89,8 @@ def player(**overrides) -> Player:
         "total_points": 50,
         "bonus": 9,
         "saves": 0,
-        "expected_goals_per_90": 0.5,
-        "expected_assists_per_90": 0.3,
-        "saves_per_90": 0.0,
+        "expected_goals": 5.0,
+        "expected_assists": 3.0,
         "defensive_contribution": 120,
     }
     return Player(**{**fields, **overrides})
@@ -134,6 +137,7 @@ def test_appearance_pays_once_for_playing_and_once_for_the_hour():
 
 
 def test_goals_are_paid_at_the_position_rate():
+    # 5.0 xG in 900 minutes is 0.5 a game.
     mid = player(element_type=3)
     assert goal_points(mid, 90.0, 1.2) == approx(0.5 * 1.0 * 1.2 * GOAL_PTS[3])
     forward = player(element_type=4)
@@ -172,10 +176,11 @@ def test_only_keepers_and_defenders_are_docked_for_goals_conceded():
 
 
 def test_only_keepers_score_for_saves():
-    keeper = player(element_type=1, saves_per_90=3.0)
+    # 30 saves in 900 minutes is 3 a game, and 3 saves is a point.
+    keeper = player(element_type=1, saves=30)
     assert save_points(keeper, 90.0) == approx(1.0)
     assert save_points(keeper, 45.0) == approx(0.5)
-    assert save_points(player(element_type=2, saves_per_90=3.0), 90.0) == 0.0
+    assert save_points(player(element_type=2, saves=30), 90.0) == 0.0
 
 
 def test_bonus_projects_the_season_rate_per_ninety():
@@ -204,12 +209,31 @@ def test_a_season_total_with_no_minutes_behind_it_is_not_a_rate():
     assert defcon_points(stale, 90.0) == 0.0
 
 
+def test_the_same_floor_governs_goals_assists_and_saves():
+    # One rule, not four: the contradictory payload is worth nothing in the
+    # attacking terms too, and not only in the two that were written last.
+    stale = player(
+        element_type=1, minutes=0, expected_goals=12.0, expected_assists=8.0, saves=40
+    )
+    assert goal_points(stale, 90.0, 1.2) == 0.0
+    assert assist_points(stale, 90.0, 1.2) == 0.0
+    assert save_points(stale, 90.0) == 0.0
+
+
 def test_a_cameo_is_a_sample_not_a_rate():
     # Six defensive actions in a minute off the bench is six a game at the
     # very most — not the five hundred and forty a naive rate reads it as,
     # which would have him clearing any threshold there is.
     cameo = player(minutes=1, defensive_contribution=6)
     assert defcon_points(cameo, 90.0) == 0.0
+
+
+def test_a_goal_off_the_bench_is_not_a_goal_a_minute():
+    # One expected goal in the one minute he has played reads as one per
+    # ninety, because the denominator is floored at a full match. Ninety
+    # goals a game is the number the floor is there to refuse.
+    cameo = player(minutes=1, expected_goals=1.0)
+    assert goal_points(cameo, 90.0, 1.0) == approx(GOAL_PTS[3])
 
 
 def test_a_defender_averaging_his_threshold_is_a_coin_flip_on_it():
@@ -286,6 +310,34 @@ def test_factors_for_an_away_player_use_the_opponents_home_strengths():
     assert lam == approx(1.19)  # 1.4 * 1020 / 1200
 
 
+def test_the_attack_and_defence_averages_are_not_interchangeable():
+    # Lions and Bears average 1200 in every column, which makes the arithmetic
+    # above easy and hides one mistake: swap the attack mean for the defence
+    # mean and nothing above moves. The shared universe has three teams whose
+    # means differ, so it can tell.
+    #
+    #   league home attack  = (1300 + 1150 + 1000) / 3 = 1150
+    #   league home defence = (1280 + 1120 + 1020) / 3 = 1140
+    #
+    # Cravenside at home has a 1020 defence and a 1000 attack, so:
+    #   att_factor = 1 / (1020 / 1140) = 1140 / 1020 = 1.117647058823529...
+    #   lam        = 1.4 * (1000 / 1150)            = 1.217391304347826...
+    #
+    # With the two means swapped they would read 1.127450980... and
+    # 1.228070175..., and neither is clamped, so the difference survives.
+    teams = Bootstrap(**BOOTSTRAP_JSON).teams
+    cravenside = next(team for team in teams if team.id == 3)
+
+    att_factor, lam = fixture_factors(
+        cravenside,
+        opponent_at_home=True,
+        averages=league_averages(teams, at_home=True),
+    )
+
+    assert att_factor == approx(1.1176470588235294)
+    assert lam == approx(1.2173913043478262)
+
+
 def test_factors_are_clamped_at_the_extremes():
     monster = Team(
         id=3,
@@ -347,9 +399,9 @@ def test_teams_with_no_strengths_at_all_get_neutral_factors():
 def test_fixture_points_sum_every_component():
     keeper = player(
         element_type=1,
-        expected_goals_per_90=0.0,
-        expected_assists_per_90=0.0,
-        saves_per_90=3.0,
+        expected_goals=0.0,
+        expected_assists=0.0,
+        saves=30,
         bonus=3,
         defensive_contribution=0,
     )
@@ -357,7 +409,7 @@ def test_fixture_points_sum_every_component():
         2.0  # appearance
         + math.exp(-1.54) * 4  # clean sheet
         - 0.77  # conceded: 1.54 / 2
-        + 1.0  # saves: 3.0 / 3
+        + 1.0  # saves: 30 in 900 minutes is 3 a game, and 3 saves is a point
         + 0.3  # bonus: 3 in 900 minutes
     )
     assert fixture_points(keeper, 90.0, att_factor=1.2, lam=1.54) == approx(expected)
@@ -382,12 +434,14 @@ def test_projects_a_midfielder_at_home():
 
 
 def test_projects_a_defender_away():
+    # 720 minutes is eight full matches, so his season totals are eight
+    # times his rates: 0.8 xG is 0.1 a game and 1.6 xA is 0.2 a game.
     defender = player(
         id=20,
         team=2,
         element_type=2,
-        expected_goals_per_90=0.1,
-        expected_assists_per_90=0.2,
+        expected_goals=0.8,
+        expected_assists=1.6,
         minutes=720,
         bonus=4,
         defensive_contribution=80,

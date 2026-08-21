@@ -59,11 +59,10 @@ def test_bootstrap_parses_players():
     assert keeper.chance_of_playing_next_round is None
     assert (keeper.minutes, keeper.starts, keeper.total_points) == (900, 10, 45)
     assert (keeper.bonus, keeper.saves) == (5, 30)
-    assert keeper.saves_per_90 == pytest.approx(3.0)
 
     mid = players[5]
-    assert mid.expected_goals_per_90 == pytest.approx(0.55)
-    assert mid.expected_assists_per_90 == pytest.approx(0.40)
+    assert mid.expected_goals == pytest.approx(5.81)
+    assert mid.expected_assists == pytest.approx(4.22)
     assert mid.defensive_contribution == pytest.approx(8.0)
 
     doubtful = players[4]
@@ -80,33 +79,30 @@ def test_bootstrap_ignores_unknown_keys():
 
 
 def test_decimal_stats_sent_as_strings_are_coerced():
-    # FPL serves several decimal stats as strings (e.g. expected_goals);
-    # the per-90 family is numeric today but must not be relied on.
+    # FPL serves the expected-goals family as strings, which is how the
+    # fixtures carry them; the rest are numbers today but must not be relied
+    # on to stay that way. Either arrives as a float on the model.
     payload = copy.deepcopy(BOOTSTRAP_JSON)
     element = next(e for e in payload["elements"] if e["id"] == 5)
-    element["expected_goals_per_90"] = "0.55"
-    element["defensive_contribution"] = "8"
+    assert isinstance(element["expected_goals"], str)
+    element["expected_assists"] = 4.22  # a number where a string was
+    element["defensive_contribution"] = "8"  # and a string where a number was
     c = make_client({"/api/bootstrap-static/": payload})
     mid = next(p for p in c.bootstrap().elements if p.id == 5)
-    assert mid.expected_goals_per_90 == pytest.approx(0.55)
+    assert mid.expected_goals == pytest.approx(5.81)
+    assert mid.expected_assists == pytest.approx(4.22)
     assert mid.defensive_contribution == pytest.approx(8.0)
 
 
 def test_missing_optional_stats_default_to_zero():
     payload = copy.deepcopy(BOOTSTRAP_JSON)
     element = next(e for e in payload["elements"] if e["id"] == 1)
-    for key in (
-        "expected_goals_per_90",
-        "expected_assists_per_90",
-        "saves_per_90",
-        "defensive_contribution",
-    ):
+    for key in ("expected_goals", "expected_assists", "defensive_contribution"):
         del element[key]
     c = make_client({"/api/bootstrap-static/": payload})
     keeper = next(p for p in c.bootstrap().elements if p.id == 1)
-    assert keeper.expected_goals_per_90 == 0.0
-    assert keeper.expected_assists_per_90 == 0.0
-    assert keeper.saves_per_90 == 0.0
+    assert keeper.expected_goals == 0.0
+    assert keeper.expected_assists == 0.0
     assert keeper.defensive_contribution == 0.0
 
 

@@ -2,10 +2,19 @@
 
 Each fixture is scored on its own: the opponent's strength sets how likely a
 goal or a clean sheet is, the player's expected minutes set how much of that
-he is around for, and the season-so-far rates (xG90, xA90, bonus, defensive
-contributions) say what he does with the time. A gameweek is the sum over
-his club's fixtures in it, so a blank scores nothing and a double scores
-twice without any special case.
+he is around for, and his season so far says what he does with the time. A
+gameweek is the sum over his club's fixtures in it, so a blank scores nothing
+and a double scores twice without any special case.
+
+Every rate the model uses — goals, assists, saves, bonus, defensive
+contributions — is a season total divided by season minutes by the same
+function, :func:`_per_90`, and so obeys the same small-sample rule: a player
+with no minutes has no rate at all, and a rate is never taken over less than
+a full match. That rule is the whole of the model's caution about thin
+evidence, and it only holds if nothing goes around it. The API publishes its
+own per-90 columns and they are not used: they are already divided, by a
+denominator we cannot see, and a substitute with one appearance behind him is
+exactly the player they flatter.
 
 Points further out are worth less to a decision made today — the squad, the
 prices and the fixtures will all have moved by then — so ``total`` discounts
@@ -119,12 +128,15 @@ def appearance_points(minutes: float) -> float:
 
 
 def goal_points(player: Player, minutes: float, att_factor: float) -> float:
-    goals = player.expected_goals_per_90 * (minutes / 90) * att_factor
+    """The season's expected goals as a rate per ninety, scored on."""
+    rate = _per_90(player.expected_goals, player.minutes)
+    goals = rate * (minutes / 90) * att_factor
     return goals * GOAL_PTS[player.element_type]
 
 
 def assist_points(player: Player, minutes: float, att_factor: float) -> float:
-    assists = player.expected_assists_per_90 * (minutes / 90) * att_factor
+    rate = _per_90(player.expected_assists, player.minutes)
+    assists = rate * (minutes / 90) * att_factor
     return assists * ASSIST_PTS
 
 
@@ -144,7 +156,7 @@ def save_points(player: Player, minutes: float) -> float:
     """A point per three saves, keepers only."""
     if player.element_type != GOALKEEPER:
         return 0.0
-    return (player.saves_per_90 / 3) * (minutes / 90)
+    return (_per_90(player.saves, player.minutes) / 3) * (minutes / 90)
 
 
 def bonus_points(player: Player, minutes: float) -> float:
@@ -274,13 +286,15 @@ def _mean(values: Iterable[int]) -> float:
 def _per_90(total: float, minutes: int) -> float:
     """A season total as a rate per ninety minutes, or 0.0 without one.
 
-    Two things the live bootstrap does and the fixtures never showed. A
-    player can carry a season of defensive contributions against zero minutes
-    played: the payload contradicts itself, and reading his whole season as
-    one game is how a £4.5m substitute comes to project four thousand points
-    and get himself drafted. And a player with a minute or two behind him has
-    a sample, not a rate. So no minutes is no evidence, and a rate is never
-    taken over less than a full match.
+    Every rate in this module comes through here, so this is the one place
+    the model decides what thin evidence is worth. Two things the live
+    bootstrap does and the fixtures never showed. A player can carry a season
+    of defensive contributions against zero minutes played: the payload
+    contradicts itself, and reading his whole season as one game is how a
+    £4.5m substitute comes to project four thousand points and get himself
+    drafted. And a player with a minute or two behind him has a sample, not a
+    rate. So no minutes is no evidence, and a rate is never taken over less
+    than a full match.
     """
     if minutes <= 0:
         return 0.0
