@@ -239,24 +239,31 @@ def report(
     view: ManagerDecision | None = None,
     engine_expected: bool = False,
     plans: list[Plan] | None = None,
+    lineup: Lineup = LINEUP,
+    free_transfers: int | None = 1,
 ) -> str:
     """The report as Task 12 will ask for it.
 
     ``plans`` is the board, and it defaults to the canned single-week one: a
     run off the window hands over a board whose every row carries a path, and
     the rows are measured differently when it does.
+
+    ``free_transfers`` is the bank the action block reads when the week rolls,
+    and defaults to the one the pipeline's ordinary scout run holds; ``lineup``
+    is the eleven the block and the team sheet are drawn from.
     """
     return render_report(
         "scout",
         event,
         PLANS if plans is None else plans,
         choice,
-        LINEUP,
+        lineup,
         CHIPS,
         BOOTSTRAP,
         XP,
         view,
         engine_expected=engine_expected,
+        free_transfers=free_transfers,
     )
 
 
@@ -279,6 +286,7 @@ def test_the_report_reads_top_to_bottom_in_one_pass():
 
     assert headings == [
         "# AI Gaffer — GW2 scout",
+        "## Do this",
         "## Recommendation",
         "## Starting XI (3-4-3)",
         "## Candidate plans",
@@ -422,6 +430,101 @@ def test_a_report_with_no_manager_never_explains_a_re_solve():
     assert "re-solved" not in report()
 
 
+# --- the do-this action block ----------------------------------------------
+#
+# The bot advises and never executes, so the moves are made by hand on a phone
+# against a deadline. The block is a checklist at the very top: what to do, in
+# the order the FPL app takes it, and nothing a reader has to parse the rest of
+# the report to act on.
+
+
+def test_the_action_block_leads_the_report():
+    # First thing under the title, before the recommendation it summarizes.
+    headings = [line for line in report().splitlines() if line.startswith("#")]
+
+    assert headings[:2] == ["# AI Gaffer — GW2 scout", "## Do this"]
+
+
+def test_the_action_block_is_a_terminal_checklist():
+    # A deadline, the swap, and the armbands — each line imperative and whole,
+    # the position-club-price tag spaced so it reads as one label at arm's
+    # length. Reid stays benched, so there is no lineup line to set.
+    assert section(report(), "Do this") == [
+        "⏰ Make these by Fri 22 Aug 2025 17:30 UTC — GW2",
+        "SELL Gale (DEF CRV £4.0m) → BUY Reid (FWD CRV £9.5m)",
+        "CAPTAIN Hume · VICE Moss",
+    ]
+
+
+def test_each_transfer_is_its_own_sell_then_buy_line():
+    swaps = [line for line in section(report(choice=TWO), "Do this") if "→" in line]
+
+    assert swaps == [
+        "SELL Fenn (DEF BRW £4.5m) → BUY Pike (MID ASH £8.0m)",
+        "SELL Gale (DEF CRV £4.0m) → BUY Reid (FWD CRV £9.5m)",
+    ]
+
+
+def test_a_week_that_rolls_says_so_and_banks_its_free_transfer():
+    rolled = section(report(choice=ROLL), "Do this")
+
+    assert "No transfers — roll (bank 1 free transfer)." in rolled
+    assert not any(line.startswith("SELL") for line in rolled)
+
+
+def test_a_pair_of_banked_transfers_is_pluralized():
+    assert "roll (bank 2 free transfers)." in report(choice=ROLL, free_transfers=2)
+
+
+def test_a_chip_the_gaffer_plays_is_a_line_to_act_on():
+    played = section(report(view=gaffer(chip="bench_boost", justification=GOOD_CHIP)), "Do this")
+
+    assert "PLAY Bench Boost" in played
+
+
+def test_no_chip_prints_no_chip_line():
+    # Omitted entirely, not printed as "no chip": a checklist has no line for
+    # the thing you are not doing.
+    assert not any(line.startswith("PLAY") for line in section(report(view=gaffer()), "Do this"))
+
+
+def test_a_signing_that_must_start_asks_for_the_lineup():
+    # Reid is bought and goes straight into the eleven, where the FPL app would
+    # have benched him: the block says to fix the lineup and leaves the full XI
+    # to the section below.
+    starting = replace(LINEUP, xi=[1, 3, 4, 5, 8, 9, 10, 11, 13, 14, 18], bench=[2, 12, 6, 15])
+    block = section(report(lineup=starting), "Do this")
+
+    assert "Set lineup: 3-4-3" in block
+    # Still a checklist, not the report: the eleven itself is not duplicated.
+    assert not any("Hume" in line and "Jonker" in line for line in block)
+
+
+def test_a_signing_left_on_the_bench_needs_no_lineup_line():
+    assert not any(line.startswith("Set lineup") for line in section(report(), "Do this"))
+
+
+def test_a_draft_has_no_action_block():
+    # The whole squad is the action; the recommendation below is the fifteen to
+    # buy, and there is no scannable move to lift out of it.
+    assert "## Do this" not in report(choice=DRAFT)
+
+
+def test_the_block_follows_the_gaffers_own_plan():
+    # He re-solved on his own minutes and finalized a plan the shortlist never
+    # had. The checklist tells Mark to make that move, not the solver's original.
+    fresh = replace(
+        ONE,
+        squad=[pid for pid in SQUAD if pid != 6] + [17],
+        transfers_in=[17],
+        transfers_out=[6],
+    )
+    block = section(report(choice=fresh, view=replace(gaffer(), plan=fresh)), "Do this")
+
+    assert "SELL Fenn (DEF BRW £4.5m) → BUY Quinn (DEF BRW £5.5m)" in block
+    assert not any("Gale" in line for line in block)
+
+
 # --- what the numbers on a row are measured over ---------------------------
 #
 # A row off the window prints this gameweek's transfers beside two totals for
@@ -496,6 +599,7 @@ def test_the_road_ahead_follows_the_shortlist_it_came_off():
 
     assert headings == [
         "# AI Gaffer — GW2 scout",
+        "## Do this",
         "## Recommendation",
         "## Starting XI (3-4-3)",
         "## Candidate plans",
@@ -580,6 +684,7 @@ def test_the_gaffers_view_follows_the_recommendation_it_explains():
 
     assert headings == [
         "# AI Gaffer — GW2 scout",
+        "## Do this",
         "## Recommendation",
         "## The Gaffer's view",
         "## Starting XI (3-4-3)",

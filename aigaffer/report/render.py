@@ -127,6 +127,7 @@ def render_report(
     gaffer: "ManagerDecision | None" = None,
     *,
     engine_expected: bool = False,
+    free_transfers: int | None = None,
 ) -> str:
     """The whole report as one markdown string. Pure; no I/O.
 
@@ -135,6 +136,11 @@ def render_report(
     and the lineup must be a ``bootstrap`` element, which it is: they came
     from there. The string ends in a newline, because it is written out as a
     file as well as sent as a message.
+
+    ``free_transfers`` is the bank, and it is read in one place: the action
+    block at the top says how many the week is banking when it rolls. It is not
+    needed to draft — a draft has no action block — so it defaults to None, and
+    a None on a week that rolls simply drops the count rather than guessing one.
 
     ``gaffer`` is the manager's decision, when there was a manager: the plan
     and the eleven above are his by then, and the section this adds is the
@@ -155,6 +161,13 @@ def render_report(
 
     sections = [
         _header(mode, event),
+        *(
+            []
+            if _drafting(choice)
+            else [
+                _do_this(event, choice, lineup, players, clubs, gaffer, free_transfers)
+            ]
+        ),
         _recommendation(choice, players, clubs),
         *([] if gaffer is None else [_gaffer(gaffer, players)]),
         _team_sheet(lineup, players, projections),
@@ -186,6 +199,103 @@ def deadline(event: Event) -> str:
     if stamp.tzinfo is None:
         stamp = stamp.replace(tzinfo=UTC)
     return stamp.astimezone(UTC).strftime(DEADLINE_FORMAT)
+
+
+def _drafting(choice: Plan) -> bool:
+    """A squad bought from nothing: players in, and none sold.
+
+    The one week a plan buys without selling. Every other week the squad is
+    already fifteen and every move is a swap, so a plan that sells nobody is a
+    plan drafting from an empty squad — which is the one report with no action
+    block, because the whole squad is the action and the recommendation below is
+    already the fifteen to buy.
+    """
+    return bool(choice.transfers_in) and not choice.transfers_out
+
+
+def _do_this(
+    event: Event,
+    choice: Plan,
+    lineup: Lineup,
+    players: dict[int, Player],
+    clubs: dict[int, str],
+    gaffer: "ManagerDecision | None",
+    free_transfers: int | None,
+) -> str:
+    """The week's moves as a checklist, first and imperative.
+
+    The bot advises and never executes: the moves are made by hand, on a phone,
+    against a deadline. So the top of the report is a short list of exactly what
+    to do, in the order the FPL app takes it — the deadline, the transfers, the
+    chip if there is one, the armbands, and a nudge to fix the lineup when a
+    signing has to start. Everything below it explains this; this is the part he
+    acts on, and it draws from the same decision without adding a fact to it.
+
+    A signing that starts is the one lineup change worth flagging here: the app
+    drops a transferred-in player onto the bench, so an eleven that needs him in
+    it needs the bench reordered by hand. The shape is named and the full eleven
+    is left to the team sheet below — a checklist, not a second copy of it.
+    """
+    lines = [
+        "## Do this",
+        "",
+        f"⏰ Make these by {deadline(event)} — GW{event.id}",
+        *_moves(choice, players, clubs, free_transfers),
+    ]
+    if gaffer is not None and gaffer.chip != NO_CHIP:
+        lines.append(f"PLAY {gaffer.chip.replace('_', ' ').title()}")
+    lines.append(
+        f"CAPTAIN {_who(lineup.captain, players)} · VICE {_who(lineup.vice, players)}"
+    )
+    if set(choice.transfers_in) & set(lineup.xi):
+        lines.append(f"Set lineup: {_formation(lineup, players)}")
+    return "\n".join(lines)
+
+
+def _moves(
+    choice: Plan,
+    players: dict[int, Player],
+    clubs: dict[int, str],
+    free_transfers: int | None,
+) -> list[str]:
+    """The transfers a swap to a line, or the one line that makes none.
+
+    Sell then buy, the way the app takes a transfer, so a line is a move he can
+    make without holding two of them in his head. A week that rolls says how
+    many free transfers it is banking, because that count is the whole of the
+    non-move and is the one number he checks it against; a run that was handed
+    no count drops it rather than inventing one.
+    """
+    if not choice.transfers_in and not choice.transfers_out:
+        if free_transfers is None:
+            return ["No transfers — roll."]
+        return [f"No transfers — roll (bank {plural(free_transfers, 'free transfer')})."]
+    return [
+        f"SELL {_named(out, players, clubs)} → BUY {_named(bought, players, clubs)}"
+        for out, bought in zip(choice.transfers_out, choice.transfers_in)
+    ]
+
+
+def _named(pid: int, players: dict[int, Player], clubs: dict[int, str]) -> str:
+    """``Gale (DEF CRV £4.0m)`` — the checklist's own parenthesis.
+
+    Spaces, not the commas :func:`_described` uses: on a line read at arm's
+    length the position, club and price want to run together as one tag on the
+    name rather than read as a list of three things.
+    """
+    player = players[pid]
+    return (
+        f"{player.web_name} ({POSITIONS[player.element_type]}"
+        f" {clubs[player.team]} {price(player.now_cost)})"
+    )
+
+
+def _formation(lineup: Lineup, players: dict[int, Player]) -> str:
+    """``3-4-3`` — the shape of the eleven, defenders through forwards."""
+    counts: dict[int, int] = defaultdict(int)
+    for pid in lineup.xi:
+        counts[players[pid].element_type] += 1
+    return "-".join(str(counts[position]) for position in OUTFIELD)
 
 
 def _recommendation(
@@ -378,8 +488,7 @@ def _team_sheet(
     for pid in _ranked(lineup.xi, players, projections):
         rows[players[pid].element_type].append(_armband(pid, lineup, players))
 
-    formation = "-".join(str(len(rows[position])) for position in OUTFIELD)
-    lines = [f"## Starting XI ({formation})", ""]
+    lines = [f"## Starting XI ({_formation(lineup, players)})", ""]
     lines += [
         f"- {label}: " + ", ".join(rows[position])
         for position, label in POSITIONS.items()

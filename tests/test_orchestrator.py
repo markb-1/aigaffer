@@ -171,8 +171,9 @@ def test_the_report_is_the_whole_report(scout_run):
     headings = [line for line in scout_run.report.splitlines() if line.startswith("#")]
 
     assert headings[0] == "# AI Gaffer — GW2 scout"
-    assert headings[2].startswith("## Starting XI (")
-    assert [headings[1], *headings[3:]] == [
+    assert headings[1] == "## Do this"
+    assert headings[3].startswith("## Starting XI (")
+    assert [headings[2], *headings[4:]] == [
         "## Recommendation",
         "## Candidate plans",
         # The window is the default engine, so an ordinary run has somewhere

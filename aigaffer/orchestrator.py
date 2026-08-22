@@ -286,6 +286,9 @@ def run_pipeline(
         # single-week solver; a draft is neither, since the window is never
         # asked to buy fifteen players.
         engine_expected=cfg.planner != SINGLE and not solved.draft_mode,
+        # The bank the action block names when the week rolls. None on a draft,
+        # which has no action block to read it.
+        free_transfers=inputs.free_transfers,
     )
     # Asked for, and not there at all. Not the same as the kill switch, no key
     # or a draft — those are choices, and the invariant is that they render
