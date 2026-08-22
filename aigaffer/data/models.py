@@ -139,3 +139,25 @@ class GwHistory(BaseModel):
     minutes: int
     total_points: int
     fixture: int = 0
+
+
+class PastSeason(BaseModel):
+    """One completed season of a player's record, from ``history_past``.
+
+    The rows come oldest first, one a season, and only for seasons he was in
+    the Premier League — a player signed from abroad and a promoted club's
+    player have none at all, which is why the absence is meaningful and not a
+    zero.
+
+    ``minutes`` is the season total and the only number read: it is what says
+    what his role was, and per gameweek it is a better floor under a thin
+    August than any guess (see :func:`aigaffer.model.minutes.season_prior`).
+    ``starts`` is in the payload and deliberately not declared — it was not
+    recorded before 2022/23 and comes back as 0 for those seasons, so a reader
+    could not tell a season nobody started from a season nobody counted.
+    Checked live on 2026-08-22: a keeper's 2021/22 row carries 2160 minutes
+    and ``starts: 0``.
+    """
+
+    season_name: str
+    minutes: int

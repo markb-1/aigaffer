@@ -339,12 +339,33 @@ HISTORY_JSON = {
     "chips": [{"name": "wildcard", "time": "2025-08-15T10:00:00Z", "event": 1}],
 }
 
+# ``history_past`` carries a full season's totals, one row a season, oldest
+# first — checked against the live endpoint on 2026-08-22. 3230 minutes over a
+# 38-gameweek season is a prior of 85.0, which is below the 90 the round-1 row
+# above already proves, so every player in this universe is projected off his
+# history exactly as he was before the prior existed.
 ELEMENT_SUMMARY_JSON = {
     "fixtures": [{"id": 2, "event": 2, "is_home": True}],
     "history": [
         {"element": 5, "fixture": 1, "round": 1, "minutes": 90, "total_points": 12, "bonus": 3},
     ],
-    "history_past": [{"season_name": "2024/25", "total_points": 210}],
+    "history_past": [
+        {
+            "season_name": "2024/25",
+            "element_code": 154561,
+            "start_cost": 120,
+            "end_cost": 125,
+            "total_points": 210,
+            "minutes": 3230,
+            "starts": 36,
+            "goals_scored": 18,
+            "assists": 11,
+            "bonus": 28,
+            "bps": 720,
+            "expected_goals": "16.40",
+            "expected_assists": "9.10",
+        }
+    ],
 }
 
 

@@ -225,6 +225,70 @@ def test_a_history_row_with_no_fixture_id_parses_as_zero():
     assert c.element_history(5)[0].fixture == 0
 
 
+def test_element_summary_returns_this_season_and_the_ones_before_it():
+    # One request, both halves of it: the season so far and the seasons behind
+    # it. The pipeline needs both and the API serves them together.
+    c = make_client({"/api/element-summary/5/": ELEMENT_SUMMARY_JSON})
+
+    history, past = c.element_summary(5)
+
+    assert [(h.round, h.minutes) for h in history] == [(1, 90)]
+    assert [(s.season_name, s.minutes) for s in past] == [("2024/25", 3230)]
+
+
+def test_element_summary_parses_a_full_past_season_row():
+    # The live shape, checked against element-summary on 2026-08-22: five past
+    # seasons, oldest first, each a full season's totals. Only two fields are
+    # declared; the rest must be ignored rather than break the parse.
+    live = {
+        "fixtures": [],
+        "history": [],
+        "history_past": [
+            {
+                "season_name": "2025/26",
+                "element_code": 154561,
+                "start_cost": 55,
+                "end_cost": 62,
+                "total_points": 162,
+                "minutes": 3330,
+                "goals_scored": 0,
+                "assists": 0,
+                "clean_sheets": 19,
+                "goals_conceded": 26,
+                "saves": 60,
+                "bonus": 11,
+                "bps": 633,
+                "influence": "541.6",
+                "creativity": "33.5",
+                "threat": "0.0",
+                "ict_index": "57.5",
+                "starts": 37,
+                "expected_goals": "0.00",
+                "expected_goals_conceded": "27.56",
+            }
+        ],
+    }
+    c = make_client({"/api/element-summary/1/": live})
+
+    _, past = c.element_summary(1)
+
+    assert len(past) == 1
+    assert past[0].season_name == "2025/26"
+    assert past[0].minutes == 3330
+
+
+def test_element_summary_of_a_player_with_no_past_seasons():
+    c = make_client({"/api/element-summary/5/": {"history": [], "fixtures": []}})
+    assert c.element_summary(5) == ([], [])
+
+
+def test_element_history_is_the_first_half_of_the_summary():
+    # The backtest asks for the history alone; it must be the same list, off
+    # the same one request.
+    c = make_client({"/api/element-summary/5/": ELEMENT_SUMMARY_JSON})
+    assert c.element_history(5) == c.element_summary(5)[0]
+
+
 def test_requests_hit_the_real_fpl_base_url():
     seen = []
 

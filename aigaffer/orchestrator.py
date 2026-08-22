@@ -56,8 +56,16 @@ import httpx
 from aigaffer.config import Config
 from aigaffer.data.fpl_api import FplClient
 from aigaffer.data.free_transfers import compute_free_transfers
-from aigaffer.data.models import Bootstrap, Event, Fixture, GwHistory, Player, Squad
-from aigaffer.model.minutes import expected_minutes
+from aigaffer.data.models import (
+    Bootstrap,
+    Event,
+    Fixture,
+    GwHistory,
+    PastSeason,
+    Player,
+    Squad,
+)
+from aigaffer.model.minutes import expected_minutes, season_prior
 from aigaffer.model.xp import PlayerProjection, project_all, projected_events
 from aigaffer.report.render import render_report
 from aigaffer.report.telegram import send_report
@@ -163,6 +171,13 @@ class PipelineInputs:
     fixture by fixture rather than round by round, so no stage after the fetch
     has to know the difference and no two of them can decide it differently.
 
+    ``prior_minutes`` is what each player averaged a gameweek in his last
+    Premier League season, and it comes off the same element-summary response
+    the history does. A player with no Premier League behind him — a signing
+    from abroad, a promoted club's player — has no entry at all rather than a
+    zero, because nothing to read and a season of not playing are different
+    facts and the minutes model treats them differently.
+
     ``chips_used`` is the season's chip history as the API serves it, and it
     is here because two different readers need it: the free-transfer sum,
     which is what a wildcard week means for the bank, and the manager, who
@@ -180,6 +195,7 @@ class PipelineInputs:
     histories: dict[int, list[GwHistory]]
     players: dict[int, Player]
     chips_used: list[dict] = field(default_factory=list)
+    prior_minutes: dict[int, float] = field(default_factory=dict)
 
 
 @dataclass
@@ -356,9 +372,15 @@ def fetch_inputs(cfg: Config, client: FplClient) -> PipelineInputs:
     # /fixtures/ says whether that match has been played.
     fixtures = client.fixtures()
     held = [] if squad is None else squad.player_ids
-    fetched = {pid: _history(client, pid) for pid in history_pool(players, held)}
+    summaries = {pid: _summary(client, pid) for pid in history_pool(players, held)}
+    fetched = {pid: history for pid, (history, _) in summaries.items()}
     histories = _played(fetched, bootstrap, fixtures)
     _warn_if_emptied(fetched, histories)
+    priors = {
+        pid: prior
+        for pid, (_, past) in summaries.items()
+        if (prior := season_prior(past)) is not None
+    }
 
     return PipelineInputs(
         bootstrap=bootstrap,
@@ -369,6 +391,7 @@ def fetch_inputs(cfg: Config, client: FplClient) -> PipelineInputs:
         histories=histories,
         players=players,
         chips_used=chips_used,
+        prior_minutes=priors,
     )
 
 
@@ -385,12 +408,19 @@ def build_projections(
     not as a multiplier, and clamped to a match. Everyone else is projected
     exactly as he would have been.
 
+    Each player's prior goes in beside his history: last season is what holds
+    a returning player up when this one is a gameweek or two old, and a player
+    with no Premier League behind him has no entry, which is the None the
+    model falls back from.
+
     A player nobody fetched a history for has no entry here at all, which
     projects him at zero: not a player the solver will buy, which is the
     point of leaving him out.
     """
     xmins = {
-        pid: expected_minutes(history, inputs.players[pid])
+        pid: expected_minutes(
+            history, inputs.players[pid], inputs.prior_minutes.get(pid)
+        )
         for pid, history in inputs.histories.items()
     }
     for pid, minutes in (minute_overrides or {}).items():
@@ -643,19 +673,23 @@ def _free_transfers(
     return compute_free_transfers(client.transfers(team_id), chips_used, event.id)
 
 
-def _history(client: FplClient, pid: int) -> list[GwHistory]:
-    """One player's season so far, or none of it.
+def _summary(
+    client: FplClient, pid: int
+) -> tuple[list[GwHistory], list[PastSeason]]:
+    """One player's season so far and the seasons behind it, or neither.
 
     Two hundred requests go out on a run and the API is somebody else's; one
     of them refusing after its retries is not a reason to lose the week's
     report. The minutes model already has a way to guess without a history —
     it is what a new signing gets — so the player is projected from his
-    starts rather than dropped.
+    starts rather than dropped. Both halves go together because they come off
+    one response: a player we could not fetch has no last season either, and
+    pretending otherwise would be inventing one.
     """
     try:
-        return client.element_history(pid)
+        return client.element_summary(pid)
     except httpx.HTTPStatusError:
-        return []
+        return [], []
 
 
 def _played(

@@ -17,7 +17,7 @@ from typing import Any
 
 import httpx
 
-from aigaffer.data.models import Bootstrap, Fixture, GwHistory, Squad
+from aigaffer.data.models import Bootstrap, Fixture, GwHistory, PastSeason, Squad
 
 BASE_URL = "https://fantasy.premierleague.com/api"
 USER_AGENT = "aigaffer/0.1 (github.com/markbradley/aigaffer)"
@@ -87,6 +87,21 @@ class FplClient:
         """Chips already played, as ``{"name": ..., "event": ...}`` dicts."""
         return self._get(f"/entry/{team_id}/history/").get("chips", [])
 
-    def element_history(self, player_id: int) -> list[GwHistory]:
+    def element_summary(
+        self, player_id: int
+    ) -> tuple[list[GwHistory], list[PastSeason]]:
+        """One player's season so far, and the seasons behind it.
+
+        Both halves come off the same response, which is the point of asking
+        for them together: a run is a request per player already, and last
+        season's minutes are not worth doubling that.
+        """
         data = self._get(f"/element-summary/{player_id}/")
-        return [GwHistory.model_validate(h) for h in data.get("history", [])]
+        return (
+            [GwHistory.model_validate(h) for h in data.get("history", [])],
+            [PastSeason.model_validate(s) for s in data.get("history_past", [])],
+        )
+
+    def element_history(self, player_id: int) -> list[GwHistory]:
+        """This season only, for the callers that have no use for the rest."""
+        return self.element_summary(player_id)[0]

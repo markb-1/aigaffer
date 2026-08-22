@@ -821,6 +821,100 @@ def test_the_opening_weekend_has_no_history_rather_than_a_history_of_zeroes(tmp_
     assert all(history == [] for history in inputs.histories.values())
 
 
+# --- last season's minutes -------------------------------------------------
+#
+# The fetch carries a prior per player: what he averaged a gameweek in his last
+# Premier League season. It is what the minutes model stands on when this
+# season is too thin to read, and it is the difference between a returning
+# premium projected at a substitute's twenty minutes in GW1 and one projected
+# at the eighty-five he actually plays.
+
+
+def past_season(minutes: int) -> list[dict]:
+    return [{"season_name": "2024/25", "minutes": minutes, "total_points": 180}]
+
+
+def rested_opener_routes(minutes: int | None = 3230) -> dict:
+    """GW1 played, nobody in this squad any of it, GW2 next.
+
+    Every season-to-date counter is zero, because after one gameweek a player
+    who did not feature has started nothing — which is the state that leaves
+    the starts guess with nothing to say. ``minutes`` is what last season had
+    to say instead; None is a player with no Premier League behind him.
+    """
+    bootstrap = copy.deepcopy(PIPELINE_BOOTSTRAP_JSON)
+    for element in bootstrap["elements"]:
+        element.update(minutes=0, starts=0, total_points=0)
+
+    summary_payload = summary((1, 0))
+    if minutes is not None:
+        summary_payload["history_past"] = past_season(minutes)
+    routes = pipeline_routes(bootstrap)
+    routes.update(
+        {
+            f"/api/element-summary/{element['id']}/": summary_payload
+            for element in PIPELINE_ELEMENTS_JSON
+        }
+    )
+    return routes
+
+
+def test_the_fetch_carries_last_seasons_minutes_a_gameweek(tmp_path):
+    # 3230 minutes over 38 gameweeks is 85.0.
+    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path)
+
+    inputs = fetch_inputs(cfg, make_client(pipeline_routes()))
+
+    assert inputs.prior_minutes[FERRER] == pytest.approx(85.0)
+
+
+def test_a_player_with_no_premier_league_past_has_no_prior(tmp_path):
+    # Absent rather than zero: nothing to read is not the same as a season of
+    # not playing, and the minutes model has to be able to tell them apart.
+    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path)
+    routes = pipeline_routes()
+    routes[f"/api/element-summary/{FERRER}/"] = summary((1, 90))
+
+    inputs = fetch_inputs(cfg, make_client(routes))
+
+    assert FERRER not in inputs.prior_minutes
+    assert inputs.prior_minutes  # everybody else still has one
+
+
+def test_last_season_lifts_a_returning_premium_the_opener_rested(tmp_path):
+    # The week the gaffer spent overriding seven players by hand, with the
+    # evidence he was overriding it with now in the payload. One played
+    # gameweek, none of it his, and no starts to fall back on: the old floor
+    # was a substitute's twenty. 3230 minutes last season is 85.0 a gameweek.
+    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path)
+    inputs = fetch_inputs(cfg, make_client(rested_opener_routes()))
+
+    xmins, _ = build_projections(inputs, cfg)
+
+    assert xmins[FERRER] == pytest.approx(85.0)
+
+
+def test_a_promoted_clubs_player_still_falls_back_on_his_starts(tmp_path):
+    # Same week, same rested opener, and no season behind him: the old
+    # behaviour, unchanged, because there is nothing better to have.
+    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path)
+    inputs = fetch_inputs(cfg, make_client(rested_opener_routes(minutes=None)))
+
+    xmins, _ = build_projections(inputs, cfg)
+
+    assert inputs.prior_minutes == {}
+    assert xmins[FERRER] == 20.0
+
+
+def test_a_prior_does_not_overrule_a_season_that_has_been_played(seam):
+    # The ordinary universe: one played gameweek of ninety minutes, and a
+    # prior of 85 underneath it. The floor is a floor.
+    xmins, _ = build_projections(seam.inputs, seam.cfg)
+
+    assert seam.inputs.prior_minutes[FERRER] == pytest.approx(85.0)
+    assert xmins[FERRER] == 90.0
+
+
 # --- when the filter takes everything -------------------------------------
 #
 # The cut above is the right one and it is still a cut, made against a payload

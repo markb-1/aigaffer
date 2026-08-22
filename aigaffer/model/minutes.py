@@ -25,21 +25,31 @@ cause was rows for matches nobody had played, and the cure is in
 contract here stays what it says: the mean of the entries given.
 
 That leaves the blend the job it is actually good for — a thin history of
-played gameweeks — and leaves one limitation, which is worth being plain
-about. With the phantom rows gone, the opening weekend has no history at all,
-so every player falls back on ``starts``; and ``starts`` is season-to-date
-like everything else in the payload, so in GW1 it is zero for everybody. The
-floor under a £14.5m striker is then the bench estimate: twenty minutes of a
-man who will play ninety. From GW2 there is a played gameweek to read and the
-blend bites, but the opening weekend is the week nothing here can rescue.
-Nothing in the data can: last season is not in the payload, and reading a role
-off a price or off ``total_points`` would be a guess wearing the clothes of a
-measurement. Prior-season history is the fix, and it is not written yet; the
-mitigation until it is is the gaffer, who reads the team news and sets the
-minutes by hand.
+played gameweeks — and left, for a while, one limitation. With the phantom
+rows gone, the opening weekend has no history at all, so every player fell
+back on ``starts``; and ``starts`` is season-to-date like everything else in
+the bootstrap, so in GW1 it is zero for everybody. The floor under a £14.5m
+striker was then the bench estimate: twenty minutes of a man who will play
+ninety.
+
+Last season is the fix, and it *is* in the payload — one row a season in
+element-summary's ``history_past``, with the season's minutes on it. Divided
+by a season's gameweeks it is what he actually played a week the last time
+anybody watched, which is a measurement rather than a guess, and
+:func:`season_prior` is where the division happens. So the floor under a thin
+August is his own last season where there is one, and the 75/20 guess only
+where there is not: a signing from abroad, a promoted club's player, a
+teenager. Those are still understated in GW1 and the gaffer's own minute
+overrides are still the mitigation for them.
+
+Two things the prior is not. It is not a ceiling — three gameweeks of this
+season still speak for themselves, and two good ones still beat it. And it is
+not a claim about a role that has changed: a player sold into a smaller part,
+or bought into a bigger one, is described by last season for as long as it
+takes this one to reach :data:`BLEND_GAMEWEEKS`, which is three weeks.
 """
 
-from aigaffer.data.models import GwHistory, Player
+from aigaffer.data.models import GwHistory, PastSeason, Player
 
 # Statuses that rule a player out: injured, suspended, unavailable (left the
 # league), not eligible. 'a' is available and 'd' is doubtful.
@@ -49,12 +59,46 @@ FORM_GAMEWEEKS = 5
 STARTER_FALLBACK_MINUTES = 75.0
 BENCH_FALLBACK_MINUTES = 20.0
 
+# A match. Nothing this module produces is ever longer than one, whatever a
+# season total divided by a season's gameweeks comes out at.
+FULL_MATCH = 90.0
+
 # How many gameweeks of history it takes before the history is the whole
 # answer. Under this many, the starts-based estimate is a floor beneath it.
 # Three is where a run of zeroes stops looking like a rest and starts looking
 # like a player who has lost his place — and it is short enough that the floor
 # is gone before anybody is planning a season on it.
 BLEND_GAMEWEEKS = 3
+
+# What a season's minutes are divided by to become minutes a gameweek. Every
+# player is given the full 38 whether or not he was at the club for all of
+# them, which understates a January signing — his half-season of minutes
+# spread over a whole one. The payload has no games-available column to do
+# better with, and the error is in the safe direction: a prior that is too low
+# is a floor that does not lift, not a projection that is too high.
+SEASON_GAMEWEEKS = 38
+
+
+def season_prior(past: list[PastSeason]) -> float | None:
+    """Last season's minutes a gameweek, or None if there was no last season.
+
+    ``past`` is element-summary's ``history_past``, oldest first, so the
+    player's most recent Premier League season is the last row. It is not
+    necessarily *last* season — a player who spent a year abroad has a gap —
+    and it is still the most recent thing anybody measured about him, which is
+    what the floor wants.
+
+    None and 0.0 are different answers and callers must keep them apart. None
+    is nothing to read: no Premier League behind him, so the ``starts`` guess
+    stands. 0.0 is a season he was registered for and never played, which is
+    thin evidence and still evidence — and a player projected at nothing is a
+    player the solver will not buy, which is the right way round to be wrong
+    about him.
+    """
+    if not past:
+        return None
+    minutes = past[-1].minutes / SEASON_GAMEWEEKS
+    return min(FULL_MATCH, max(0.0, minutes))
 
 
 def availability(player: Player) -> float:
@@ -68,35 +112,44 @@ def availability(player: Player) -> float:
     return 0.0 if player.status in RULED_OUT_STATUSES else 1.0
 
 
-def expected_minutes(history: list[GwHistory], player: Player) -> float:
+def expected_minutes(
+    history: list[GwHistory], player: Player, prior: float | None = None
+) -> float:
     """Minutes the player is expected to play in the next gameweek.
 
     ``history`` is the player's **played** gameweeks in order; only the last
     :data:`FORM_GAMEWEEKS` count, so a lost or won place shows up fast. Every
     entry is taken as a match he was available for, which is why a gameweek
     that has only been entered must never reach here — the caller cuts those
-    out (:func:`aigaffer.orchestrator._played`). With no history at all —
-    pre-season, a new signing, or a deadline that has gone with nothing played
-    behind it — we fall back on whether he has started a match this season.
+    out (:func:`aigaffer.orchestrator._played`).
 
-    That fallback is also a floor for the first :data:`BLEND_GAMEWEEKS` weeks,
-    and the higher of the two wins: one rotated gameweek should not overrule
-    the fact that he has started, and a full ninety should not be dragged down
-    to 75 by it. From the third gameweek on the mean stands alone.
+    ``prior`` is what he averaged a gameweek in his last Premier League season
+    (:func:`season_prior`), and it is the floor beneath a history too thin to
+    stand on its own: under :data:`BLEND_GAMEWEEKS` gameweeks, whichever of the
+    mean and the floor is higher wins, and from the third gameweek the mean
+    stands alone. It replaces a guess with a measurement rather than adding to
+    it — where there is a prior the ``starts`` fallback is not consulted at
+    all, in either direction. A first-choice player rested on the opening
+    weekend is worth his eighty-five minutes and not a substitute's twenty; a
+    fringe player is worth his own thirty and not a starter's seventy-five.
 
-    The floor is only as good as the count it is read off. Under three
-    gameweeks the season's ``starts`` is at most two, and in GW1 it is zero for
-    everybody — so the opening weekend lands on the bench estimate, which is
-    the limitation the module docstring sets out and the gaffer's own minute
-    overrides exist to cover.
+    None is the case the prior cannot help: a signing from abroad, a promoted
+    club's player, a teenager — nobody with a Premier League season behind him.
+    Then the floor is the old one, whether he has started a match *this*
+    season, and in GW1 that count is zero for everybody, so those players are
+    still projected at a substitute's minutes on the opening weekend. It is
+    also the default, so a caller with no opinion about last season — the
+    backtest, which is scoring a gameweek in the middle of one — gets exactly
+    the model it had before.
     """
     fallback = (
         STARTER_FALLBACK_MINUTES if player.starts > 0 else BENCH_FALLBACK_MINUTES
     )
+    floor = fallback if prior is None else prior
     if not history:
-        baseline = fallback
+        baseline = floor
     else:
         recent = history[-FORM_GAMEWEEKS:]
         mean = sum(gw.minutes for gw in recent) / len(recent)
-        baseline = max(mean, fallback) if len(history) < BLEND_GAMEWEEKS else mean
+        baseline = max(mean, floor) if len(history) < BLEND_GAMEWEEKS else mean
     return baseline * availability(player)
