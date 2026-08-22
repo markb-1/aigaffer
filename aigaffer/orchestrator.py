@@ -143,13 +143,13 @@ class PipelineInputs:
     (see :func:`history_pool`) and nobody else; a player missing from it is a
     player nobody is thinking of buying.
 
-    ``histories`` holds **finished** gameweeks only, and that is a promise
-    every reader of it may rely on. The API adds a history row the moment a
-    deadline goes — 0 minutes, 0 points, for a match that kicks off two days
-    later — and a row for a match nobody has played is not a gameweek a
-    player sat out. :func:`fetch_inputs` drops them on the way in (see
-    :func:`_played`), so no stage after the fetch has to know the difference
-    and no two of them can decide it differently.
+    ``histories`` holds **played matches** only, and that is a promise every
+    reader of it may rely on. The API adds a history row the moment a deadline
+    goes — 0 minutes, 0 points, for a match that kicks off two days later —
+    and a row for a match nobody has played is not a gameweek a player sat
+    out. :func:`fetch_inputs` drops them on the way in (see :func:`_played`),
+    fixture by fixture rather than round by round, so no stage after the fetch
+    has to know the difference and no two of them can decide it differently.
 
     ``chips_used`` is the season's chip history as the API serves it, and it
     is here because two different readers need it: the free-transfer sum,
@@ -319,10 +319,12 @@ def fetch_inputs(cfg: Config, client: FplClient) -> PipelineInputs:
     per player — and the bootstrap and the picks are asked for first because
     they are what decides whose history is worth asking for.
 
-    The histories are also cut down to the gameweeks that have been played
-    before they are handed on: what the API serves includes rounds that have
+    The histories are also cut down to the matches that have been played
+    before they are handed on: what the API serves includes fixtures that have
     only been *entered*, and reading those as a season is the whole of the
-    bug :func:`_played` exists to fix.
+    bug :func:`_played` exists to fix. That is why the fixtures are asked for
+    ahead of the histories rather than after them — they are what the cut is
+    made against.
     """
     bootstrap = client.bootstrap()
     event = bootstrap.next_event()
@@ -337,10 +339,13 @@ def fetch_inputs(cfg: Config, client: FplClient) -> PipelineInputs:
     chips_used = [] if squad is None else client.chips_used(cfg.team_id)
     free_transfers = _free_transfers(client, cfg.team_id, squad, event, chips_used)
 
+    # The fixtures come before the histories now, because the histories are cut
+    # against them: a history row names the match it belongs to, and only
+    # /fixtures/ says whether that match has been played.
+    fixtures = client.fixtures()
     held = [] if squad is None else squad.player_ids
     fetched = {pid: _history(client, pid) for pid in history_pool(players, held)}
-    histories = _played(fetched, bootstrap)
-    fixtures = client.fixtures()
+    histories = _played(fetched, bootstrap, fixtures)
 
     return PipelineInputs(
         bootstrap=bootstrap,
@@ -641,9 +646,11 @@ def _history(client: FplClient, pid: int) -> list[GwHistory]:
 
 
 def _played(
-    histories: dict[int, list[GwHistory]], bootstrap: Bootstrap
+    histories: dict[int, list[GwHistory]],
+    bootstrap: Bootstrap,
+    fixtures: list[Fixture],
 ) -> dict[int, list[GwHistory]]:
-    """The histories with the gameweeks nobody has played taken out.
+    """The histories with the matches nobody has played taken out.
 
     A history row appears the moment the deadline goes, not the moment the
     match does: for the hours or days between the two it says 0 minutes and 0
@@ -655,20 +662,36 @@ def _played(
 
     Nothing downstream can tell those two rows apart — a 0 is a 0 — and the
     minutes model averages them as gameweeks the player sat out, so a fit
-    starter is marked down or written off for a match nobody has played. The
-    cut is made here, once, on the only thing in the payload that says
-    whether a round has happened: the event's own ``finished`` flag.
+    starter is marked down or written off for a match nobody has played.
 
-    An event finishes when every one of its matches has, so a round in
-    progress is dropped whole rather than counted half — a Saturday
-    afternoon's evidence is not lost so much as held until Monday, and the
-    two runs a week the schedule makes both happen with the last gameweek
-    long finished. Conservative, in the direction the model can recover
-    from: the minutes it does not have it falls back on ``starts`` for.
+    The cut is made per **fixture**, which is the grain the question is
+    actually asked at. A row carries the id of the match it belongs to, and
+    :attr:`~aigaffer.data.models.Fixture.played` says whether that match has
+    happened; a gameweek that runs from Saturday to Monday is then half
+    evidence and half phantom rather than all one or the other. The rule this
+    replaces was the event's own ``finished`` flag, which only goes up once
+    every match in the round has been played and so threw Saturday's real
+    minutes away with Monday's zeroes. A double gameweek is two rows in the
+    same round, judged one at a time.
+
+    A row with no fixture id at all falls back on that older rule — its round
+    is in the finished-events set, or it goes. Payloads that predate the field
+    and any surprise from upstream then land on the conservative side rather
+    than being kept on a ``fixture`` of 0 that matches nothing, and the same
+    goes for a row naming a fixture the payload does not carry. Conservative
+    in the direction the model can recover from: the minutes it does not have
+    it falls back on ``starts`` and last season for.
     """
     finished = {event.id for event in bootstrap.events if event.finished}
+    played = {fixture.id for fixture in fixtures if fixture.played}
+
+    def happened(entry: GwHistory) -> bool:
+        if not entry.fixture:
+            return entry.round in finished
+        return entry.fixture in played
+
     return {
-        pid: [entry for entry in history if entry.round in finished]
+        pid: [entry for entry in history if happened(entry)]
         for pid, history in histories.items()
     }
 

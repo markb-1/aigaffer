@@ -107,11 +107,14 @@ def test_a_deadline_that_has_gone_is_no_window():
 # --- the pipeline ----------------------------------------------------------
 
 
-def pipeline_routes(bootstrap: dict = PIPELINE_BOOTSTRAP_JSON) -> dict:
+def pipeline_routes(
+    bootstrap: dict = PIPELINE_BOOTSTRAP_JSON,
+    fixtures: list[dict] = PIPELINE_FIXTURES_JSON,
+) -> dict:
     """Every endpoint a run touches, for the fifteen-man universe."""
     return {
         "/api/bootstrap-static/": bootstrap,
-        "/api/fixtures/": PIPELINE_FIXTURES_JSON,
+        "/api/fixtures/": fixtures,
         PICKS_PATH: PICKS_15_JSON,
         TRANSFERS_PATH: TRANSFERS_JSON,
         HISTORY_PATH: HISTORY_JSON,
@@ -590,8 +593,10 @@ def test_a_solve_with_no_squad_drafts_a_fifteen(tmp_path):
 #
 # A row for a match nobody has played is not a gameweek the player sat out,
 # and the fetch takes them out so that nothing downstream has to know the
-# difference. The rule is the event's own ``finished`` flag, which is the
-# only thing in the payload that says whether a round has happened.
+# difference. The rule is the row's own fixture: a history row names the match
+# it belongs to, and /fixtures/ says whether that match has been played. A row
+# that carries no fixture id at all falls back on the event's ``finished``
+# flag, which is the coarser thing the filter used to be written on.
 
 
 def midweek_bootstrap() -> dict:
@@ -623,28 +628,60 @@ def opening_weekend_bootstrap() -> dict:
     return payload
 
 
-def summary(*rounds: tuple[int, int]) -> dict:
-    """An element-summary from ``(round, minutes)`` pairs."""
+# The pipeline universe has three fixtures a gameweek; this is one of each, and
+# it is the fixture a history row for that round carries unless a test says
+# otherwise. Ferrer's club (team 1) plays in every one of them.
+ROUND_FIXTURE = {1: 1, 2: 4, 3: 7}
+
+
+def fixtures_played(*played: int, provisional: tuple[int, ...] = ()) -> list[dict]:
+    """The pipeline universe's fixtures, with exactly ``played`` finished.
+
+    ``provisional`` are the ones at full time and not yet data-checked — the
+    live shape of a Saturday evening, where the minutes are in the payload and
+    ``finished`` is still false.
+    """
+    payload = copy.deepcopy(PIPELINE_FIXTURES_JSON)
+    for fixture in payload:
+        fixture["finished"] = fixture["id"] in played
+        fixture["finished_provisional"] = (
+            fixture["finished"] or fixture["id"] in provisional
+        )
+    return payload
+
+
+def summary(*rounds: tuple[int, ...]) -> dict:
+    """An element-summary from ``(round, minutes)`` pairs.
+
+    A row names the fixture it belongs to and the fetch's filter reads it, so a
+    pair takes that round's fixture from :data:`ROUND_FIXTURE`. A
+    ``(round, minutes, fixture)`` triple says which one instead — 0 for a
+    payload that carried no fixture id at all.
+    """
     return {
         "fixtures": [{"id": 7, "event": 3, "is_home": True}],
         "history": [
             {
                 "element": 5,
-                "fixture": rnd,
-                "round": rnd,
-                "minutes": minutes,
+                "fixture": row[2] if len(row) > 2 else ROUND_FIXTURE[row[0]],
+                "round": row[0],
+                "minutes": row[1],
                 "total_points": 0,
                 "bonus": 0,
             }
-            for rnd, minutes in rounds
+            for row in rounds
         ],
         "history_past": [],
     }
 
 
-def unplayed_routes(bootstrap: dict, *rounds: tuple[int, int]) -> dict:
+def unplayed_routes(
+    bootstrap: dict,
+    *rounds: tuple[int, ...],
+    fixtures: list[dict] = PIPELINE_FIXTURES_JSON,
+) -> dict:
     """The universe of ``bootstrap``, with ``rounds`` as everybody's history."""
-    routes = pipeline_routes(bootstrap)
+    routes = pipeline_routes(bootstrap, fixtures)
     # The current gameweek moves, and the picks are asked for by its id.
     routes[f"/api/entry/{TEAM_ID}/event/2/picks/"] = PICKS_15_JSON
     routes.update(
@@ -684,6 +721,81 @@ def test_an_unplayed_round_does_not_drag_the_minutes_down(tmp_path):
     assert xmins[FERRER] == 90.0
 
 
+def test_a_played_fixture_inside_an_unfinished_round_is_kept(tmp_path):
+    # The half the event-level cut threw away. GW2 runs Saturday to Monday:
+    # Ferrer's match was played on the Saturday and his real eighty-five
+    # minutes are already in the payload, while the Monday match has a row of
+    # nothing. The event is unfinished either way, so a rule written on the
+    # event drops the eighty-five along with the phantom.
+    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path)
+    routes = unplayed_routes(
+        midweek_bootstrap(),
+        (1, 90),
+        (2, 85, 4),  # played on the Saturday
+        (2, 0, 5),  # kicks off on the Monday
+        fixtures=fixtures_played(1, 2, 3, 4),
+    )
+
+    inputs = fetch_inputs(cfg, make_client(routes))
+
+    assert inputs.histories
+    for history in inputs.histories.values():
+        assert [(entry.round, entry.minutes) for entry in history] == [(1, 90), (2, 85)]
+
+
+def test_a_fixture_at_full_time_counts_before_it_is_data_checked(tmp_path):
+    # ``finished`` goes up when the round's data is checked, which is hours or
+    # a day after the match. ``finished_provisional`` goes up at full time,
+    # which is when the minutes appear. Checked live on 2026-08-22: a match
+    # kicked off at 19:00 the previous evening still read ``finished: false``
+    # with 90 minutes on the clock and its history rows served.
+    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path)
+    routes = unplayed_routes(
+        midweek_bootstrap(),
+        (1, 90),
+        (2, 85, 4),
+        fixtures=fixtures_played(1, 2, 3, provisional=(4,)),
+    )
+
+    inputs = fetch_inputs(cfg, make_client(routes))
+
+    for history in inputs.histories.values():
+        assert [entry.round for entry in history] == [1, 2]
+
+
+def test_a_row_with_no_fixture_id_falls_back_on_its_round(tmp_path):
+    # Nothing is finished in this fixtures payload, so a row judged on its
+    # fixture would be dropped whatever round it is in. These rows carry no
+    # fixture id, so the event rule decides: GW1 is finished and GW2 is not.
+    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path)
+    routes = unplayed_routes(
+        midweek_bootstrap(),
+        (1, 90, 0),
+        (2, 0, 0),
+        fixtures=fixtures_played(),
+    )
+
+    inputs = fetch_inputs(cfg, make_client(routes))
+
+    assert inputs.histories
+    for history in inputs.histories.values():
+        assert [entry.round for entry in history] == [1]
+
+
+def test_a_row_naming_a_fixture_nobody_has_heard_of_is_dropped(tmp_path):
+    # Never silently kept: an id the fixtures payload does not carry is not
+    # evidence that a match was played, and its round has not finished either.
+    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path)
+    routes = unplayed_routes(
+        midweek_bootstrap(), (1, 90), (2, 0, 4242), fixtures=fixtures_played(1, 2, 3)
+    )
+
+    inputs = fetch_inputs(cfg, make_client(routes))
+
+    for history in inputs.histories.values():
+        assert [entry.round for entry in history] == [1]
+
+
 def test_a_history_of_played_rounds_is_kept_whole(seam):
     # The other half of the claim: the filter takes out what has not happened
     # and nothing else. The ordinary universe has one finished gameweek behind
@@ -699,7 +811,9 @@ def test_the_opening_weekend_has_no_history_rather_than_a_history_of_zeroes(tmp_
     # kept, and the minutes model is left with the empty history it knows how
     # to fall back from.
     cfg = Config(team_id=TEAM_ID, state_dir=tmp_path)
-    routes = unplayed_routes(opening_weekend_bootstrap(), (1, 0))
+    routes = unplayed_routes(
+        opening_weekend_bootstrap(), (1, 0), fixtures=fixtures_played()
+    )
 
     inputs = fetch_inputs(cfg, make_client(routes))
 
@@ -715,7 +829,9 @@ def test_a_deadline_that_has_gone_does_not_bench_a_fit_starter(tmp_path):
     # that sent the gaffer overriding seven players by hand.
     store = Store(tmp_path / "aigaffer.db")
     cfg = Config(team_id=TEAM_ID, state_dir=tmp_path)
-    routes = unplayed_routes(opening_weekend_bootstrap(), (1, 0))
+    routes = unplayed_routes(
+        opening_weekend_bootstrap(), (1, 0), fixtures=fixtures_played()
+    )
 
     report = run_pipeline(cfg, make_client(routes), store, "scout", send=False)
     decision = store.last_runs(1)[0]["decision"]

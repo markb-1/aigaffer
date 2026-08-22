@@ -288,11 +288,20 @@ BOOTSTRAP_JSON = {
 # GW1: Ashford v Cravenside. GW2: Ashford v Brightwood and Brightwood v
 # Cravenside, so Brightwood has a double and Ashford/Cravenside a single.
 # Fixture 4 is postponed (``event`` is null).
+#
+# ``finished_provisional`` is the flag the live payload raises at full time,
+# against ``finished``, which waits for the round's data check hours later.
+# Every fixture here is one or the other, never provisional-only: the tests
+# that turn on the gap between them build their own payloads.
 FIXTURES_JSON = [
-    {"id": 1, "event": 1, "team_h": 1, "team_a": 3, "finished": True},
-    {"id": 2, "event": 2, "team_h": 1, "team_a": 2, "finished": False},
-    {"id": 3, "event": 2, "team_h": 2, "team_a": 3, "finished": False},
-    {"id": 4, "event": None, "team_h": 3, "team_a": 1, "finished": False},
+    {"id": 1, "event": 1, "team_h": 1, "team_a": 3, "finished": True,
+     "finished_provisional": True},
+    {"id": 2, "event": 2, "team_h": 1, "team_a": 2, "finished": False,
+     "finished_provisional": False},
+    {"id": 3, "event": 2, "team_h": 2, "team_a": 3, "finished": False,
+     "finished_provisional": False},
+    {"id": 4, "event": None, "team_h": 3, "team_a": 1, "finished": False,
+     "finished_provisional": False},
 ]
 
 # The whole 8-player universe as one squad, captained by Ferrer (5) with
@@ -470,16 +479,26 @@ PIPELINE_BOOTSTRAP_JSON = {
 # Every club plays once in GW1, GW2 and GW3, so no side is projected at
 # nothing for want of a fixture. Fixture 10 is postponed (``event`` is null).
 PIPELINE_FIXTURES_JSON = [
-    {"id": 1, "event": 1, "team_h": 1, "team_a": 3, "finished": True},
-    {"id": 2, "event": 1, "team_h": 2, "team_a": 4, "finished": True},
-    {"id": 3, "event": 1, "team_h": 5, "team_a": 6, "finished": True},
-    {"id": 4, "event": 2, "team_h": 1, "team_a": 2, "finished": False},
-    {"id": 5, "event": 2, "team_h": 3, "team_a": 5, "finished": False},
-    {"id": 6, "event": 2, "team_h": 4, "team_a": 6, "finished": False},
-    {"id": 7, "event": 3, "team_h": 2, "team_a": 1, "finished": False},
-    {"id": 8, "event": 3, "team_h": 5, "team_a": 3, "finished": False},
-    {"id": 9, "event": 3, "team_h": 6, "team_a": 4, "finished": False},
-    {"id": 10, "event": None, "team_h": 3, "team_a": 6, "finished": False},
+    {"id": 1, "event": 1, "team_h": 1, "team_a": 3, "finished": True,
+     "finished_provisional": True},
+    {"id": 2, "event": 1, "team_h": 2, "team_a": 4, "finished": True,
+     "finished_provisional": True},
+    {"id": 3, "event": 1, "team_h": 5, "team_a": 6, "finished": True,
+     "finished_provisional": True},
+    {"id": 4, "event": 2, "team_h": 1, "team_a": 2, "finished": False,
+     "finished_provisional": False},
+    {"id": 5, "event": 2, "team_h": 3, "team_a": 5, "finished": False,
+     "finished_provisional": False},
+    {"id": 6, "event": 2, "team_h": 4, "team_a": 6, "finished": False,
+     "finished_provisional": False},
+    {"id": 7, "event": 3, "team_h": 2, "team_a": 1, "finished": False,
+     "finished_provisional": False},
+    {"id": 8, "event": 3, "team_h": 5, "team_a": 3, "finished": False,
+     "finished_provisional": False},
+    {"id": 9, "event": 3, "team_h": 6, "team_a": 4, "finished": False,
+     "finished_provisional": False},
+    {"id": 10, "event": None, "team_h": 3, "team_a": 6, "finished": False,
+     "finished_provisional": False},
 ]
 
 # A legal fifteen worth £97.2m with £2.8m in the bank: 4-4-2, Ferrer captain

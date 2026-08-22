@@ -66,12 +66,31 @@ class Event(BaseModel):
 
 
 class Fixture(BaseModel):
-    """``event`` is None for a fixture that has not been scheduled yet."""
+    """``event`` is None for a fixture that has not been scheduled yet.
+
+    Both played-flags are declared because the API raises them hours apart and
+    only the later one is called ``finished``. ``finished_provisional`` goes up
+    at full time; ``finished`` waits for the round's data check, which is when
+    the bonus points are confirmed. Checked live on 2026-08-22: a match that
+    kicked off at 19:00 the previous evening still read ``finished: false``
+    seventeen hours later, with ``finished_provisional: true``, ``minutes: 90``
+    and its history rows already served. Both default to False, so a payload
+    that carries neither describes a match nobody has played.
+    """
 
     id: int
     event: int | None
     team_h: int
     team_a: int
+    finished: bool = False
+    finished_provisional: bool = False
+
+    @property
+    def played(self) -> bool:
+        """Has this match actually been played? Full time is enough — the
+        minutes are final by then, and waiting for the data check is waiting a
+        day for a number that will not change."""
+        return self.finished or self.finished_provisional
 
 
 class Bootstrap(BaseModel):
@@ -106,8 +125,17 @@ class Squad(BaseModel):
 
 
 class GwHistory(BaseModel):
-    """One gameweek of a player's season history."""
+    """One gameweek of a player's season history.
+
+    ``fixture`` is the match the row belongs to, and it is what lets a reader
+    tell a gameweek that has been played from one that has only been entered
+    (:func:`aigaffer.orchestrator._played`). A double gameweek is two rows with
+    the same ``round`` and different fixtures, and one of them can be played
+    while the other has not kicked off. It defaults to 0 — no fixture — so that
+    a payload without it is judged on its round instead of silently kept.
+    """
 
     round: int
     minutes: int
     total_points: int
+    fixture: int = 0

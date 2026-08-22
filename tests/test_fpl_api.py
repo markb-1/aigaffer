@@ -128,6 +128,48 @@ def test_fixtures_parses_including_unscheduled():
     ]
 
 
+def test_fixtures_carry_whether_the_match_has_been_played():
+    # Both flags, because the API sets them hours apart: ``finished_provisional``
+    # goes up at full time and ``finished`` only once the round's data is
+    # checked. Fixture 1 is the played one in this universe.
+    c = make_client({"/api/fixtures/": FIXTURES_JSON})
+    fixtures = {f.id: f for f in c.fixtures()}
+    assert fixtures[1].finished is True
+    assert fixtures[1].played is True
+    assert fixtures[2].finished is False
+    assert fixtures[2].played is False
+
+
+def test_a_fixture_finished_only_provisionally_counts_as_played():
+    # The live shape on 2026-08-22: a match kicked off the previous evening,
+    # ninety minutes on the clock and its minutes already in element-summary,
+    # still ``finished: false`` seventeen hours later.
+    c = make_client(
+        {
+            "/api/fixtures/": [
+                {
+                    "id": 1,
+                    "event": 1,
+                    "team_h": 1,
+                    "team_a": 3,
+                    "finished": False,
+                    "finished_provisional": True,
+                    "started": True,
+                    "minutes": 90,
+                }
+            ]
+        }
+    )
+    assert c.fixtures()[0].played is True
+
+
+def test_a_fixture_payload_with_neither_flag_has_not_been_played():
+    # Both default to False: an older payload, or a field the API renames, must
+    # never read as a match that has happened.
+    c = make_client({"/api/fixtures/": [{"id": 1, "event": 1, "team_h": 1, "team_a": 3}]})
+    assert c.fixtures()[0].played is False
+
+
 def test_picks_maps_bank():
     c = make_client({"/api/entry/99/event/1/picks/": PICKS_JSON})
     squad = c.picks(99, 1)
@@ -172,6 +214,15 @@ def test_element_history_parses():
     history = c.element_history(5)
     assert len(history) == 1
     assert (history[0].round, history[0].minutes, history[0].total_points) == (1, 90, 12)
+    # The fixture the row belongs to, which is what the fetch's filter reads.
+    assert history[0].fixture == 1
+
+
+def test_a_history_row_with_no_fixture_id_parses_as_zero():
+    payload = copy.deepcopy(ELEMENT_SUMMARY_JSON)
+    del payload["history"][0]["fixture"]
+    c = make_client({"/api/element-summary/5/": payload})
+    assert c.element_history(5)[0].fixture == 0
 
 
 def test_requests_hit_the_real_fpl_base_url():
