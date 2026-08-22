@@ -74,8 +74,14 @@ BLEND_GAMEWEEKS = 3
 # player is given the full 38 whether or not he was at the club for all of
 # them, which understates a January signing — his half-season of minutes
 # spread over a whole one. The payload has no games-available column to do
-# better with, and the error is in the safe direction: a prior that is too low
-# is a floor that does not lift, not a projection that is too high.
+# better with.
+#
+# The error is one-directional: a prior that is too low is a floor that does
+# not lift, never a projection that is too high. One-directional is not the
+# same as harmless, and it is worth being plain about which. For a player we do
+# not hold, understating him means a transfer not made. For a player already in
+# the fifteen it means the lineup benches him, or the shortlist puts him on the
+# sell side — a real cost, paid on somebody we chose on purpose.
 SEASON_GAMEWEEKS = 38
 
 
@@ -91,9 +97,12 @@ def season_prior(past: list[PastSeason]) -> float | None:
     None and 0.0 are different answers and callers must keep them apart. None
     is nothing to read: no Premier League behind him, so the ``starts`` guess
     stands. 0.0 is a season he was registered for and never played, which is
-    thin evidence and still evidence — and a player projected at nothing is a
-    player the solver will not buy, which is the right way round to be wrong
-    about him.
+    thin evidence and still evidence.
+
+    0.0 is also the hardest thing this function says about anybody, so: a
+    player floored at nothing is one the solver will not buy, and one it will
+    bench or sell if he is already in the fifteen. The second half is the one
+    that costs something. See :data:`SEASON_GAMEWEEKS`.
     """
     if not past:
         return None
@@ -141,6 +150,15 @@ def expected_minutes(
     also the default, so a caller with no opinion about last season — the
     backtest, which is scoring a gameweek in the middle of one — gets exactly
     the model it had before.
+
+    A prior below the guess it replaces is the case to watch. A returner whose
+    last season was 418 minutes floors at 11 where "he has started once" used
+    to floor him at 75, so a thin history of 20 minutes now stands instead of
+    being lifted. That is the trade the prior is for — real minutes over a
+    guess — but the player it is made about may be one we already hold, and
+    then understating him is not a transfer not made: it is an eleven he is
+    left out of, or a sale the shortlist recommends. Three gameweeks clears it;
+    until then it is what the gaffer's minute overrides are for.
     """
     fallback = (
         STARTER_FALLBACK_MINUTES if player.starts > 0 else BENCH_FALLBACK_MINUTES

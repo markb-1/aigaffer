@@ -219,6 +219,25 @@ def test_a_prior_replaces_the_starts_guess_rather_than_stacking_on_it():
     assert expected_minutes([], fringe, prior=12.0) == 12.0
 
 
+def test_a_held_returner_with_a_poor_last_season_is_trusted_less_than_a_start():
+    # The quadrant where the prior costs a player rather than saving him, and
+    # the one that matters most because it can be a player we already hold.
+    # 418 minutes last season is 11.0 a gameweek; he has started once this
+    # season and played 20 minutes of it. The starts guess floored him at 75,
+    # so the 20 he actually played was overruled. His own record floors him at
+    # 11, so the 20 stands.
+    #
+    # Deliberate, and the direction the whole rider runs in: 418 real minutes
+    # is a measurement and "he started once" is a guess. It is also the case to
+    # watch — see the note in ``expected_minutes`` about a player already in
+    # the fifteen, for whom an understated count is a benching and not merely a
+    # transfer not made.
+    held = player(starts=1)
+
+    assert expected_minutes(history(20), held) == 75.0
+    assert expected_minutes(history(20), held, prior=418 / 38) == 20.0
+
+
 def test_a_short_history_above_the_prior_is_kept():
     # The prior is a floor under thin evidence, not a ceiling on it: two full
     # gameweeks beat a season of rotation.

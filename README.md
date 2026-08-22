@@ -321,11 +321,20 @@ These are deliberate. Do not "fix" them without revisiting the design:
    everybody in GW1, and he is still projected at a substitute's twenty
    minutes. The gaffer's own minute overrides remain the mitigation for those.
 
-   Two edges of the prior are worth knowing. A January signing's half-season of
-   minutes is spread over a whole one, so he is understated — the payload has
-   no games-available column to do better with. And a player whose role has
+   Three edges of the prior are worth knowing. A January signing's half-season
+   of minutes is spread over a whole one, so he is understated — the payload
+   has no games-available column to do better with. A player whose role has
    genuinely changed is described by last season until this one reaches three
-   gameweeks, which is when the history stands alone.
+   gameweeks, which is when the history stands alone. And a prior can land
+   *below* the guess it replaces: a returner coming off an injury-hit season
+   floors at his own 11 minutes a week rather than at the 75 "he has started
+   once" used to give him.
+
+   That last one is understatement, and understatement is not free. For a
+   player you do not own it costs a transfer you would have made. For a player
+   already in your fifteen it can leave him out of the eleven or put him on the
+   sell side — which is the case to watch in the first three gameweeks, and
+   what the gaffer's own minute overrides are there to correct.
 
 ## Deferred
 
