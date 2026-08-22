@@ -19,3 +19,18 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["aigaffer*"]
+
+[tool.pytest.ini_options]
+# The solver is run a few hundred times across the suite and PuLP warns on
+# every construction of its bundled CBC binding, which buried the output under
+# 181 warnings — the number that makes a real one invisible. Matched on the
+# message, so it silences that one deprecation and nothing else: a different
+# PuLP warning, or this one changing its wording after an upgrade, comes
+# straight back. The upgrade it is asking for (`pulp[cbc]` and COIN_CMD) is a
+# dependency change, not a test change, and is not this commit's to make.
+#
+# Discovery is untouched: no testpaths, no python_files, no import mode. The
+# section only exists to hold this line.
+filterwarnings = [
+    "ignore:PULP_CBC_CMD is deprecated:DeprecationWarning",
+]
