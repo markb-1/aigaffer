@@ -86,6 +86,18 @@ SCOUT_WINDOW = (36, 60)
 
 NOT_CONFIGURED = "telegram not configured: the report was kept but not sent"
 
+# What a run says when the history filter takes everything it was given. The
+# cut in :func:`_played` is made against a payload somebody else serves, so a
+# renamed flag or an id that stops matching would leave every player projected
+# off his priors and nothing anywhere to say the evidence had been thrown away
+# rather than never served. It is only an anomaly if rows went in: an empty
+# history in August is a season that has not started, and a warning for that
+# would be a warning nobody reads by September.
+HISTORY_FILTER_EMPTIED = (
+    "aigaffer: history filter removed every played round ({players} players had"
+    " rows); projections fall back to season priors"
+)
+
 # What the report says when a manager was asked for and never reached at all.
 # The labelled fallbacks explain themselves in the Gaffer's view section, but a
 # manager who could not even be imported leaves no decision to hang a section
@@ -346,6 +358,7 @@ def fetch_inputs(cfg: Config, client: FplClient) -> PipelineInputs:
     held = [] if squad is None else squad.player_ids
     fetched = {pid: _history(client, pid) for pid in history_pool(players, held)}
     histories = _played(fetched, bootstrap, fixtures)
+    _warn_if_emptied(fetched, histories)
 
     return PipelineInputs(
         bootstrap=bootstrap,
@@ -694,6 +707,29 @@ def _played(
         pid: [entry for entry in history if happened(entry)]
         for pid, history in histories.items()
     }
+
+
+def _warn_if_emptied(
+    fetched: dict[int, list[GwHistory]], histories: dict[int, list[GwHistory]]
+) -> None:
+    """Say so, once, if the filter took every row the API served.
+
+    The two ways that can happen are worlds apart and look identical from
+    downstream. Either the season has genuinely not started — nothing to keep,
+    and the fallbacks are exactly what should happen — or the cut has stopped
+    working: a flag renamed, a fixture id that no longer matches, a payload
+    shape that moved. In the second case the whole run's recommendation rests
+    on priors, every player equally, and nothing in the report would look
+    wrong.
+
+    So the line is printed only when rows went in and none came out, which is
+    the shape the second case has and the first never does. It is a warning
+    and not an error: priors are a worse week than evidence, and no week at
+    all is worse than both.
+    """
+    with_rows = sum(1 for history in fetched.values() if history)
+    if with_rows and not any(histories.values()):
+        print(HISTORY_FILTER_EMPTIED.format(players=with_rows))
 
 
 def history_pool(players: dict[int, Player], held: list[int]) -> list[int]:

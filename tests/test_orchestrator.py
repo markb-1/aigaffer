@@ -821,6 +821,54 @@ def test_the_opening_weekend_has_no_history_rather_than_a_history_of_zeroes(tmp_
     assert all(history == [] for history in inputs.histories.values())
 
 
+# --- when the filter takes everything -------------------------------------
+#
+# The cut above is the right one and it is still a cut, made against a payload
+# somebody else serves. If a flag is renamed, a fixture id stops matching or an
+# opening weekend simply has nothing behind it, every history in the run comes
+# back empty and every player is projected off his priors — a whole run's
+# recommendation resting on a fallback, with nothing on the log to say so. One
+# line says it, once, and only when rows actually went in and nothing came out.
+
+
+def test_a_filter_that_empties_every_history_says_so(tmp_path, capsys):
+    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path)
+    routes = unplayed_routes(
+        opening_weekend_bootstrap(), (1, 0), fixtures=fixtures_played()
+    )
+
+    inputs = fetch_inputs(cfg, make_client(routes))
+    printed = capsys.readouterr().out
+
+    assert all(history == [] for history in inputs.histories.values())
+    assert "history filter removed every played round" in printed
+    assert f"({len(inputs.histories)} players had rows)" in printed
+    # One line for the run, not one per player.
+    assert printed.count("history filter removed") == 1
+
+
+def test_a_fetch_with_no_rows_to_remove_is_not_an_anomaly(tmp_path, capsys):
+    # Pre-season, and the case the warning must stay quiet for: nobody had a
+    # row, so nothing was taken. An empty history here is the season not having
+    # started, not the filter having gone wrong.
+    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path)
+    routes = unplayed_routes(opening_weekend_bootstrap(), fixtures=fixtures_played())
+
+    inputs = fetch_inputs(cfg, make_client(routes))
+
+    assert all(history == [] for history in inputs.histories.values())
+    assert "history filter" not in capsys.readouterr().out
+
+
+def test_a_fetch_that_keeps_a_played_match_says_nothing(tmp_path, capsys):
+    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path)
+
+    inputs = fetch_inputs(cfg, make_client(pipeline_routes()))
+
+    assert any(inputs.histories.values())
+    assert "history filter" not in capsys.readouterr().out
+
+
 def test_a_deadline_that_has_gone_does_not_bench_a_fit_starter(tmp_path):
     # Friday's live run, end to end and offline. Every player's whole season
     # is a row for a match that has not started, so nobody has a mean to be
