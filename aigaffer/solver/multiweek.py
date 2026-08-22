@@ -125,6 +125,39 @@ SOLVER = pulp.PULP_CBC_CMD(msg=0, timeLimit=SOLVE_SECONDS)
 # squad alone.
 CHURN_EPSILON = 0.01
 
+# The two chips this solver plans. A bench boost turns the whole fifteen loose
+# for one week — the four benched men score in full rather than at
+# ``BENCH_WEIGHT`` — and a triple captain adds one more armband multiple to the
+# week it is played. Both are free to play, so the only brake on either is that
+# the game gives one of each a season and this window sees at most one of them.
+# The strings are the game's own, shared with the rest of the codebase.
+BENCH_BOOST = "bench_boost"
+TRIPLE_CAPTAIN = "triple_captain"
+NO_CHIP = "none"
+# Wildcard and free hit belong to later tasks; a chip the solver does not yet
+# know how to play is simply ignored rather than trusted, so a caller can hand
+# in the whole available set without this one over-promising.
+_PLANNABLE_CHIPS = (BENCH_BOOST, TRIPLE_CAPTAIN)
+
+# The reservation is what stops the model burning a chip in the best week of the
+# next six when a far better week waits later in the season the horizon cannot
+# see. A chip is free to play, so without a bar the model would spend it at the
+# first positive opportunity; the bar is the opportunity cost of not saving it.
+# A chip is planned only where its marginal xP for the week clears the bar, and
+# held — played nowhere — when it does not. The value is applied decayed, the
+# same week factor as the benefit it is weighed against, so within the window
+# the model still chooses the best week and the bar only decides play-or-hold.
+#
+# These are undecayed points, tuned to FPL norms — a bench boost or a triple
+# captain earns its keep on a double gameweek, and twelve points is about what a
+# good one clears an ordinary week by — and meant to be refined against live
+# seasons, not treated as exact. A constant, deliberately: there is no env
+# override, so the number lives in one place and moves under review.
+CHIP_RESERVATION: dict[str, float] = {
+    BENCH_BOOST: 12.0,
+    TRIPLE_CAPTAIN: 12.0,
+}
+
 
 def _solver(time_limit: int | None) -> pulp.LpSolver:
     """The module's solver, or one like it on a shorter leash.
@@ -145,13 +178,18 @@ class PlannedMove:
     """The transfers one future gameweek of the path makes.
 
     Gameweeks the plan intends to leave alone have no move at all, rather than
-    an empty one: a path is the list of things it means to do.
+    an empty one: a path is the list of things it means to do. ``chip`` is the
+    chip the window plans to play that gameweek — ``"none"`` for almost all of
+    them — and a gameweek can carry a chip while making no transfers at all, so
+    a move with empty ``transfers_in``/``transfers_out`` is not empty if it
+    names a chip.
     """
 
     event: int
     transfers_in: list[int]
     transfers_out: list[int]
     hits: int
+    chip: str = "none"
 
 
 @dataclass
@@ -161,13 +199,21 @@ class PlannedPath:
     ``moves`` covers the window from its second gameweek on — the first is the
     :class:`~aigaffer.solver.optimizer.Plan` itself. ``objective`` is the whole
     window's, the same number the plan carries, and ``weekly_xp`` is each
-    gameweek's XI and captain undecayed, so a reader can see where the points
-    the plan is chasing actually are.
+    gameweek's XI and captain undecayed — with the chip's effect folded in where
+    one is played, so a bench-boost week shows its whole fifteen and a triple-
+    captain week its third armband — so a reader can see where the points the
+    plan is chasing actually are.
+
+    ``week1_chip`` is the chip the window plays in the gameweek being decided,
+    or ``"none"``: :class:`~aigaffer.solver.optimizer.Plan` has no chip field of
+    its own, so the executed chip is surfaced here, while the advisory chip
+    weeks later in the window ride their :class:`PlannedMove`.
     """
 
     moves: list[PlannedMove]
     objective: float
     weekly_xp: dict[int, float]
+    week1_chip: str = "none"
 
 
 def optimize_path(
@@ -180,6 +226,7 @@ def optimize_path(
     decay: float,
     forced_first_transfers: int | None = None,
     time_limit: int | None = None,
+    available_chips: frozenset[str] = frozenset(),
 ) -> tuple[Plan, PlannedPath] | None:
     """The best sequence of squads over ``events``, or None.
 
@@ -194,6 +241,18 @@ def optimize_path(
     not either — fifteen signings will not fit under a gameweek's move ceiling.
     A player with no projection for a gameweek is worth nothing in it, which is
     what a blank is.
+
+    ``available_chips`` are the chips still in hand — a subset of
+    :data:`BENCH_BOOST` and :data:`TRIPLE_CAPTAIN`, the two this solver plans;
+    any other name is ignored. Empty, which is the default, is the fallback
+    guarantee: the model built is the pre-chip one to the last variable, so a
+    caller who wants chips advisory-only need only withhold them. A chip in the
+    set becomes a per-week binary the window may play, at most one chip a
+    gameweek and each chip at most once across the horizon, and only where its
+    marginal xP beats :data:`CHIP_RESERVATION` — else it is held and played
+    nowhere. The window plans the chip in the best week of the next few, which
+    is not the best week of the season: it cannot see past its own horizon, and
+    a chip it plays here is one it is not saving for a double gameweek beyond.
 
     ``forced_first_transfers`` pins the opening gameweek's moves; left alone,
     the opening gameweek moves at most ``max(MAX_TRANSFERS, ft)`` times, which
@@ -270,7 +329,24 @@ def optimize_path(
     cash = {w: problem.add_variable(f"bank{w}", lowBound=0) for w in weeks}
     moves = {w: pulp.lpSum(buy[w][p] for p in pool) for w in weeks}
 
-    problem += (
+    # Chips are per-week binaries, and only those the caller still holds get one
+    # — an empty ``available_chips`` builds exactly the pre-chip model, variable
+    # for variable. A chip name this solver does not yet plan is dropped rather
+    # than trusted, so the caller may hand in the whole available set.
+    chips = [chip for chip in _PLANNABLE_CHIPS if chip in available_chips]
+    play = {
+        chip: {w: problem.add_variable(f"{chip}{w}", cat=pulp.LpBinary) for w in weeks}
+        for chip in chips
+    }
+    # The bilinear terms a chip adds are linearized by an auxiliary pinned to
+    # the product with the big-M pair added in the gameweek loop: ``z_bb`` is
+    # ``(squad - xi)·bb``, the bench at full weight for the boosted week, and
+    # ``z_tc`` is ``captain·tc``, the third armband multiple. Both factors sit in
+    # [0, 1], so the bound is exact rather than a relaxation.
+    z_bb = per_week("zbb", lowBound=0, upBound=1) if BENCH_BOOST in chips else {}
+    z_tc = per_week("ztc", lowBound=0, upBound=1) if TRIPLE_CAPTAIN in chips else {}
+
+    objective = (
         pulp.lpSum(
             decay ** (w - 1)
             * pulp.lpSum(
@@ -287,6 +363,29 @@ def optimize_path(
         - HIT_POINTS * pulp.lpSum(paid[w] for w in weeks)
         - CHURN_EPSILON * pulp.lpSum(moves[w] for w in weeks)
     )
+    if BENCH_BOOST in chips:
+        # The 0.9 the bench was not already scoring, less the reservation the
+        # boosted week has to clear before the chip is worth playing at all.
+        objective += pulp.lpSum(
+            decay ** (w - 1)
+            * (
+                (1 - BENCH_WEIGHT)
+                * pulp.lpSum(points[p, w] * z_bb[w][p] for p in pool)
+                - CHIP_RESERVATION[BENCH_BOOST] * play[BENCH_BOOST][w]
+            )
+            for w in weeks
+        )
+    if TRIPLE_CAPTAIN in chips:
+        # One extra captain multiple, less the same kind of bar.
+        objective += pulp.lpSum(
+            decay ** (w - 1)
+            * (
+                pulp.lpSum(points[p, w] * z_tc[w][p] for p in pool)
+                - CHIP_RESERVATION[TRIPLE_CAPTAIN] * play[TRIPLE_CAPTAIN][w]
+            )
+            for w in weeks
+        )
+    problem += objective
 
     by_position = _grouped(pool, lambda p: players[p].element_type)
     by_club = _grouped(pool, lambda p: players[p].team)
@@ -338,6 +437,28 @@ def optimize_path(
         if w > 1:
             problem += banked[w] <= banked[w - 1] - moves[w - 1] + paid[w - 1] + 1
 
+        # At most one chip a gameweek (a single chip cannot break its own binary,
+        # so the row is only worth writing when two could clash).
+        if len(chips) > 1:
+            problem += pulp.lpSum(play[chip][w] for chip in chips) <= 1
+        if BENCH_BOOST in chips:
+            bb = play[BENCH_BOOST][w]
+            for p in pool:
+                diff = squad[w][p] - starting[w][p]
+                problem += z_bb[w][p] <= diff
+                problem += z_bb[w][p] <= bb
+                problem += z_bb[w][p] >= diff - (1 - bb)
+        if TRIPLE_CAPTAIN in chips:
+            tc = play[TRIPLE_CAPTAIN][w]
+            for p in pool:
+                problem += z_tc[w][p] <= captain[w][p]
+                problem += z_tc[w][p] <= tc
+                problem += z_tc[w][p] >= captain[w][p] - (1 - tc)
+
+    # Each chip is the game's once-a-season, so once across the horizon too.
+    for chip in chips:
+        problem += pulp.lpSum(play[chip][w] for w in weeks) <= 1
+
     if forced_first_transfers is None:
         problem += moves[1] <= max(MAX_TRANSFERS, opening_bank)
     else:
@@ -363,6 +484,7 @@ def optimize_path(
     opening: list[int] = []
     opening_xi: list[int] = []
     opening_hits = 0
+    opening_chip = "none"
 
     for w in weeks:
         event = events[w - 1]
@@ -378,26 +500,54 @@ def optimize_path(
         # paid is integral by declaration; round() only clears solver dust.
         taken = round(paid[w].value() or 0.0)
 
-        weekly_xp[event] = started + armband
-        objective += decay ** (w - 1) * (started + armband + BENCH_WEIGHT * benched)
+        # Which chip this gameweek plays, if any — at most one, by construction.
+        bb_on = BENCH_BOOST in chips and (play[BENCH_BOOST][w].value() or 0) > 0.5
+        tc_on = TRIPLE_CAPTAIN in chips and (play[TRIPLE_CAPTAIN][w].value() or 0) > 0.5
+        chip = BENCH_BOOST if bb_on else TRIPLE_CAPTAIN if tc_on else "none"
+
+        # weekly_xp is the points the gameweek actually earns, chip and all: a
+        # boosted week's whole bench, a tripled week's third armband. The
+        # objective carries the same, less the chip's reservation — the number
+        # the plan was chosen by, exactly as it prices the churn tiebreak below.
+        week_xp = started + armband
+        week_score = started + armband + BENCH_WEIGHT * benched
+        if bb_on:
+            week_xp += benched
+            week_score += (1 - BENCH_WEIGHT) * benched - CHIP_RESERVATION[BENCH_BOOST]
+        if tc_on:
+            week_xp += armband
+            week_score += armband - CHIP_RESERVATION[TRIPLE_CAPTAIN]
+
+        weekly_xp[event] = week_xp
+        objective += decay ** (w - 1) * week_score
         hits += taken
         bought += len(incoming)
 
         if w == 1:
-            opening, opening_xi, opening_hits = chosen, eleven, taken
+            opening, opening_xi, opening_hits, opening_chip = (
+                chosen, eleven, taken, chip
+            )
             continue
-        if incoming or outgoing:
+        # A gameweek with a chip but no transfers is still a gameweek that does
+        # something, so it earns a move that names the chip and moves no one.
+        if incoming or outgoing or chip != "none":
             path_moves.append(
                 PlannedMove(
                     event=event,
                     transfers_in=incoming,
                     transfers_out=outgoing,
                     hits=taken,
+                    chip=chip,
                 )
             )
 
     objective -= HIT_POINTS * hits + CHURN_EPSILON * bought
-    path = PlannedPath(moves=path_moves, objective=objective, weekly_xp=weekly_xp)
+    path = PlannedPath(
+        moves=path_moves,
+        objective=objective,
+        weekly_xp=weekly_xp,
+        week1_chip=opening_chip,
+    )
     plan = Plan(
         squad=opening,
         xi=opening_xi,

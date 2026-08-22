@@ -58,9 +58,11 @@ from aigaffer.data.free_transfers import MAX_FREE_TRANSFERS
 from aigaffer.data.models import Player
 from aigaffer.model.xp import PlayerProjection, decayed_total
 from aigaffer.solver.multiweek import (
+    BENCH_BOOST,
     CHURN_EPSILON,
     MAX_HITS,
     SOLVER,
+    TRIPLE_CAPTAIN,
     PlannedMove,
     PlannedPath,
     _solver,
@@ -967,3 +969,242 @@ def test_a_gameweek_a_player_has_no_projection_for_is_a_blank():
     assert path.weekly_xp[6] == pytest.approx(SPINE_WEEK_XI, abs=1e-4)
     assert path.weekly_xp[7] == pytest.approx(SPINE_WEEK_XI, abs=1e-4)
     assert plan.objective == pytest.approx(164.69165, abs=1e-4)
+
+
+# --------------------------------------------------------------------------
+# Chips: bench boost and triple captain, planned into the window
+# --------------------------------------------------------------------------
+
+
+def test_no_chips_available_is_byte_for_byte_the_old_solve():
+    # The fallback guarantee. An empty ``available_chips`` — the default, and
+    # what every pre-chip caller passes without knowing it — must leave the
+    # objective exactly where it was: the spine's 158.31165 do-nothing, whether
+    # the argument is omitted or handed in empty. No chip is planned, and the
+    # path's weeks carry no chip.
+    players, projections = spine([5, 6, 7])
+
+    default = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[5, 6, 7],
+        decay=DECAY,
+    )
+    empty = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[5, 6, 7],
+        decay=DECAY, available_chips=frozenset(),
+    )
+
+    assert default[0].objective == empty[0].objective
+    assert default[0].objective == pytest.approx(158.31165, abs=1e-4)
+    assert empty[1].week1_chip == "none"
+    assert all(move.chip == "none" for move in empty[1].moves)
+
+
+# The bench boost/triple captain reservation is 12.0 undecayed points: a chip
+# is planned only where its marginal beats that bar, and held otherwise. The
+# boards below straddle it on purpose.
+FLAT_POSITIONS = (
+    [GK, GK] + [DEF] * 5 + [MID] * 5 + [FWD] * 3
+)
+
+
+def flat(events: list[int], value: float) -> tuple[dict, dict]:
+    """Fifteen players, the legal quota, every one worth ``value`` every week.
+
+    The pool is the squad exactly, so nothing is ever bought and the only
+    decision left is the chip. A flat board pins the four-man bench at
+    ``4 x value`` however the XI is split, which is what lets a bench-boost
+    objective be worked out with a pencil.
+    """
+    rows = [
+        (pid, FLAT_POSITIONS[pid - 1], 50, {event: value for event in events})
+        for pid in range(1, 16)
+    ]
+    return _build(rows)
+
+
+def test_bench_boost_below_its_bar_is_held():
+    # A flat board at 3.0 a man: the four-man bench is worth 12.0, boosted 0.9 x
+    # 12.0 = 10.8, which does not clear the 12.0 reservation. So the chip is held
+    # — not played in any week — and the objective is exactly the no-bench-boost
+    # solve: 12.4 x 3.0 = 37.2 a week, discounted 1 + 0.85 = 1.85, is 68.82.
+    players, projections = flat([5, 6], 3.0)
+
+    plan, path = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[5, 6],
+        decay=DECAY, available_chips=frozenset({BENCH_BOOST}),
+    )
+    held = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[5, 6],
+        decay=DECAY, available_chips=frozenset(),
+    )
+
+    assert path.week1_chip == "none"
+    assert all(move.chip == "none" for move in path.moves)
+    assert plan.objective == pytest.approx(held[0].objective, abs=1e-4)
+    assert plan.objective == pytest.approx(68.82, abs=1e-4)
+
+
+def test_bench_boost_above_its_bar_is_played():
+    # The threshold-crossing case, hand-computed. A flat board at 4.0 a man: the
+    # bench is worth 16.0, boosted 0.9 x 16.0 = 14.4, which clears the 12.0 bar
+    # by 2.4. It is played in GW5, where the decay bites least, and the objective
+    # gains decay^0 x (0.9 x 16.0 - 12.0) = 2.4 over the do-nothing 12.4 x 4.0 x
+    # 1.85 = 91.76: 94.16. The bench pays in full only for the objective's
+    # ranking; weekly_xp shows the whole fifteen's 44 + 4 armband + 16 bench = 64.
+    players, projections = flat([5, 6], 4.0)
+
+    plan, path = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[5, 6],
+        decay=DECAY, available_chips=frozenset({BENCH_BOOST}),
+    )
+
+    assert path.week1_chip == BENCH_BOOST
+    assert path.moves == []
+    assert plan.objective == pytest.approx(94.16, abs=1e-4)
+    assert path.weekly_xp[5] == pytest.approx(64.0, abs=1e-4)
+    assert path.weekly_xp[6] == pytest.approx(48.0, abs=1e-4)
+    assert_legal_path(players, SQUAD, 0, 1, [5, 6], plan, path)
+
+
+def test_triple_captain_below_its_bar_is_held():
+    # The spine, whose captain (12) is worth 6.0: half the 12.0 reservation, so
+    # the extra armband a triple captain buys is not worth the chip. It is held,
+    # and the objective is the plain two-gameweek do-nothing 113.849.
+    players, projections = spine([5, 6])
+
+    plan, path = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[5, 6],
+        decay=DECAY, available_chips=frozenset({TRIPLE_CAPTAIN}),
+    )
+    held = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[5, 6],
+        decay=DECAY, available_chips=frozenset(),
+    )
+
+    assert path.week1_chip == "none"
+    assert all(move.chip == "none" for move in path.moves)
+    assert plan.objective == pytest.approx(held[0].objective, abs=1e-4)
+    assert plan.objective == pytest.approx(113.849, abs=1e-4)
+
+
+def test_triple_captain_above_its_bar_lands_on_the_monster_week():
+    # The spine, but the captain (12) is worth 6.0 in GW5 and 40.0 in GW6. In
+    # GW5 the extra armband (6.0) does not clear the 12.0 bar; in GW6 it clears
+    # it by 28.0, and decayed that is 0.85 x 28.0 = 23.8. So the chip waits for
+    # the monster: the do-nothing 171.649 plus 23.8 is 195.449. It is not this
+    # week's, so week1_chip stays "none" and the chip rides a move that makes no
+    # transfers at all — the road-ahead entry exists only to name the chip.
+    players, projections = spine([5, 6])
+    monster = {5: 6.0, 6: 40.0}
+    projections[12] = PlayerProjection(
+        player_id=12, per_gw=monster, total=decayed_total(monster, DECAY)
+    )
+
+    plan, path = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[5, 6],
+        decay=DECAY, available_chips=frozenset({TRIPLE_CAPTAIN}),
+    )
+
+    assert path.week1_chip == "none"
+    assert path.moves == [
+        PlannedMove(
+            event=6, transfers_in=[], transfers_out=[], hits=0, chip=TRIPLE_CAPTAIN
+        )
+    ]
+    assert plan.objective == pytest.approx(195.449, abs=1e-4)
+    assert path.weekly_xp[5] == pytest.approx(61.0, abs=1e-4)
+    assert path.weekly_xp[6] == pytest.approx(169.0, abs=1e-4)
+    assert_legal_path(players, SQUAD, 0, 1, [5, 6], plan, path)
+
+
+def test_a_single_gameweek_holds_at_most_one_chip():
+    # One gameweek, both chips in hand, and a board where each clears its bar on
+    # its own: fourteen men on 10.0 and a captain (12) on 30.0. The bench is 4 x
+    # 10.0 = 40.0, boosted 0.9 x 40.0 = 36.0 and worth 36.0 - 12.0 = 24.0 net;
+    # the extra armband is worth 30.0 - 12.0 = 18.0 net. Both would be played
+    # were there room, but the one-chip-a-week rule is the whole of what stops it
+    # here — there is no other week to send the loser to. Bench boost is the
+    # bigger, so it alone is played: 130 started + 30 armband + 4.0 bench = 164.0
+    # do-nothing, plus 24.0, is 188.0 — not the 206.0 that both would earn.
+    rows = [
+        (pid, FLAT_POSITIONS[pid - 1], 50, {5: 30.0 if pid == 12 else 10.0})
+        for pid in range(1, 16)
+    ]
+    players, projections = _build(rows)
+
+    plan, path = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[5],
+        decay=DECAY, available_chips=frozenset({BENCH_BOOST, TRIPLE_CAPTAIN}),
+    )
+
+    assert path.week1_chip == BENCH_BOOST
+    assert plan.objective == pytest.approx(188.0, abs=1e-4)
+    assert_legal_path(players, SQUAD, 0, 1, [5], plan, path)
+
+
+def test_two_chips_find_their_two_best_weeks():
+    # A fifteen with no one to buy — the pool is the squad exactly — and both
+    # chips in hand. GW5 is flat at 10.0 a man, so its four-man bench is worth
+    # 0.9 x 40 = 36.0 boosted (net 24.0 over the bar) and its captain only 10.0
+    # tripled (below the bar): bench boost's week. GW6 is 1.0 a man but for the
+    # captain (12) at 100.0, so the extra armband is worth 100.0 - 12.0 = 88.0
+    # net, decayed 0.85 x 88.0 = 74.8, and the bench a rounding error: triple
+    # captain's week. Different weeks, no clash, and both are played.
+    #
+    # GW5 do-nothing is 110 started + 10 armband + 4.0 bench = 124.0; boosted,
+    # +24.0 net. GW6 is 110 + 100 + 0.4 = 210.4; tripled, +88.0 net. So
+    # 124.0 + 24.0 + 0.85 x (210.4 + 88.0) = 148.0 + 253.64 = 401.64.
+    rows = [
+        (1, GK, 50, {5: 10.0, 6: 1.0}),
+        (2, GK, 50, {5: 10.0, 6: 1.0}),
+        (3, DEF, 50, {5: 10.0, 6: 1.0}),
+        (4, DEF, 50, {5: 10.0, 6: 1.0}),
+        (5, DEF, 50, {5: 10.0, 6: 1.0}),
+        (6, DEF, 50, {5: 10.0, 6: 1.0}),
+        (7, DEF, 50, {5: 10.0, 6: 1.0}),
+        (8, MID, 50, {5: 10.0, 6: 1.0}),
+        (9, MID, 50, {5: 10.0, 6: 1.0}),
+        (10, MID, 50, {5: 10.0, 6: 1.0}),
+        (11, MID, 50, {5: 10.0, 6: 1.0}),
+        (12, MID, 50, {5: 10.0, 6: 100.0}),
+        (13, FWD, 50, {5: 10.0, 6: 1.0}),
+        (14, FWD, 50, {5: 10.0, 6: 1.0}),
+        (15, FWD, 50, {5: 10.0, 6: 1.0}),
+    ]
+    players, projections = _build(rows)
+
+    plan, path = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[5, 6],
+        decay=DECAY, available_chips=frozenset({BENCH_BOOST, TRIPLE_CAPTAIN}),
+    )
+
+    assert path.week1_chip == BENCH_BOOST
+    assert path.moves == [
+        PlannedMove(
+            event=6, transfers_in=[], transfers_out=[], hits=0, chip=TRIPLE_CAPTAIN
+        )
+    ]
+    assert plan.objective == pytest.approx(401.64, abs=1e-4)
+    assert path.weekly_xp[5] == pytest.approx(160.0, abs=1e-4)
+    assert path.weekly_xp[6] == pytest.approx(310.0, abs=1e-4)
+    assert_legal_path(players, SQUAD, 0, 1, [5, 6], plan, path)
+
+
+def test_a_chip_is_played_at_most_once_across_the_horizon():
+    # Bench boost only, three flat gameweeks at 5.0 a man. The bench is worth
+    # 0.9 x 20.0 = 18.0 a week, clearing the 12.0 bar by 6.0 in all three, and
+    # the chip would be welcome in every one — but the horizon limit lets it be
+    # played once, in the first, where the decay bites least. The do-nothing
+    # 12.4 x 5.0 x (1 + 0.85 + 0.7225) = 159.495 plus 6.0 is 165.495, not the
+    # 159.495 + 6.0 x 2.5725 = 174.93 that three plays would earn.
+    players, projections = flat([5, 6, 7], 5.0)
+
+    plan, path = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[5, 6, 7],
+        decay=DECAY, available_chips=frozenset({BENCH_BOOST}),
+    )
+
+    assert path.week1_chip == BENCH_BOOST
+    assert all(move.chip == "none" for move in path.moves)
+    assert plan.objective == pytest.approx(165.495, abs=1e-4)
+    assert_legal_path(players, SQUAD, 0, 1, [5, 6, 7], plan, path)
