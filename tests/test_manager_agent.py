@@ -212,10 +212,16 @@ CACHED_BRIEFING = [
     {"type": "text", "text": BRIEFING, "cache_control": {"type": "ephemeral"}}
 ]
 # A rationale as the report prints it: long enough to clear the floor the
-# validator sets, because the field is the whole of what Mark reads.
+# validator sets, because the field is the whole of what Mark reads. It says
+# the three things the prompt asks for — what was done, what was learned and
+# what it changed, and why this plan — because a fixture that would be refused
+# live is a fixture that proves nothing.
 RATIONALE = (
     "Gale is out for a month with a hamstring and the solver did not know it."
     " Quinn comes in: he plays every minute, and he is at home on Saturday."
+    " I have taken Gale's minutes to zero and left the rest of the squad as it"
+    " was. Rolling instead would leave a hole in the eleven for the sake of a"
+    " free transfer I have no better use for next week."
 )
 
 CFG = Config(team_id=42, anthropic_api_key="sk-test")
@@ -1147,6 +1153,14 @@ def test_the_system_prompt_says_where_the_report_has_to_be_written():
     assert "discarded" in SYSTEM_PROMPT
 
 
+def test_the_system_prompt_asks_for_the_shape_the_report_reads_best_in():
+    # Three parts, because that is what the rationales worth reading came back
+    # as live. It is asked for and not enforced: nothing parses the headings,
+    # and a report that says all three things in prose is the same report.
+    for heading in ("WHAT I DID", "WHAT I LEARNED", "WHY THIS PLAN"):
+        assert heading in SYSTEM_PROMPT
+
+
 def test_the_system_prompt_names_the_two_chips_he_may_finalize():
     assert "The only chips you may finalize are bench_boost and triple_captain" in (
         SYSTEM_PROMPT
@@ -1205,6 +1219,32 @@ def test_a_placeholder_rationale_is_refused_and_the_real_one_accepted():
     assert str(MIN_RATIONALE) in refusal["content"]
     assert decision.source == "manager"
     assert decision.rationale == RATIONALE
+
+
+def test_a_single_paragraph_no_longer_clears_the_floor():
+    # 150 characters: one sentence about the transfer, which passed the first
+    # floor of 100 and is not a report. What came back live and read well ran
+    # to three parts — what he did, what he learned, why this plan — and the
+    # floor is now under the shortest of those rather than under a sentence.
+    paragraph = "Gale is out and Quinn comes in; the fixture is the easiest on"
+    paragraph += " the board and he starts every week for them, so this is the"
+    paragraph += " move to make."
+    assert 100 <= len(paragraph) < MIN_RATIONALE
+
+    client, _ = converse(
+        [
+            reply(use("finalize_decision", finalize(rationale=paragraph))),
+            reply(use("finalize_decision", finalize())),
+        ]
+    )
+    refusal = only_result(client.requests[1])
+
+    assert refusal["is_error"] is True
+    assert str(MIN_RATIONALE) in refusal["content"]
+    # The error names the three parts it wants, so that a model told it is too
+    # short writes a report rather than padding the one it had.
+    for heading in ("did", "learned", "why this plan"):
+        assert heading in refusal["content"].lower()
 
 
 # Whitespace cannot pad the floor: it is measured on the stripped text.

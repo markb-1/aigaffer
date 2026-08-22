@@ -112,7 +112,20 @@ everything you want him to read has to be inside it — the news you found, the 
 minutes you adjusted and why, and why this plan rather than the others. \
 Anything you write outside a tool call is discarded and reaches nobody, so a \
 field that says "placeholder" with the reasoning around it publishes the word \
-placeholder and loses the reasoning."""
+placeholder and loses the reasoning.
+
+Write it in three parts, under these headings:
+
+WHAT I DID — the transfers, the captain, the chip, in a sentence or two.
+WHAT I LEARNED — what the searches turned up, whose expected minutes you \
+changed and from what to what, and what you are still unsure about.
+WHY THIS PLAN — why this one and not the others on the board, including the \
+one that rolls the transfer.
+
+He reads it on a phone, after the gameweek, next to the score. Three headings \
+is what makes that readable; a wall of prose is not. Say all three things \
+even where one of them is short — "nothing I found changed a minute" is an \
+answer, and an empty section is not."""
 
 # What the server tool is allowed to cost us in one request. ``max_uses`` is
 # per request — one assistant turn — and not a budget for the conversation: a
@@ -167,10 +180,19 @@ MIN_JUSTIFICATION = 200
 # back with rationale='placeholder' and four paragraphs of real reasoning in the
 # text blocks around the tool call — which the loop discards, because a text
 # block is not a decision and nothing downstream reads one. The report printed
-# the placeholder. So the field is measured too: not because a hundred
-# characters is a good report, but because it is longer than every way of not
-# writing one, and the error that comes back says where the report belongs.
-MIN_RATIONALE = 100
+# the placeholder. So the field is measured too: not because any number of
+# characters is a good report, but because a floor is longer than every way of
+# not writing one, and the error that comes back says where the report belongs.
+#
+# A hundred was that floor and it was set against the placeholder alone: it is
+# longer than a token and shorter than a sentence about the transfer, which is
+# not a report either. The weeks that read well live came back in three parts
+# — what he did, what he learned, why this plan — and none of them was near
+# two hundred characters. So the floor moves under the shortest report worth
+# having rather than over the longest way of not writing one. Nothing parses
+# the headings: a rationale that says all three things in prose is the same
+# rationale, and the length is the only thing measured.
+MIN_RATIONALE = 200
 
 # A match, and what a manager who is not playing plays. Expected minutes are
 # clamped here as well as in the projection so that the tool result can say what
@@ -469,6 +491,10 @@ def _check_rationale(rationale: str) -> None:
     field survives. So the error says that, in the words it would have needed
     to read beforehand, and names what belongs in it — a model that is told
     "too short" pads, and a model that is told "this is the report" writes one.
+
+    It names the three parts for the same reason. Asking again for "more
+    characters" is asking to be padded; asking for what he did, what he
+    learned and why this plan is asking for the report that was missing.
     """
     if len(rationale) < MIN_RATIONALE:
         raise ToolError(
@@ -476,9 +502,12 @@ def _check_rationale(rationale: str) -> None:
             " whole of what the manager reads: the rationale field IS your"
             " report. Anything you write outside a tool call is discarded and"
             " never reaches him. Finalize again with the full reasoning in the"
-            f" field ({MIN_RATIONALE} characters at least): the news you found"
-            " and what it changed, the minutes you adjusted and why, and why"
-            " this plan rather than the others on the board."
+            f" field ({MIN_RATIONALE} characters at least), in three parts:"
+            " WHAT I DID — the transfers, the captain, the chip; WHAT I"
+            " LEARNED — what the searches turned up, whose minutes you changed"
+            " and from what to what, what you are unsure about; WHY THIS PLAN"
+            " — why this one and not the others on the board, the one that"
+            " rolls included."
         )
 
 
