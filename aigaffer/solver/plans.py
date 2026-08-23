@@ -32,7 +32,7 @@ from collections.abc import Iterable
 from aigaffer.data.free_transfers import MAX_FREE_TRANSFERS
 from aigaffer.data.models import Player
 from aigaffer.model.xp import PlayerProjection
-from aigaffer.solver.multiweek import optimize_path
+from aigaffer.solver.multiweek import FREE_HIT, _free_hit_prices, optimize_path
 from aigaffer.solver.optimizer import MAX_TRANSFERS, Plan, optimize
 
 # The window gets a minute for the one solve a decision is worth; a sweep is
@@ -90,30 +90,47 @@ def generate_plans(
     real window beats a shortlist of four guesses at the wrong question.
     """
     if planner != "single" and projections_events:
-        # The window reads a free-transfer bank as five at the most, so a sixth
-        # forced opening move is a question about a board it does not believe
-        # in. Below that the counts are the single-week solver's own.
-        opened: list[Plan | None] = []
-        for count in transfer_counts(min(free_transfers, MAX_FREE_TRANSFERS)):
-            answer = optimize_path(
-                players,
-                xp,
-                current_squad,
-                bank,
-                free_transfers,
-                projections_events,
-                decay,
-                forced_first_transfers=count,
-                time_limit=SWEEP_TIME_LIMIT,
-                available_chips=available_chips,
+        # The free hit is the one chip priced by a solve of its own — a CBC
+        # sub-solve a gameweek — and its price depends on the board, not on the
+        # opening move a sweep pins: the pool, the budget and each week's points
+        # are the same across every count. So it is priced once here and handed
+        # to all of them, sparing the sub-solves the five extra passes the sweep
+        # would otherwise pay for. None is a window that cannot field a free-hit
+        # squad, which every count would return None on — the empty sweep that
+        # falls through to the single-week solver, reached here without the work.
+        freehit_prices = (
+            _free_hit_prices(
+                players, xp, current_squad, bank, projections_events, SWEEP_TIME_LIMIT
             )
-            # The path comes back beside the plan and is already on it, so the
-            # second half of the pair is nothing the shortlist has to carry.
-            opened.append(answer[0] if answer is not None else None)
+            if FREE_HIT in available_chips
+            else None
+        )
+        if FREE_HIT not in available_chips or freehit_prices is not None:
+            # The window reads a free-transfer bank as five at the most, so a
+            # sixth forced opening move is a question about a board it does not
+            # believe in. Below that the counts are the single-week solver's own.
+            opened: list[Plan | None] = []
+            for count in transfer_counts(min(free_transfers, MAX_FREE_TRANSFERS)):
+                answer = optimize_path(
+                    players,
+                    xp,
+                    current_squad,
+                    bank,
+                    free_transfers,
+                    projections_events,
+                    decay,
+                    forced_first_transfers=count,
+                    time_limit=SWEEP_TIME_LIMIT,
+                    available_chips=available_chips,
+                    freehit_prices=freehit_prices,
+                )
+                # The path comes back beside the plan and is already on it, so
+                # the second half of the pair is nothing the shortlist carries.
+                opened.append(answer[0] if answer is not None else None)
 
-        planned = _shortlist(opened)
-        if planned:
-            return planned
+            planned = _shortlist(opened)
+            if planned:
+                return planned
 
     return _shortlist(
         optimize(

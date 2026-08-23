@@ -339,6 +339,7 @@ def optimize_path(
     forced_first_transfers: int | None = None,
     time_limit: int | None = None,
     available_chips: frozenset[str] = frozenset(),
+    freehit_prices: dict[int, tuple[float, list[int], list[int]]] | None = None,
 ) -> tuple[Plan, PlannedPath] | None:
     """The best sequence of squads over ``events``, or None.
 
@@ -375,6 +376,20 @@ def optimize_path(
     window that outbids the other with moves the other was never allowed to
     consider is not a comparison. A caller asking for a count above the cap is
     asking a question, and gets an answer.
+
+    ``freehit_prices`` is the one lever a caller pulls purely for speed. A free
+    hit is priced by a CBC sub-solve a gameweek — the only chip that runs a
+    program of its own beside the window's — and that price depends on the board,
+    not on ``forced_first_transfers``: the pool, the budget and each week's points
+    are the same whatever the opening move is pinned to. So a caller solving the
+    same window at several opening counts can price the free hit once with
+    :func:`_free_hit_prices` and hand the same dict to every solve, paying for the
+    sub-solves once rather than once per count. Left None — the default, and what
+    a standalone solve passes — the prices are computed here from the same inputs
+    and the same helper, so the answer is identical to the point either way; the
+    lever only moves where the work happens, never the result. It is read only
+    when :data:`FREE_HIT` is in ``available_chips``, and is the week-index →
+    ``(value, fifteen, eleven)`` mapping :func:`_free_hit_prices` returns.
 
     None means no answer, not an error: an infeasible board, a
     ``forced_first_transfers`` the pool or the budget cannot support, or a
@@ -413,17 +428,20 @@ def optimize_path(
     # the value; only the report needs the squad, and only for the played week.
     best_oneweek_squad: dict[int, tuple[list[int], list[int]]] = {}
     if FREE_HIT in available_chips:
-        budget = bank + sum(players[p].now_cost for p in current)
-        for w in weeks:
-            week_points = {p: points[p, w] for p in pool}
-            priced = _best_one_week_squad(
-                pool, players, by_position, by_club, week_points, budget,
-                _solver(time_limit),
+        # Priced here only when a caller has not priced it already: a sweep hands
+        # the same dict to every opening count so the sub-solves run once, and a
+        # standalone solve computes it from the very same inputs. Either way None
+        # is a free-hit week the budget cannot field, which is no window at all.
+        if freehit_prices is None:
+            freehit_prices = _free_hit_prices(
+                players, projections, current_squad, bank, events, time_limit
             )
-            if priced is None:
-                return None
-            best_oneweek[w] = priced[0]
-            best_oneweek_squad[w] = (priced[1], priced[2])
+        if freehit_prices is None:
+            return None
+        for w in weeks:
+            value, fh_squad, fh_xi = freehit_prices[w]
+            best_oneweek[w] = value
+            best_oneweek_squad[w] = (fh_squad, fh_xi)
 
     problem = pulp.LpProblem("aigaffer_transfer_path", pulp.LpMaximize)
 
@@ -838,6 +856,57 @@ def _projected(
     """
     projection = projections.get(player_id)
     return projection.per_gw.get(event, 0.0) if projection else 0.0
+
+
+def _free_hit_prices(
+    players: dict[int, Player],
+    projections: dict[int, PlayerProjection],
+    current_squad: list[int],
+    bank: int,
+    events: list[int],
+    time_limit: int | None,
+) -> dict[int, tuple[float, list[int], list[int]]] | None:
+    """Every window gameweek's free-hit price — value, fifteen and eleven.
+
+    A free hit's worth in a gameweek is the best legal one-week squad the pool
+    holds inside the manager's budget, scored for that week by
+    :func:`_best_one_week_squad`. This prices it for every gameweek in ``events``,
+    keyed by the one-based week index the window program uses.
+
+    It is factored out because it is the one part of :func:`optimize_path` a
+    forced opening-move count never touches: the pool, the budget and each week's
+    points are the same whatever the sweep pins the first gameweek to. A caller
+    solving the window at several opening counts — which
+    :func:`~aigaffer.solver.plans.generate_plans` does across half a dozen — can
+    therefore price the free hit once here and hand the same result to every
+    solve, paying for the CBC sub-solves once rather than once per count.
+    :func:`optimize_path` calls this itself when it is handed nothing, off the
+    same pool and budget, so a standalone solve is unchanged and the prices a
+    sweep hoists are identical to the ones each solve would have computed.
+
+    None when any gameweek's best one-week squad cannot be fielded inside the
+    budget — the same infeasibility :func:`optimize_path` returns None on.
+    """
+    pool = candidate_pool(
+        players, projections, current_squad, limit=CANDIDATES_PER_POSITION
+    )
+    current = {pid for pid in current_squad if pid in players}
+    by_position = _grouped(pool, lambda p: players[p].element_type)
+    by_club = _grouped(pool, lambda p: players[p].team)
+    budget = bank + sum(players[p].now_cost for p in current)
+    # One command wrapper for the lot: it keeps no per-problem state, so pricing
+    # every week through the same object is the same solve run several times.
+    solver = _solver(time_limit)
+    prices: dict[int, tuple[float, list[int], list[int]]] = {}
+    for w in range(1, len(events) + 1):
+        week_points = {p: _projected(projections, p, events[w - 1]) for p in pool}
+        priced = _best_one_week_squad(
+            pool, players, by_position, by_club, week_points, budget, solver
+        )
+        if priced is None:
+            return None
+        prices[w] = priced
+    return prices
 
 
 def _best_one_week_squad(

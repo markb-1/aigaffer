@@ -107,6 +107,7 @@ def stub_optimize_path(monkeypatch, answers: dict[int, Plan | None]) -> list[dic
         forced_first_transfers=None,
         time_limit=None,
         available_chips=frozenset(),
+        freehit_prices=None,
     ):
         calls.append(
             {
@@ -120,12 +121,40 @@ def stub_optimize_path(monkeypatch, answers: dict[int, Plan | None]) -> list[dic
                 "forced_first_transfers": forced_first_transfers,
                 "time_limit": time_limit,
                 "available_chips": available_chips,
+                "freehit_prices": freehit_prices,
             }
         )
         plan = answers[forced_first_transfers]
         return None if plan is None else (plan, plan.path)
 
     monkeypatch.setattr(plans_module, "optimize_path", fake_optimize_path)
+    return calls
+
+
+def stub_free_hit_prices(monkeypatch, value) -> list[dict]:
+    """Answer the hoisted free-hit pricing with ``value``; record the calls.
+
+    The real pricing runs CBC sub-solves on a real board; these tests hand the
+    window canned plans, so the price it is handed matters only in that it is
+    computed once and reaches every solve. A ``value`` of None is the window
+    that cannot field a free-hit squad at all.
+    """
+    calls: list[dict] = []
+
+    def fake_free_hit_prices(players, xp, current_squad, bank, events, time_limit):
+        calls.append(
+            {
+                "players": players,
+                "xp": xp,
+                "current_squad": current_squad,
+                "bank": bank,
+                "events": events,
+                "time_limit": time_limit,
+            }
+        )
+        return value
+
+    monkeypatch.setattr(plans_module, "_free_hit_prices", fake_free_hit_prices)
     return calls
 
 
@@ -241,6 +270,7 @@ def test_the_available_chips_ride_through_to_every_windowed_solve(monkeypatch):
     # unchanged: one place derives them and the sweep only carries them.
     chips = frozenset({"bench_boost", "free_hit"})
     calls = stub_optimize_path(monkeypatch, windows(range(4)))
+    stub_free_hit_prices(monkeypatch, {1: (0.0, [], [])})
 
     generate_plans(
         PLAYERS, XP, SQUAD, bank=0, free_transfers=1,
@@ -248,6 +278,51 @@ def test_the_available_chips_ride_through_to_every_windowed_solve(monkeypatch):
     )
 
     assert [call["available_chips"] for call in calls] == [chips] * 4
+
+
+def test_the_free_hit_price_is_computed_once_and_rides_the_whole_sweep(monkeypatch):
+    # The perf hoist. The free hit is the one chip priced by a solve of its own,
+    # and that price does not move with the opening count — so it is computed
+    # once and the same object reaches every windowed solve, sparing the sweep
+    # five extra passes of the CBC sub-solves. One pricing call; one dict, shared.
+    prices = {1: (99.0, list(range(16, 31)), list(range(16, 27)))}
+    calls = stub_optimize_path(monkeypatch, windows(range(4)))
+    priced = stub_free_hit_prices(monkeypatch, prices)
+
+    generate_plans(
+        PLAYERS, XP, SQUAD, bank=25, free_transfers=1,
+        projections_events=EVENTS, available_chips=frozenset({"free_hit"}),
+    )
+
+    # Priced exactly once, off the real inputs and the sweep's own time budget.
+    assert len(priced) == 1
+    assert priced[0]["players"] is PLAYERS
+    assert priced[0]["bank"] == 25
+    assert priced[0]["events"] is EVENTS
+    assert priced[0]["time_limit"] == SWEEP_TIME_LIMIT
+    # And that one dict is the very object every opening count is handed.
+    assert [call["freehit_prices"] for call in calls] == [prices] * 4
+    assert all(call["freehit_prices"] is prices for call in calls)
+
+
+def test_a_free_hit_that_cannot_be_priced_falls_back_to_the_single_week_solver(monkeypatch):
+    # A None price is a window that cannot field a free-hit squad — every count
+    # would return None, an empty sweep. Rather than run four doomed solves, the
+    # run skips straight to the single-week engine, which is where an empty sweep
+    # lands anyway. The window is never asked; the single-week solver answers.
+    single = stub_optimize(monkeypatch, {n: canned(n, 100.0 + n) for n in range(4)})
+    window = stub_optimize_path(monkeypatch, windows(range(4)))
+    stub_free_hit_prices(monkeypatch, None)
+
+    result = generate_plans(
+        PLAYERS, XP, SQUAD, bank=0, free_transfers=1,
+        projections_events=EVENTS, available_chips=frozenset({"free_hit"}),
+    )
+
+    assert window == []
+    assert [call["forced_transfers"] for call in single] == [0, 1, 2, 3]
+    assert [plan.objective for plan in result] == [103.0, 102.0, 101.0, 100.0]
+    assert all(plan.path is None for plan in result)
 
 
 def test_no_available_chips_is_the_default_and_reaches_the_solve(monkeypatch):

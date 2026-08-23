@@ -69,6 +69,7 @@ from aigaffer.solver.multiweek import (
     PlannedMove,
     PlannedPath,
     _best_one_week_squad,
+    _free_hit_prices,
     _solver,
     optimize_path,
 )
@@ -80,6 +81,12 @@ from aigaffer.solver.optimizer import (
     _grouped,
     candidate_pool,
     optimize,
+)
+from aigaffer.solver.plans import (
+    SWEEP_TIME_LIMIT,
+    _shortlist,
+    generate_plans,
+    transfer_counts,
 )
 
 GK, DEF, MID, FWD = 1, 2, 3, 4
@@ -1738,3 +1745,97 @@ def test_adding_free_hit_to_the_set_changes_nothing_when_it_is_held():
     assert path.week1_chip == "none"
     assert with_fh.objective == pytest.approx(without_fh.objective, abs=1e-4)
     assert with_fh.objective == pytest.approx(158.31165, abs=1e-4)
+
+
+# --------------------------------------------------------------------------
+# The free-hit pricing hoist: priced once for a sweep, byte-identical either way
+# --------------------------------------------------------------------------
+
+
+def test_the_hoisted_prices_are_the_per_week_side_calc():
+    # The helper is a faithful factoring of the per-week free-hit price: each
+    # week's entry is exactly what _best_one_week_squad returns for that week off
+    # the same pool and budget. GW5 is the lopsided one — fifteen heroes at 6.0,
+    # a one-week squad worth 12.4 x 6.0 = 74.4 — GW6 and GW7 the flat 4.0 spine,
+    # whose best one-week squad is 12.4 x 4.0 = 49.6.
+    players, projections = flat_with_heroes(
+        [5, 6, 7], spike_event=5, base=4.0, hero_value=6.0
+    )
+    pool = candidate_pool(players, projections, SQUAD, limit=CANDIDATES_PER_POSITION)
+    by_position = _grouped(pool, lambda p: players[p].element_type)
+    by_club = _grouped(pool, lambda p: players[p].team)
+    budget = sum(players[p].now_cost for p in SQUAD)
+
+    prices = _free_hit_prices(players, projections, SQUAD, 0, [5, 6, 7], None)
+
+    assert set(prices) == {1, 2, 3}
+    for w, event in enumerate([5, 6, 7], start=1):
+        week_points = {p: projections[p].per_gw.get(event, 0.0) for p in pool}
+        expected = _best_one_week_squad(
+            pool, players, by_position, by_club, week_points, budget, SOLVER
+        )
+        assert prices[w] == expected
+    assert prices[1][0] == pytest.approx(74.4, abs=1e-4)
+    assert prices[2][0] == pytest.approx(49.6, abs=1e-4)
+
+
+def test_hoisted_free_hit_prices_give_a_byte_identical_plan():
+    # The hoist's correctness at the solve. Pricing the free hit once and handing
+    # the dict in must land on the very same plan, objective and temp squad as
+    # letting the solve price it itself: the prices are the same floats off the
+    # same board, so the only thing the lever moves is where the CBC sub-solves
+    # run, never the answer. The free hit is played, so the price is load-bearing.
+    players, projections = flat_with_heroes(
+        [5, 6, 7], spike_event=5, base=4.0, hero_value=6.0
+    )
+    prices = _free_hit_prices(players, projections, SQUAD, 0, [5, 6, 7], None)
+
+    inline_plan, inline_path = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=0, events=[5, 6, 7],
+        decay=DECAY, available_chips=frozenset({FREE_HIT}),
+    )
+    hoisted_plan, hoisted_path = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=0, events=[5, 6, 7],
+        decay=DECAY, available_chips=frozenset({FREE_HIT}), freehit_prices=prices,
+    )
+
+    assert inline_path.week1_chip == FREE_HIT
+    # Byte-identical, not merely close.
+    assert hoisted_plan.objective == inline_plan.objective
+    assert hoisted_plan.squad == inline_plan.squad
+    assert hoisted_plan.xi == inline_plan.xi
+    assert hoisted_path.weekly_xp == inline_path.weekly_xp
+    assert hoisted_path.week1_chip == inline_path.week1_chip
+    assert hoisted_path.week1_freehit_squad == inline_path.week1_freehit_squad
+    assert hoisted_path.week1_freehit_xi == inline_path.week1_freehit_xi
+
+
+def test_generate_plans_hoists_the_free_hit_without_changing_the_shortlist():
+    # The hoist end to end. generate_plans prices the free hit once and threads
+    # the one dict through the whole sweep; the shortlist it returns is identical
+    # to one built by solving each opening count with the price computed inline —
+    # same objectives, same fifteens, same chip on the recommended plan. Same
+    # board the free hit actually plays on, so the shared price is load-bearing.
+    players, projections = flat_with_heroes(
+        [5, 6, 7], spike_event=5, base=4.0, hero_value=6.0
+    )
+    chips = frozenset({FREE_HIT})
+
+    hoisted = generate_plans(
+        players, projections, SQUAD, bank=0, free_transfers=1,
+        projections_events=[5, 6, 7], decay=DECAY, available_chips=chips,
+    )
+    inline_answers = [
+        optimize_path(
+            players, projections, SQUAD, 0, 1, [5, 6, 7], DECAY,
+            forced_first_transfers=count, time_limit=SWEEP_TIME_LIMIT,
+            available_chips=chips,
+        )
+        for count in transfer_counts(1)
+    ]
+    inline = _shortlist(a[0] if a is not None else None for a in inline_answers)
+
+    assert [p.objective for p in hoisted] == [p.objective for p in inline]
+    assert [p.squad for p in hoisted] == [p.squad for p in inline]
+    assert [p.path.week1_chip for p in hoisted] == [p.path.week1_chip for p in inline]
+    assert hoisted[0].path.week1_chip == FREE_HIT
