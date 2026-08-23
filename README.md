@@ -288,31 +288,48 @@ it — and is played only where its marginal points for the week clear that bar:
 
 | Chip | Reservation (undecayed xP) |
 | --- | --- |
-| Bench boost | 12.0 |
-| Triple captain | 12.0 |
-| Free hit | 18.0 |
-| Wildcard | 30.0 |
+| Bench boost | 20.0 |
+| Triple captain | 18.0 |
+| Free hit | 25.0 |
+| Wildcard | 35.0 |
 
-A bench boost that gains 10.8 points this week is held; one that gains 14.4 is
-played, and the objective keeps only the 2.4 above the bar. The bar decides
-play-or-hold; within the window the model still picks the *best* qualifying week.
-Played nowhere is a real answer — a quiet stretch clears no bar and every chip
-stays in hand.
+A bench boost that gains 14 points this week is held; one that gains 24 clears
+the 20.0 bar and is played, and the objective keeps only the 4 above it. The bar
+decides play-or-hold; within the window the model still picks the *best*
+qualifying week. Played nowhere is a real answer — a quiet stretch clears no bar
+and every chip stays in hand.
 
-**But the bar is judged over the next six gameweeks, not the season.** This is
-the honest limit, and it is worth stating plainly because it is easy to mistake
-for a bug. The window sees six gameweeks. It cannot see a blank in GW29 or a
-double in GW34 announced months out, so "is this week chip-worthy?" is only ever
-asked against the near horizon. The reservation stops the model firing on a
-mediocre quiet week, but it cannot make the model hold a wildcard *this* month
-for a better week it has no way of knowing is coming. Run early in a season, with
-every chip in hand and projections at their most uncertain, the planner will
-sometimes schedule a chip the near horizon rates highly that a season-long view
-would save — and the road-ahead lines are where you will see it reach for one.
-Read them as "the best week the model can currently see", not "the best week
-there will be". The numbers in the table are first-guess constants tuned to FPL
-norms, not measured against results; they are the dial that most wants turning as
-live seasons accumulate. Both limits are on the Deferred list below.
+### The GW10 floor comes first
+
+Before the bars are ever consulted there is a hard brake: `CHIP_FLOOR_GW = 10`
+in `multiweek.py`. **No chip is played before gameweek 10, whatever its EV.** Any
+week in the window whose gameweek is earlier than the floor has every chip's
+play binary pinned to zero — the chip is neither played nor scheduled there, only
+held until the horizon reaches an eligible week. The reason is the same near-sight
+that the reservation bars only partly cover: chips are late-season weapons, and
+the six-gameweek horizon cannot see the season's real doubles and blanks — a
+chip's true opportunity cost — when they are announced months out. Rather than
+let an early, noisy projection spend a chip on a merely-good week, the floor
+holds everything through the uncertain opening. This is the primary brake early
+in a season; the reservation bars are the second line of defence, for the
+eligible weeks past the floor.
+
+**Past the floor, the bar is still judged over the next six gameweeks, not the
+season.** This is the honest limit, and it is worth stating plainly because it is
+easy to mistake for a bug. Early in a season — before GW10 — the planner **holds
+every chip regardless of EV**; the Chip EV panel still prices what each chip
+*would* be worth that week (advisory), but none is recommended to play, and the
+road-ahead lines will show no chip scheduled. Once the horizon reaches GW10 and
+later, "is this week chip-worthy?" is asked against the near horizon only: the
+window sees six gameweeks and cannot see a blank in GW29 or a double in GW34.
+The reservation bars stop the model firing on a merely-good quiet week, but they
+cannot make it hold a wildcard *this* month for a better week it has no way of
+knowing is coming — a truly optimal season-long chip schedule is beyond its
+sight. Read the road-ahead chip lines as "the best week the model can currently
+see", not "the best week there will be". The numbers in the table are
+first-guess constants tuned to FPL norms, not measured against results; they are
+the dial that most wants turning as live seasons accumulate. Both limits are on
+the Deferred list below.
 
 ### Turning it off
 
@@ -446,15 +463,15 @@ what the chip work left behind is two narrower boundaries, items 4 and 5 below.
    plan he finally chooses.
 4. **Season-long chip timing.** The chip planner above sees six gameweeks and no
    further, so it weighs a chip-worthy week against the near horizon rather than
-   the season. It will not fire on a mediocre quiet week — the reservation bars
-   stop that — but it cannot hold a wildcard *this* month for a double gameweek
-   in GW34 it has no way of seeing, and run early in a season it will sometimes
-   reach for a chip a season-long view would save. A true season-long chip
-   schedule is a much larger model than a six-gameweek window, and is the honest
-   ceiling on what the planner can promise.
+   the season. It will not fire on a mediocre quiet week — the GW10 floor holds
+   every chip through the opening, and the reservation bars stop it past that —
+   but for eligible weeks it cannot hold a wildcard *this* month for a double
+   gameweek in GW34 it has no way of seeing. A true season-long chip schedule is
+   a much larger model than a six-gameweek window, and is the honest ceiling on
+   what the planner can promise.
 5. **The reservation bars are first-guess constants.** The bars that decide a
-   chip's play-or-hold — bench boost and triple captain at 12.0, free hit at
-   18.0, wildcard at 30.0 undecayed xP — are tuned to FPL norms by hand, not
+   chip's play-or-hold — bench boost at 20.0, triple captain at 18.0, free hit at
+   25.0, wildcard at 35.0 undecayed xP — are tuned to FPL norms by hand, not
    measured against results. They live in one place (`CHIP_RESERVATION` in
    `aigaffer/solver/multiweek.py`) precisely so they can move under review, and
    refining them against real seasons is the dial most likely to change how
