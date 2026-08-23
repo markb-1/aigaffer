@@ -240,14 +240,14 @@ def test_the_same_floor_governs_goals_assists_and_saves():
 def test_a_shrunk_cameo_reads_as_the_prior_not_as_a_rate():
     # Six defensive actions in a minute off the bench is a sample, not a rate.
     # _per_90 floors its own rate at six a game; then shrinkage weighs that one
-    # ninetieth of a match against six pseudo-matches of the midfield prior (8
-    # actions a game) and lands him at essentially the prior, ~7.996 — not the
-    # 540 a naive division reads, and nowhere near clearing his threshold on
+    # ninetieth of a match against six pseudo-matches of the midfield prior (7
+    # actions a game) and lands him at essentially the prior, ~6.998 — not the
+    # 540 a naive division reads, and well short of clearing his threshold on
     # his own evidence.
     cameo = player(minutes=1, defensive_contribution=6)
     nineties = 1 / 90
     weight = nineties / (nineties + 6.0)
-    rate = weight * 6.0 + (1 - weight) * 8.0  # ~7.996, the MID prior
+    rate = weight * 6.0 + (1 - weight) * 7.0  # ~6.998, the MID prior
     chance = (rate - 12 / 2) / 12  # threshold 12 for a midfielder
     assert defcon_points(cameo, 90.0) == approx(2 * chance)
 
@@ -265,30 +265,31 @@ def test_a_shrunk_bench_goal_is_a_fraction_of_a_full_rate():
     assert goal_points(cameo, 90.0, 1.0) == approx(rate * GOAL_PTS[3])
 
 
-def test_shrinkage_lifts_a_threshold_level_defender_toward_the_field():
+def test_a_defender_averaging_his_threshold_is_a_coin_flip_on_it():
     # 100 defensive actions in 900 minutes is 10 a game, a defender's threshold
-    # exactly — a coin flip on its own. But defenders average 14, and ten full
-    # matches is only 0.625 of the weight, so his rate is pulled up to 11.5 and
-    # his chance of clearing to (11.5 - 5) / 10 = 0.65: better than even.
+    # exactly. The defender prior now sits at that same bar (10), so shrinkage
+    # leaves a threshold-level defender where he is — 10 — and he is a coin flip
+    # on the two points. That the prior sits at the bar rather than above it is
+    # the whole point: an unproven defender is a coin flip, not a near-certainty.
     defender = player(element_type=2, minutes=900, defensive_contribution=100)
-    rate = 0.625 * 10.0 + 0.375 * 14.0  # 11.5
+    rate = 0.625 * 10.0 + 0.375 * 10.0  # 10.0, unmoved
     chance = (rate - 10 / 2) / 10
-    assert defcon_points(defender, 90.0) == approx(2 * chance)
+    assert defcon_points(defender, 90.0) == approx(2 * chance)  # 1.0
 
 
-def test_a_quiet_midfielder_barely_scrapes_the_bar_after_shrinkage():
+def test_a_midfielder_well_short_of_his_threshold_never_earns_it():
     # 5 a game against a threshold of 12 is no defensive contributor. Shrinkage
-    # pulls him toward the midfield prior of 8, which itself sits just over the
-    # half-threshold, so he lands at 6.125 and earns a hair over the bar — two
-    # hundredths of a point, which is to say next to nothing.
+    # pulls him toward the midfield prior of 7 — still below the half-threshold
+    # of 6 — so he lands at 5.75 and earns nothing: the model does not invent a
+    # defensive contribution the position does not have.
     quiet = player(element_type=3, minutes=900, defensive_contribution=50)
-    rate = 0.625 * 5.0 + 0.375 * 8.0  # 6.125
-    chance = (rate - 12 / 2) / 12
-    assert defcon_points(quiet, 90.0) == approx(2 * chance)
+    rate = 0.625 * 5.0 + 0.375 * 7.0  # 5.75, short of the 6 half-threshold
+    assert rate < 12 / 2
+    assert defcon_points(quiet, 90.0) == 0.0
 
 
 def test_even_the_busiest_defender_is_not_a_certainty():
-    # 30 a game shrinks to 24 (toward the 14 prior) and is still more than
+    # 30 a game shrinks to 22.5 (toward the 10 prior) and is still more than
     # twice the bar — capped below certainty all the same, because nobody does
     # it every week. Half a match on the pitch is half the chances to do it.
     monster = player(element_type=2, minutes=900, defensive_contribution=300)
@@ -310,7 +311,10 @@ def test_the_shrinkage_constants_are_the_documented_ones():
     assert SHRINKAGE_NINETIES == 6.0
     assert XG90_PRIOR == {1: 0.0, 2: 0.05, 3: 0.12, 4: 0.30}
     assert XA90_PRIOR == {1: 0.0, 2: 0.05, 3: 0.12, 4: 0.12}
-    assert DEFCON90_PRIOR == {1: 0.0, 2: 14.0, 3: 8.0, 4: 3.0}
+    # The defcon prior sits AT its threshold for a defender (10) and a notch
+    # below for a midfielder (bar 12): an unproven defender is a coin flip on
+    # the bar, not the near-certainty a prior above it would have made him.
+    assert DEFCON90_PRIOR == {1: 0.0, 2: 10.0, 3: 7.0, 4: 3.0}
     assert SAVES90_PRIOR == {1: 3.0, 2: 0.0, 3: 0.0, 4: 0.0}
 
 
@@ -533,17 +537,18 @@ def test_projects_a_midfielder_at_home():
     projection = project(mid, [HOME_FIXTURE], horizon=1)
     # 900 minutes is ten nineties, 0.625 of the weight on his own rates: goals
     # shrink 0.5 -> 0.3575 (toward 0.12), assists 0.3 -> 0.2325 (toward 0.12),
-    # and his 12-a-game defensive rate falls to 10.5 (toward 8), a 0.375 chance.
+    # and his 12-a-game defensive rate falls to 10.125 (toward 7), a 0.34375
+    # chance of the two points.
     goal_rate = 0.625 * 0.5 + 0.375 * 0.12  # 0.3575
     assist_rate = 0.625 * 0.3 + 0.375 * 0.12  # 0.2325
-    defcon_rate = 0.625 * 12.0 + 0.375 * 8.0  # 10.5
+    defcon_rate = 0.625 * 12.0 + 0.375 * 7.0  # 10.125
     expected = (
         2.0  # appearance
         + goal_rate * 1.2 * GOAL_PTS[3]  # goals: 2.145
         + assist_rate * 1.2 * ASSIST_PTS  # assists: 0.837
         + math.exp(-1.54) * CS_PTS[3]  # clean sheet
         + 0.9  # bonus: 9 in 900 minutes, unshrunk
-        + 2 * ((defcon_rate - 12 / 2) / 12)  # defcon: 0.375 chance of 2 points
+        + 2 * ((defcon_rate - 12 / 2) / 12)  # defcon: 0.34375 chance of 2 points
     )
     assert projection.per_gw[2] == approx(expected)
     assert projection.player_id == 10
@@ -552,8 +557,9 @@ def test_projects_a_midfielder_at_home():
 def test_projects_a_defender_away():
     # 720 minutes is eight nineties, weight 8/14 on his own rates: 0.8 xG is
     # 0.1 a game shrunk to 0.0786 (toward the 0.05 defender prior), 1.6 xA is
-    # 0.2 shrunk to 0.1357, and 80 actions is 10 a game lifted to 11.71 (toward
-    # 14). His threshold is ten, so that is a 0.6714 chance of the two points.
+    # 0.2 shrunk to 0.1357, and 80 actions is 10 a game — his threshold, and now
+    # the defender prior too, so shrinkage leaves it at 10: a 0.5 chance of the
+    # two points.
     defender = player(
         id=20,
         team=2,
@@ -568,7 +574,7 @@ def test_projects_a_defender_away():
     w = 8 / 14
     goal_rate = w * 0.1 + (1 - w) * 0.05
     assist_rate = w * 0.2 + (1 - w) * 0.05
-    defcon_rate = w * 10.0 + (1 - w) * 14.0
+    defcon_rate = w * 10.0 + (1 - w) * 10.0  # 10.0, unmoved
     expected = (
         1.8  # appearance: played 1.0 + p60 0.8
         + goal_rate * 0.8 * 0.8 * GOAL_PTS[2]  # minutes 72/90 = 0.8, att 0.8

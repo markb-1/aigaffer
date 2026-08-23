@@ -71,12 +71,23 @@ SHRINKAGE_NINETIES = 6.0
 # what a player we know nothing about is assumed to do, and what a thin sample
 # is pulled toward. Deliberately coarse — their job is to be a sane anchor for
 # an unproven player, not a second model — and tunable. Goals and assists are
-# expected-goal and expected-assist rates; the defensive-contribution prior is
-# in *actions* per 90 (it feeds the threshold model in :func:`defcon_points`,
-# not points); saves are a keeper's own.
+# expected-goal and expected-assist rates; saves are a keeper's own.
+#
+# The defensive-contribution prior is in *actions* per 90 and feeds the
+# threshold model in :func:`defcon_points`, not points, so where it sits
+# relative to the threshold is the whole of its effect. It must sit AT the
+# threshold, not above it: a prior above the bar shrinks every thin-sample
+# defender toward a near-certain +2 (a 14-actions prior against a 10 threshold
+# reads as a 0.9 hit chance), which over-values every cheap defender the moment
+# the season starts — the very distortion shrinkage exists to remove, moved one
+# term over. Pinned at the threshold instead (DEF 10 = its bar), the unproven
+# defender is a coin flip on it, which is what "we do not know yet" should mean.
+# Midfield sits a notch below its higher bar for the same reason: a typical
+# midfielder is not a defensive-points contributor, and the prior should not
+# pretend he is.
 XG90_PRIOR = {GOALKEEPER: 0.0, DEFENDER: 0.05, MIDFIELDER: 0.12, FORWARD: 0.30}
 XA90_PRIOR = {GOALKEEPER: 0.0, DEFENDER: 0.05, MIDFIELDER: 0.12, FORWARD: 0.12}
-DEFCON90_PRIOR = {GOALKEEPER: 0.0, DEFENDER: 14.0, MIDFIELDER: 8.0, FORWARD: 3.0}
+DEFCON90_PRIOR = {GOALKEEPER: 0.0, DEFENDER: 10.0, MIDFIELDER: 7.0, FORWARD: 3.0}
 SAVES90_PRIOR = {GOALKEEPER: 3.0, DEFENDER: 0.0, MIDFIELDER: 0.0, FORWARD: 0.0}
 
 # Defensive contributions pay two points once in a match, to a defender who
