@@ -44,8 +44,10 @@ from aigaffer.data.models import Player
 from aigaffer.manager.tools import played_chips
 from aigaffer.model.xp import PlayerProjection
 from aigaffer.report.render import (
+    NO_CHIP,
     POSITIONS,
     carries_a_path,
+    chip_label,
     deadline,
     hits_taken,
     horizon_of,
@@ -133,11 +135,12 @@ PATH_GUARD = (
     " scratch every run. resolve re-plans it with your adjustments in it."
 )
 PLANNED_GUARD = (
-    "Only bench_boost and triple_captain can be finalized: they are played on"
-    " the team a plan already fields. A wildcard or a free hit is a different"
-    " squad, and no plan on this board was solved for one, so"
-    " finalize_decision refuses them. If you think this is the week for one,"
-    " finalize with chip 'none' and argue for it in your rationale."
+    "The solver plans chip weeks now, so all four chips can be finalized: a"
+    " plan that carries a chip in its path was built for that chip, and the"
+    " gameweek it means to play each one shows on the path. Finalize the chip"
+    " the plan in hand recommends; a chip already marked played above is"
+    " refused whatever you argue. To leave the chip to the person whose team"
+    " this is, finalize with chip 'none' and argue for it in your rationale."
 )
 
 # The longest a name, club or status out of the payload may be before it is
@@ -614,16 +617,20 @@ def _path(plan: Plan, board: _Board) -> str:
 
 
 def _planned(move: "PlannedMove", board: _Board) -> str:
-    """One future gameweek: who comes in, who goes, and what it costs.
+    """One future gameweek: who comes in, who goes, what it costs, and the chip.
 
     The hit rides on the line when there is one and stays off it when there is
     not. A plan whose line says "0 hits" and whose path pays four points in
-    three weeks' time is a plan he should be able to see paying them.
+    three weeks' time is a plan he should be able to see paying them. A chip the
+    window means to play that week rides on it too — the whole point of showing
+    the path is the argument it makes for the opening, and a planned wildcard or
+    free hit three gameweeks out is a large part of that argument.
     """
     names = [f"+{_safe(board.players[pid].web_name)}" for pid in move.transfers_in]
     names += [f"-{_safe(board.players[pid].web_name)}" for pid in move.transfers_out]
     taken = f" ({plural(move.hits, 'hit')})" if move.hits else ""
-    return f"GW{move.event} " + " ".join(names) + taken
+    chip = f" [{chip_label(move.chip)}]" if move.chip != NO_CHIP else ""
+    return f"GW{move.event} " + " ".join(names) + taken + chip
 
 
 def _listed(pids: list[int], board: _Board) -> str:

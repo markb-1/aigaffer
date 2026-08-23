@@ -22,6 +22,14 @@ def planner_env(monkeypatch):
     return monkeypatch
 
 
+@pytest.fixture
+def chips_env(monkeypatch):
+    """A clean slate for the chip knob: the real environment may pin it."""
+    monkeypatch.setenv("FPL_TEAM_ID", "1")
+    monkeypatch.delenv("AIGAFFER_CHIPS", raising=False)
+    return monkeypatch
+
+
 def test_from_env_reads_values(monkeypatch):
     monkeypatch.setenv("FPL_TEAM_ID", "1234567")
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
@@ -109,6 +117,25 @@ def test_only_the_word_single_switches_the_planner(planner_env):
     for value in ("Single", "SINGLE", "0", "greedy", ""):
         planner_env.setenv("AIGAFFER_PLANNER", value)
         assert Config.from_env().planner == "multi"
+
+
+def test_the_planner_schedules_chips_by_default(chips_env):
+    assert Config.from_env().chips is True
+    assert Config(team_id=1).chips is True
+
+
+def test_chips_are_switched_off_by_the_literal_off(chips_env):
+    chips_env.setenv("AIGAFFER_CHIPS", "off")
+    assert Config.from_env().chips is False
+
+
+def test_only_the_word_off_switches_the_chips(chips_env):
+    """The AIGAFFER_PLANNER convention: one literal value disables, everything
+    else leaves the feature on. A typo does not silently turn off chip
+    planning."""
+    for value in ("Off", "OFF", "0", "no", "", "on"):
+        chips_env.setenv("AIGAFFER_CHIPS", value)
+        assert Config.from_env().chips is True
 
 
 def test_manager_enabled_follows_the_key_when_constructed_directly():

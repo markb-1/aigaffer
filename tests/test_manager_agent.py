@@ -675,7 +675,7 @@ def test_the_system_prompt_says_a_path_is_advice_and_not_a_commitment():
     # he has to know that only the opening is ever entered — and that asking
     # for a re-solve plans the rest of it again on his own minutes.
     assert "Some plans carry a path" in SYSTEM_PROMPT
-    assert "the coming gameweek's transfers are ever entered" in SYSTEM_PROMPT
+    assert "the coming gameweek's transfers and chip are ever entered" in SYSTEM_PROMPT
     assert "planned again from scratch every run" in SYSTEM_PROMPT
     assert "resolve re-plans the paths" in SYSTEM_PROMPT
 
@@ -1124,15 +1124,38 @@ def test_a_long_justification_that_never_names_the_chip_is_refused():
 
 
 @pytest.mark.parametrize("chip", ["wildcard", "free_hit"])
-def test_a_chip_that_rewrites_the_squad_is_refused_however_well_argued(chip: str):
-    # Every plan on the board was solved with the transfer rules in force. A
-    # wildcard or a free hit suspends them, so the plan he would be finalizing
-    # is a plan for a different week, and no argument makes that coherent.
+def test_a_chip_the_solver_now_plans_can_be_finalized(chip: str):
+    # The Phase 2 guard is gone: the solver plans chip weeks, so a wildcard or a
+    # free hit is a squad it actually built. A well-argued one is finalized like
+    # any other chip — the only remaining refusal is a chip already spent, and
+    # that lives at the orchestrator seam, not in this validator.
     argued = f"Playing the {chip.replace('_', ' ')} this week.{CHIP_CASE}"
     client, decision = converse(
         [
             reply(
                 use("finalize_decision", finalize(chip=chip, justification=argued))
+            )
+        ]
+    )
+
+    assert decision.chip == chip
+    assert decision.chip_justification == argued
+    assert decision.source == "manager"
+    assert len(client.requests) == 1, "it was accepted the first time"
+
+
+@pytest.mark.parametrize("chip", ["wildcard", "free_hit"])
+def test_a_now_plannable_chip_still_needs_a_real_argument(chip: str):
+    # Relaxing the squad-rewrite guard did not relax the justification: a
+    # one-liner for a wildcard or a free hit is refused exactly as it is for the
+    # other two.
+    client, _ = converse(
+        [
+            reply(
+                use(
+                    "finalize_decision",
+                    finalize(chip=chip, justification="Play it, looks good."),
+                )
             ),
             reply(use("finalize_decision", finalize())),
         ]
@@ -1140,10 +1163,7 @@ def test_a_chip_that_rewrites_the_squad_is_refused_however_well_argued(chip: str
     refusal = only_result(client.requests[1])
 
     assert refusal["is_error"] is True
-    assert refusal["content"].startswith("Phase 2 does not plan chip weeks:")
-    assert "chip='none'" in refusal["content"]
-    assert "bench_boost/triple_captain" in refusal["content"]
-    assert decision.chip == "none" and decision.source == "manager"
+    assert "argue for it" in refusal["content"]
 
 
 def test_the_system_prompt_says_where_the_report_has_to_be_written():
@@ -1161,10 +1181,12 @@ def test_the_system_prompt_asks_for_the_shape_the_report_reads_best_in():
         assert heading in SYSTEM_PROMPT
 
 
-def test_the_system_prompt_names_the_two_chips_he_may_finalize():
-    assert "The only chips you may finalize are bench_boost and triple_captain" in (
-        SYSTEM_PROMPT
-    )
+def test_the_system_prompt_says_the_solver_plans_the_chips():
+    # The Phase 2 line naming only two finalizable chips is gone; the prompt now
+    # says all four are his and that the road ahead shows the planned chip weeks.
+    assert "The only chips you may finalize" not in SYSTEM_PROMPT
+    assert "The solver now plans chips" in SYSTEM_PROMPT
+    assert "already spent will be refused" in SYSTEM_PROMPT
 
 
 def test_a_chip_argued_properly_is_played():

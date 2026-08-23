@@ -308,12 +308,24 @@ class PlannedPath:
     or ``"none"``: :class:`~aigaffer.solver.optimizer.Plan` has no chip field of
     its own, so the executed chip is surfaced here, while the advisory chip
     weeks later in the window ride their :class:`PlannedMove`.
+
+    ``week1_freehit_squad`` and ``week1_freehit_xi`` are the temporary fifteen
+    and eleven a free hit fields THIS week, when ``week1_chip`` is
+    :data:`FREE_HIT` — and None otherwise. The plan's own ``squad``/``xi`` are
+    the STANDING team, which is what reverts and what next week owns; on a free-
+    hit week that standing team is not the one Mark takes to the deadline, so
+    the eleven he actually fields is surfaced here for the report to show. It is
+    priced by :func:`_best_one_week_squad`, the same one-week squad the free-hit
+    value was measured on, so the number in the panel and the team on the sheet
+    are the same team.
     """
 
     moves: list[PlannedMove]
     objective: float
     weekly_xp: dict[int, float]
     week1_chip: str = "none"
+    week1_freehit_squad: list[int] | None = None
+    week1_freehit_xi: list[int] | None = None
 
 
 def optimize_path(
@@ -395,6 +407,11 @@ def optimize_path(
     # approximation. A gameweek whose best legal one-week squad the budget cannot
     # even field is no window at all, which is None like any other infeasibility.
     best_oneweek: dict[int, float] = {}
+    # The fifteen and eleven each week's free-hit price was measured on, kept so
+    # that the week the window actually plays a free hit can field the team it
+    # was scored for rather than a re-derivation of it. Only the objective needs
+    # the value; only the report needs the squad, and only for the played week.
+    best_oneweek_squad: dict[int, tuple[list[int], list[int]]] = {}
     if FREE_HIT in available_chips:
         budget = bank + sum(players[p].now_cost for p in current)
         for w in weeks:
@@ -406,6 +423,7 @@ def optimize_path(
             if priced is None:
                 return None
             best_oneweek[w] = priced[0]
+            best_oneweek_squad[w] = (priced[1], priced[2])
 
     problem = pulp.LpProblem("aigaffer_transfer_path", pulp.LpMaximize)
 
@@ -775,11 +793,20 @@ def optimize_path(
             )
 
     objective -= HIT_POINTS * hits + CHURN_EPSILON * bought
+    # A free hit played this week fields a temporary team the plan's standing
+    # squad is not: surface the fifteen and eleven it was priced on so the
+    # report can show them. Any other opening chip leaves these None — the
+    # standing squad is the one that plays.
+    freehit_squad, freehit_xi = (
+        best_oneweek_squad[1] if opening_chip == FREE_HIT else (None, None)
+    )
     path = PlannedPath(
         moves=path_moves,
         objective=objective,
         weekly_xp=weekly_xp,
         week1_chip=opening_chip,
+        week1_freehit_squad=freehit_squad,
+        week1_freehit_xi=freehit_xi,
     )
     plan = Plan(
         squad=opening,

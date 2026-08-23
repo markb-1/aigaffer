@@ -62,6 +62,7 @@ def generate_plans(
     projections_events: list[int] | None = None,
     decay: float = 0.85,
     planner: str = "multi",
+    available_chips: frozenset[str] = frozenset(),
 ) -> list[Plan]:
     """Candidate plans, best objective first.
 
@@ -72,6 +73,13 @@ def generate_plans(
     a ``planner`` of ``"single"`` says the same thing on purpose, and anything
     else at all means the window, since a misspelling should not be able to
     quietly turn the better engine off.
+
+    ``available_chips`` are the chips the window may schedule — the four
+    :mod:`~aigaffer.solver.multiweek` plans, minus the ones already spent, or
+    empty when the chip planner is switched off. It rides straight through to
+    every windowed solve; empty, which is the default, builds the pre-chip
+    model to the byte and leaves the single-week fallback untouched (it never
+    saw a chip in the first place).
 
     A transfer count the budget or the pool cannot support comes back from
     the optimizer as None and is simply left out — infeasible is an answer,
@@ -97,6 +105,7 @@ def generate_plans(
                 decay,
                 forced_first_transfers=count,
                 time_limit=SWEEP_TIME_LIMIT,
+                available_chips=available_chips,
             )
             # The path comes back beside the plan and is already on it, so the
             # second half of the pair is nothing the shortlist has to carry.

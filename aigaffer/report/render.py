@@ -58,6 +58,10 @@ if TYPE_CHECKING:  # the manager imports this module, so never the reverse
 POSITIONS = {GOALKEEPER: "GKP", DEFENDER: "DEF", MIDFIELDER: "MID", FORWARD: "FWD"}
 OUTFIELD = (DEFENDER, MIDFIELDER, FORWARD)
 
+# The chip whose fields on a free-hit week hold the temporary team. Named so the
+# renderer and the orchestrator agree on which chip fields an eleven of its own.
+FREE_HIT = "free_hit"
+
 WATCHLIST_SIZE = 5
 DEADLINE_FORMAT = "%a %d %b %Y %H:%M UTC"
 
@@ -106,6 +110,19 @@ WINDOW_UNITS = (
     "xP and net are the whole window, decayed and with the armband in;"
     " transfers and hits shown are this week's unless the row says otherwise."
 )
+
+# What the chip-EV panel says once the solver actually plans one this week: the
+# number above is not only a price now, it is a move the plan makes. Named so
+# the panel can distinguish a chip priced from a chip planned.
+PLANNED_THIS_WEEK = (
+    "Planned this gameweek: {chip}. The solver's plan plays it now, not only"
+    " prices it — see the Do this block."
+)
+
+# The label a free-hit week hangs on the eleven it fields. The team on the sheet
+# is the temporary one the chip buys for a week, not the standing squad, and it
+# reverts — so the section and the checklist both say so, in the same words.
+FREE_HIT_XI = "Free Hit XI (this week only)"
 
 # The line under the path, every week. The gameweeks after this one are solved
 # on a projection of a projection and re-planned from scratch on the next run;
@@ -158,6 +175,11 @@ def render_report(
     players = {player.id: player for player in bootstrap.elements}
     clubs = {team.id: team.short_name for team in bootstrap.teams}
     road = choice.path.moves if choice.path is not None else []
+    # The chip this week plays, decided in one place. It moves the checklist, the
+    # team sheet's label and the panel's note together, so none of them can say
+    # a different thing about the same decision.
+    chip = played_chip(choice, gaffer)
+    free_hit = _free_hitting(choice, chip)
 
     sections = [
         _header(mode, event),
@@ -165,12 +187,15 @@ def render_report(
             []
             if _drafting(choice)
             else [
-                _do_this(event, choice, lineup, players, clubs, gaffer, free_transfers)
+                _do_this(
+                    event, choice, lineup, players, clubs, chip, free_hit,
+                    free_transfers,
+                )
             ]
         ),
         _recommendation(choice, players, clubs),
         *([] if gaffer is None else [_gaffer(gaffer, players)]),
-        _team_sheet(lineup, players, projections),
+        _team_sheet(lineup, players, projections, free_hit),
         _candidates(
             plans,
             choice,
@@ -178,10 +203,52 @@ def render_report(
             fell_back=engine_expected and choice.path is None,
         ),
         *([_road_ahead(road, players)] if road else []),
-        _chip_panel(chips, horizon_of(projections)),
+        _chip_panel(chips, horizon_of(projections), chip),
         _watchlist(choice.squad, players, clubs, projections),
     ]
     return "\n\n".join(sections) + "\n"
+
+
+def _free_hitting(choice: Plan, chip: str) -> bool:
+    """Is this a free-hit week with a temporary team to field?
+
+    Only then does the report field an eleven the standing squad is not: a free
+    hit the solver actually planned carries the fifteen it priced. Any other
+    chip, or a free hit nobody put a squad behind, leaves the standing team on
+    the sheet.
+    """
+    return (
+        chip == FREE_HIT
+        and choice.path is not None
+        and bool(choice.path.week1_freehit_xi)
+    )
+
+
+def chip_label(chip: str) -> str:
+    """``bench_boost`` as a person reads it: ``Bench Boost``.
+
+    Public because the manager's briefing names the same chips on the same
+    paths, and a chip that reads one way in the report and another in the
+    briefing is a chip nobody can match between the two documents.
+    """
+    return chip.replace("_", " ").title()
+
+
+def played_chip(choice: Plan, gaffer: "ManagerDecision | None") -> str:
+    """The chip this week actually plays, or ``"none"``.
+
+    One place decides it, so the checklist, the panel and the record cannot come
+    to disagree. With a manager it is his: he is the decision, and he may play a
+    chip the solver planned, a different one, or none. Without a manager it is
+    the solver's own week-1 chip, which the window sets on the recommended
+    plan's path — a plan off the single-week solver has no path and plays
+    nothing, which is the pre-chip behaviour to the byte.
+    """
+    if gaffer is not None:
+        return gaffer.chip
+    if choice.path is not None:
+        return choice.path.week1_chip
+    return NO_CHIP
 
 
 def _header(mode: str, event: Event) -> str:
@@ -219,7 +286,8 @@ def _do_this(
     lineup: Lineup,
     players: dict[int, Player],
     clubs: dict[int, str],
-    gaffer: "ManagerDecision | None",
+    chip: str,
+    free_hit: bool,
     free_transfers: int | None,
 ) -> str:
     """The week's moves as a checklist, first and imperative.
@@ -231,25 +299,45 @@ def _do_this(
     signing has to start. Everything below it explains this; this is the part he
     acts on, and it draws from the same decision without adding a fact to it.
 
+    ``chip`` is the chip this week plays, ``"none"`` for most weeks. A free-hit
+    week is its own checklist: the chip fields a whole temporary team that
+    reverts, so there is no swap on the standing squad to make — the block names
+    the eleven to build and says it is for one week, and ``lineup`` is already
+    that temporary team rather than the standing one.
+
     A signing that starts is the one lineup change worth flagging here: the app
     drops a transferred-in player onto the bench, so an eleven that needs him in
     it needs the bench reordered by hand. The shape is named and the full eleven
     is left to the team sheet below — a checklist, not a second copy of it.
     """
-    lines = [
-        "## Do this",
-        "",
-        f"⏰ Make these by {deadline(event)} — GW{event.id}",
-        *_moves(choice, players, clubs, free_transfers),
-    ]
-    if gaffer is not None and gaffer.chip != NO_CHIP:
-        lines.append(f"PLAY {gaffer.chip.replace('_', ' ').title()}")
+    lines = ["## Do this", "", f"⏰ Make these by {deadline(event)} — GW{event.id}"]
+    if free_hit:
+        lines.append(f"PLAY {chip_label(chip)}")
+        lines.append(
+            f"{FREE_HIT_XI}: {_eleven(lineup, players)}"
+            " — a temporary team; it reverts next week"
+        )
+        lines.append(
+            f"CAPTAIN {_who(lineup.captain, players)}"
+            f" · VICE {_who(lineup.vice, players)}"
+        )
+        return "\n".join(lines)
+
+    lines += _moves(choice, players, clubs, free_transfers)
+    if chip != NO_CHIP:
+        lines.append(f"PLAY {chip_label(chip)}")
     lines.append(
         f"CAPTAIN {_who(lineup.captain, players)} · VICE {_who(lineup.vice, players)}"
     )
     if set(choice.transfers_in) & set(lineup.xi):
         lines.append(f"Set lineup: {_formation(lineup, players)}")
     return "\n".join(lines)
+
+
+def _eleven(lineup: Lineup, players: dict[int, Player]) -> str:
+    """The eleven by name, for a checklist that has to name a whole team at once
+    — the free-hit build, where the standing squad is not the one that plays."""
+    return ", ".join(players[pid].web_name for pid in lineup.xi)
 
 
 def _moves(
@@ -475,6 +563,7 @@ def _team_sheet(
     lineup: Lineup,
     players: dict[int, Player],
     projections: dict[int, PlayerProjection],
+    free_hit: bool = False,
 ) -> str:
     """The eleven a row to a position, then the bench in the order it is read.
 
@@ -483,12 +572,17 @@ def _team_sheet(
     armbands were chosen on. It is a way of laying out an eleven that is
     already picked, not a second opinion about it: the bench keeps the order
     it was given, because that order is a substitution list.
+
+    ``free_hit`` says this eleven is the temporary team a free hit fields, not
+    the standing squad, so the heading says which — the standing squad reverts
+    and is not the team taken to the deadline this week.
     """
     rows: dict[int, list[str]] = defaultdict(list)
     for pid in _ranked(lineup.xi, players, projections):
         rows[players[pid].element_type].append(_armband(pid, lineup, players))
 
-    lines = [f"## Starting XI ({_formation(lineup, players)})", ""]
+    label = f" — {FREE_HIT_XI}" if free_hit else ""
+    lines = [f"## Starting XI ({_formation(lineup, players)}){label}", ""]
     lines += [
         f"- {label}: " + ", ".join(rows[position])
         for position, label in POSITIONS.items()
@@ -635,19 +729,29 @@ def _road_ahead(moves: list["PlannedMove"], players: dict[int, Player]) -> str:
 
 
 def _planned(move: "PlannedMove", players: dict[int, Player]) -> str:
-    """``out Gale (£4.0m), in Dodd (£4.5m) — 1 FT, no hit``.
+    """``out Gale (£4.0m), in Dodd (£4.5m) — 1 FT, no hit``, and the chip.
 
     The sales bullet is omitted when there are none, as the recommendation's
     is: a week the window only buys in is not a week to print an empty list
     for. In practice a squad is fifteen every gameweek and every move is a
     swap, so this is a defence against a solver that changed rather than a
     case anybody has seen.
+
+    A chip the window means to play that gameweek rides on the end — and a
+    gameweek that only plays a chip, moving nobody, is the chip alone: a bench
+    boost or a wildcard the plan schedules three weeks out is a large part of
+    the argument the road ahead is making for the opening move.
     """
     parts = []
     if move.transfers_out:
         parts.append("out " + _priced(move.transfers_out, players))
-    parts.append("in " + _priced(move.transfers_in, players))
-    return ", ".join(parts) + f" — {_spent(move)}"
+    if move.transfers_in:
+        parts.append("in " + _priced(move.transfers_in, players))
+    moved = ", ".join(parts) + f" — {_spent(move)}" if parts else ""
+    chip = chip_label(move.chip) if move.chip != NO_CHIP else ""
+    if moved and chip:
+        return f"{moved} — {chip}"
+    return moved or chip
 
 
 def _spent(move: "PlannedMove") -> str:
@@ -664,7 +768,7 @@ def _spent(move: "PlannedMove") -> str:
     return f"{plural(free, 'FT')}, {cost}"
 
 
-def _chip_panel(chips: ChipEvs, horizon: int) -> str:
+def _chip_panel(chips: ChipEvs, horizon: int, chip: str = NO_CHIP) -> str:
     """The chip numbers, signed: a chip can be worth less than nothing.
 
     Three of the four are next gameweek's: the bench that would have scored,
@@ -674,6 +778,11 @@ def _chip_panel(chips: ChipEvs, horizon: int) -> str:
     fixtures rather than for Saturday — so its row says which number it is.
     Four figures under one heading, one of them measuring something else, is
     how a chip gets played on a comparison nobody made.
+
+    ``chip`` is the one the plan actually plays this week, if any. Its row is a
+    price like the others until the plan plays it, so the panel says below the
+    numbers that this one is planned — the reader is being asked to act on it,
+    not only to weigh it.
     """
     panel = {
         "Bench boost": chips.bench_boost,
@@ -683,6 +792,8 @@ def _chip_panel(chips: ChipEvs, horizon: int) -> str:
     lines = ["## Chip EV", "", CHIP_UNITS, ""]
     lines += [f"- {label}: {points:+.1f}" for label, points in panel.items()]
     lines.append(f"- Wildcard: {wildcard_ev(chips.wildcard, horizon)}")
+    if chip != NO_CHIP:
+        lines += ["", PLANNED_THIS_WEEK.format(chip=chip_label(chip))]
     return "\n".join(lines)
 
 

@@ -595,12 +595,13 @@ def test_the_wildcard_is_labelled_as_the_horizon_number_it_is():
     )
 
 
-def test_the_panel_says_which_chips_he_can_actually_finalize():
-    # The validator refuses a wildcard or a free hit; meeting that rule as an
-    # error costs a turn, and the panel is where he looks a chip up.
+def test_the_panel_says_the_solver_now_plans_the_chips():
+    # The Phase 2 line refusing a wildcard or a free hit is gone: all four are
+    # his now, the solver plans the weeks, and the panel says so where he looks.
     panel = " ".join(section(briefing(), "Chip EV"))
 
-    assert "Only bench_boost and triple_captain can be finalized" in panel
+    assert "Only bench_boost and triple_captain can be finalized" not in panel
+    assert "all four chips can be finalized" in panel
     assert "argue for it in your rationale" in panel
 
 
@@ -627,7 +628,7 @@ def test_a_panel_with_nothing_played_says_nothing_about_it():
     panel = section(briefing(), "Chip EV")
 
     assert "already played" not in " ".join(panel)
-    assert panel[-1].startswith("Only bench_boost and triple_captain")
+    assert panel[-1].startswith("The solver plans chip weeks now")
 
 
 @pytest.mark.parametrize(

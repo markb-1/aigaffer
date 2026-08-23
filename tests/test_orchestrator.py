@@ -38,10 +38,13 @@ from aigaffer.manager import agent
 from aigaffer.manager.agent import ManagerDecision
 from aigaffer.model.xp import PlayerProjection
 from aigaffer.orchestrator import (
+    ALL_CHIPS,
     NO_CHIPS,
     PipelineError,
     PipelineInputs,
     SolveResult,
+    _available_chips,
+    _fielded_lineup,
     build_projections,
     decide_mode,
     fetch_inputs,
@@ -52,6 +55,8 @@ from aigaffer.orchestrator import (
 from aigaffer.report.render import render_report
 from aigaffer.report.telegram import send_report
 from aigaffer.solver.lineup import Lineup, pick_lineup
+from aigaffer.solver.multiweek import PlannedPath
+from aigaffer.solver.optimizer import Plan
 from aigaffer.store import Store
 from tests.fixtures import (
     ELEMENT_SUMMARY_JSON,
@@ -206,11 +211,16 @@ def test_the_window_the_projections_cover_is_the_window_the_planner_plans(
 
     covered = sorted({gw for p in projections.values() for gw in p.per_gw})
     assert len(covered) == seam.cfg.horizon and covered[0] == seam.inputs.event.id
+    # The wildcard is spent in this universe's history, so the window is handed
+    # the other three — derived in one place and threaded through the sweep.
     assert asked == [
         {
             "projections_events": covered,
             "decay": seam.cfg.decay,
             "planner": "multi",
+            "available_chips": frozenset(
+                {"bench_boost", "triple_captain", "free_hit"}
+            ),
         }
     ]
 
@@ -333,6 +343,78 @@ def test_the_decision_says_what_was_decided(scout_run):
         "wildcard",
     }
     assert isinstance(decision["objective"], float)
+
+
+def test_the_chip_switch_off_is_phase_2_5_to_the_byte(tmp_path, scout_run):
+    # The whole feature is gated. With the switch off the window is handed no
+    # chips and builds the chip-blind model, and the report is the one the
+    # default run wrote — which the assertions above pin to Phase 2.5's shape —
+    # character for character. A chip nobody could clear the bar for changes
+    # nothing on this quiet board either way, so the two agree.
+    store = Store(tmp_path / "aigaffer.db")
+
+    report = run_pipeline(
+        Config(team_id=TEAM_ID, state_dir=tmp_path, chips=False),
+        make_client(pipeline_routes()),
+        store,
+        "scout",
+        send=False,
+    )
+
+    assert report == scout_run.report
+    assert store.last_runs(1)[0]["decision"]["chip"] == "none"
+
+
+def test_the_decision_records_the_chip_this_week_plays(scout_run):
+    # No manager and a quiet universe: the reservation bars stop every chip, so
+    # none is played and the record says so. The field is there either way — the
+    # diary reads the same as the phone about what chip, if any, went in.
+    assert scout_run.store.last_runs(1)[0]["decision"]["chip"] == "none"
+
+
+def test_a_free_hit_the_solver_plans_reaches_the_report_and_the_record(
+    monkeypatch, tmp_path
+):
+    # Ruling 4 and the T3 carry end to end, with the solver's answer stubbed so
+    # a free hit is actually planned: the report labels the free-hit eleven and
+    # the record keeps the chip. No manager, so the chip is the solver's own.
+    inputs = fetch_inputs(
+        Config(team_id=TEAM_ID, state_dir=tmp_path), make_client(pipeline_routes())
+    )
+    _, projections = build_projections(inputs, Config(team_id=TEAM_ID))
+    standing = inputs.squad.player_ids
+    positions = {pid: p.element_type for pid, p in inputs.players.items()}
+    gw_xp = {pid: pr.per_gw.get(inputs.event.id, 0.0) for pid, pr in projections.items()}
+    fh_squad = [1, 9, 3, 4, 10, 12, 13, 5, 6, 11, 14, 17, 7, 15, 18]
+    choice = Plan(
+        squad=standing, xi=[], transfers_in=[], transfers_out=[], hits=0,
+        xp_total=0.0, objective=0.0,
+        path=PlannedPath(
+            moves=[], objective=0.0, weekly_xp={}, week1_chip="free_hit",
+            week1_freehit_squad=fh_squad, week1_freehit_xi=fh_squad[:11],
+        ),
+    )
+    solved = SolveResult(
+        plans=[choice],
+        choice=choice,
+        lineup=pick_lineup(standing, positions, gw_xp),
+        chips=NO_CHIPS,
+        draft_mode=False,
+    )
+    monkeypatch.setattr(orchestrator, "solve", lambda *a, **k: solved)
+    store = Store(tmp_path / "aigaffer.db")
+
+    report = run_pipeline(
+        Config(team_id=TEAM_ID, state_dir=tmp_path),
+        make_client(pipeline_routes()),
+        store,
+        "scout",
+        send=False,
+    )
+
+    assert "Free Hit XI (this week only)" in report
+    assert "PLAY Free Hit" in report
+    assert store.last_runs(1)[0]["decision"]["chip"] == "free_hit"
 
 
 def test_the_chips_are_priced_off_the_squad_we_hold(scout_run):
@@ -580,6 +662,84 @@ def test_a_solve_with_no_squad_drafts_a_fifteen(tmp_path):
     assert solved.plans == [solved.choice]
     assert len(solved.choice.transfers_in) == 15
     assert solved.chips == NO_CHIPS  # no squad to play a chip against
+
+
+# --- which chips the window may plan ---------------------------------------
+#
+# The four chips, less the ones the season's history says are spent, when the
+# switch is on and there is a squad to play them against. Off, or drafting, the
+# set is empty and the window builds Phase 2.5's chip-blind model.
+
+
+def test_available_chips_are_the_four_less_the_ones_spent(seam):
+    # Nothing played: all four are in hand.
+    inputs = replace(seam.inputs, chips_used=[])
+
+    assert _available_chips(Config(team_id=TEAM_ID), inputs) == ALL_CHIPS
+
+
+def test_available_chips_drop_a_chip_already_played(seam):
+    # The API spells it "wildcard" and so do we; a played one is simply absent
+    # from the decision space, which is half of the "already played" guarantee.
+    inputs = replace(seam.inputs, chips_used=[{"name": "wildcard", "event": 1}])
+
+    available = _available_chips(Config(team_id=TEAM_ID), inputs)
+
+    assert "wildcard" not in available
+    assert available == ALL_CHIPS - {"wildcard"}
+
+
+def test_the_chip_switch_off_leaves_no_chips_available(seam):
+    inputs = replace(seam.inputs, chips_used=[])
+
+    assert _available_chips(Config(team_id=TEAM_ID, chips=False), inputs) == frozenset()
+
+
+def test_a_draft_has_no_chips_to_plan(seam):
+    # No squad, so nothing to play a chip against — the empty set the window
+    # reads as "advisory only", which is the pre-chip model.
+    inputs = replace(seam.inputs, squad=None)
+
+    assert _available_chips(Config(team_id=TEAM_ID), inputs) == frozenset()
+
+
+def test_the_fielded_lineup_is_the_free_hit_team_on_a_free_hit_week(seam):
+    # The critical T3 carry at the orchestrator seam: on a free-hit week the
+    # eleven fielded is the temporary team the solver priced, not the standing
+    # squad. Any other chip, or none, leaves the decided eleven standing.
+    _, projections = build_projections(seam.inputs, seam.cfg)
+    positions = {pid: p.element_type for pid, p in seam.inputs.players.items()}
+    gw_xp = {
+        pid: pr.per_gw.get(seam.inputs.event.id, 0.0)
+        for pid, pr in projections.items()
+    }
+    standing_squad = seam.inputs.squad.player_ids
+    standing = pick_lineup(standing_squad, positions, gw_xp)
+
+    # A legal 2/5/5/3 fifteen from the pipeline pool, deliberately not the
+    # standing one — Jarvis, Meier, Reyes and Sarr are not in the squad we hold.
+    fh_squad = [1, 9, 3, 4, 10, 12, 13, 5, 6, 11, 14, 17, 7, 15, 18]
+    choice = Plan(
+        squad=standing_squad, xi=[], transfers_in=[], transfers_out=[], hits=0,
+        xp_total=0.0, objective=0.0,
+        path=PlannedPath(
+            moves=[], objective=0.0, weekly_xp={}, week1_chip="free_hit",
+            week1_freehit_squad=fh_squad, week1_freehit_xi=fh_squad[:11],
+        ),
+    )
+
+    fielded = _fielded_lineup(
+        "free_hit", choice, standing, seam.inputs.players, projections,
+        seam.inputs.event.id,
+    )
+    assert set(fielded.xi) <= set(fh_squad)
+    assert fielded.xi != standing.xi
+
+    # No chip: the decided eleven is handed straight back, unchanged.
+    assert _fielded_lineup(
+        "none", choice, standing, seam.inputs.players, projections,
+        seam.inputs.event.id,
+    ) is standing
 
 
 # --- rounds nobody has played yet ------------------------------------------

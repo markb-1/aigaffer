@@ -67,10 +67,16 @@ from aigaffer.data.models import (
 )
 from aigaffer.model.minutes import expected_minutes, season_prior
 from aigaffer.model.xp import PlayerProjection, project_all, projected_events
-from aigaffer.report.render import render_report
+from aigaffer.report.render import played_chip, render_report
 from aigaffer.report.telegram import send_report
 from aigaffer.solver.lineup import ChipEvs, Lineup, chip_evs, pick_lineup
-from aigaffer.solver.multiweek import PlannedMove
+from aigaffer.solver.multiweek import (
+    BENCH_BOOST,
+    FREE_HIT,
+    TRIPLE_CAPTAIN,
+    WILDCARD,
+    PlannedMove,
+)
 from aigaffer.solver.optimizer import (
     AVAILABLE,
     CANDIDATES_PER_POSITION,
@@ -135,6 +141,12 @@ DRAFT_TRANSFERS = SQUAD_SIZE
 DRAFT_LABEL = "initial squad draft"
 
 NO_CHIPS = ChipEvs(bench_boost=0.0, triple_captain=0.0, free_hit=0.0, wildcard=0.0)
+
+# The four chips the window can plan. What is still in hand is this minus the
+# ones the season's history says are spent; the derivation lives in one place
+# (:func:`_available_chips`) so the solver and the "chip already played" belt
+# read the same chip history the same way.
+ALL_CHIPS = frozenset({BENCH_BOOST, TRIPLE_CAPTAIN, WILDCARD, FREE_HIT})
 
 # Which solver answered, for the record and for the report. It is read off the
 # recommendation rather than off the configuration, because asking for the
@@ -271,6 +283,12 @@ def run_pipeline(
     # re-solved on minutes of his own. A team sheet he picked printed beside
     # numbers he overruled is one report describing two different weeks.
     costed = projections if gaffer is None else (gaffer.projections or projections)
+    # The chip this week plays, and the eleven that goes with it. On a free-hit
+    # week that eleven is the temporary team the plan built, not the standing
+    # squad, so the fielded lineup — and the armbands, and the record's captain
+    # — come off it; ``choice`` still reports the standing squad, which reverts.
+    chip = played_chip(choice, gaffer)
+    lineup = _fielded_lineup(chip, choice, lineup, inputs.players, costed, event.id)
     report = render_report(
         _label(mode, drafting=solved.draft_mode),
         event,
@@ -311,6 +329,10 @@ def run_pipeline(
         "vice": lineup.vice,
         "xp_total": choice.xp_total,
         "objective": choice.objective,
+        # The chip this week actually plays: the manager's if he decided, the
+        # solver's own week-1 chip otherwise, "none" on the great many weeks
+        # that play none. Recorded here so the diary reads the same as the phone.
+        "chip": chip,
         "chip_evs": asdict(solved.chips),
         "chip_baseline": _baseline_label(solved),
         "engine": _engine(choice),
@@ -329,7 +351,6 @@ def run_pipeline(
             rationale=gaffer.rationale,
             adjustments=gaffer.adjustments,
             unapplied=gaffer.unapplied,
-            chip=gaffer.chip,
             chip_justification=gaffer.chip_justification,
             searches=gaffer.searches,
         )
@@ -457,10 +478,17 @@ def solve(
 
     ``cfg`` is read for the two things the shortlist is drawn up by and the
     projection is not: which planner to ask, and what a gameweek further out is
-    worth against this one.
+    worth against this one. It is also where the chip switch is read: whether
+    the window may schedule a chip at all, and which are still in hand.
     """
+    available_chips = _available_chips(cfg, inputs)
     plans, choice = _plans(
-        inputs.players, projections, inputs.squad, inputs.free_transfers, cfg
+        inputs.players,
+        projections,
+        inputs.squad,
+        inputs.free_transfers,
+        cfg,
+        available_chips,
     )
     positions = {pid: player.element_type for pid, player in inputs.players.items()}
     gw_xp = {
@@ -806,12 +834,65 @@ def history_pool(players: dict[int, Player], held: list[int]) -> list[int]:
     return sorted(pool)
 
 
+def _available_chips(cfg: Config, inputs: PipelineInputs) -> frozenset[str]:
+    """Which chips the window may plan this run.
+
+    Empty when the switch is off — chips advisory only, Phase 2.5 to the byte —
+    and empty for a draft, because a chip is played against a squad and there
+    is not one yet. Otherwise the four the window plans, less the ones the
+    season's chip history says are already spent: a spent chip is simply absent
+    from the decision space, which is where the "chip already played" belt gets
+    its half of the guarantee.
+
+    ``played_chips`` is imported here rather than at module scope: the manager
+    package is the orchestrator's downstream, so the dependency runs one way and
+    is closed inside the one function that needs the chip-name mapping.
+    """
+    if not cfg.chips or inputs.squad is None:
+        return frozenset()
+    from aigaffer.manager.tools import played_chips
+
+    return ALL_CHIPS - played_chips(inputs.chips_used)
+
+
+def _fielded_lineup(
+    chip: str,
+    choice: Plan,
+    lineup: Lineup,
+    players: dict[int, Player],
+    projections: dict[int, PlayerProjection],
+    event_id: int,
+) -> Lineup:
+    """The eleven actually taken to the deadline.
+
+    Almost always the one already decided — the standing squad's best eleven,
+    whoever picked it. A free-hit week is the exception the whole of Task 3
+    exists for: the plan fields a temporary fifteen the standing squad is not,
+    priced by the solver and surfaced on the path, and it is that team's eleven
+    (and armbands) that plays this week. The standing squad reverts and is left
+    to ``choice`` and the record; here it is the team on the sheet that changes.
+
+    A free hit with no temporary squad behind it — a chip a manager finalized
+    that the solver never built a free-hit team for — leaves the standing eleven
+    standing, because there is no other to field.
+    """
+    if chip != FREE_HIT or choice.path is None or not choice.path.week1_freehit_squad:
+        return lineup
+    positions = {pid: player.element_type for pid, player in players.items()}
+    gw_xp = {
+        pid: projection.per_gw.get(event_id, 0.0)
+        for pid, projection in projections.items()
+    }
+    return pick_lineup(choice.path.week1_freehit_squad, positions, gw_xp)
+
+
 def _plans(
     players: dict[int, Player],
     xp: dict[int, PlayerProjection],
     squad: Squad | None,
     free_transfers: int | None,
     cfg: Config,
+    available_chips: frozenset[str] = frozenset(),
 ) -> tuple[list[Plan], Plan]:
     """The shortlist, and the plan to recommend from it.
 
@@ -819,7 +900,8 @@ def _plans(
     shortlist to draw up: one draft is the whole answer, and it is its own
     recommendation. A draft is also the one week the window is never asked
     about — fifteen signings will not fit under a gameweek's transfer ceiling
-    — which is why the drafting branch below does not pass one.
+    — which is why the drafting branch below does not pass one, and is also
+    the one week ``available_chips`` is always empty for.
     """
     if squad is None:
         draft = optimize(
@@ -843,6 +925,7 @@ def _plans(
         projections_events=projected_events(xp),
         decay=cfg.decay,
         planner=cfg.planner,
+        available_chips=available_chips,
     )
     if not plans:
         raise PipelineError("no legal squad is reachable from the current one")

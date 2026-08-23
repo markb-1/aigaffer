@@ -20,6 +20,14 @@ class Config:
     # has no answer; "single" is that solver and nothing else. An escape hatch
     # for a run that has to be quick or a week the window is misbehaving.
     planner: str = "multi"
+    # Whether the planner is allowed to schedule chips. On by default: the
+    # solver plans bench boost, triple captain, wildcard and free hit in the
+    # window and may recommend one this week. Off makes chips advisory only —
+    # priced in the panel, planned by nobody — which is Phase 2.5's behaviour
+    # to the byte. Only the literal "off" disables it, the same strict
+    # convention AIGAFFER_PLANNER uses: a typo should not be able to quietly
+    # switch a feature off.
+    chips: bool = True
 
     def __post_init__(self) -> None:
         # An empty key is no key: an unconfigured CI secret arrives exported and
@@ -47,4 +55,9 @@ class Config:
             planner=(
                 "single" if os.environ.get("AIGAFFER_PLANNER") == "single" else "multi"
             ),
+            # The same one-literal-value convention: only "off" disables the
+            # chip planner, and an unset export, a typo or an empty string all
+            # leave it on. Turning a feature off by accident is not a thing a
+            # misspelling should be able to do.
+            chips=os.environ.get("AIGAFFER_CHIPS") != "off",
         )

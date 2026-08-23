@@ -1585,6 +1585,34 @@ def test_free_hit_fields_a_temp_squad_that_reverts():
     assert not ({pid for pid, _ in FIFTEEN_HEROES} & set(plan.squad))
     assert_legal_path(players, SQUAD, 0, 0, [5, 6, 7], plan, path)
 
+    # The temporary team it fields is surfaced for the report — the heroes, not
+    # the standing squad — and it is a legal fifteen with a legal eleven inside
+    # it. This is the eleven Mark takes to the deadline, and the plan's own
+    # squad/xi are the standing team that reverts.
+    heroes = {pid for pid, _ in FIFTEEN_HEROES}
+    assert set(path.week1_freehit_squad) == heroes
+    assert len(path.week1_freehit_squad) == 15
+    assert set(path.week1_freehit_xi) <= set(path.week1_freehit_squad)
+    assert len(path.week1_freehit_xi) == 11
+    assert not (set(path.week1_freehit_squad) & set(plan.squad))
+
+
+def test_a_played_chip_that_is_not_a_free_hit_surfaces_no_temp_squad():
+    # The free-hit fields are None on every other opening chip: a bench boost is
+    # played on the team as it stands, so there is no temporary eleven to field.
+    # A flat board at 4.0 plays the boost in GW5 and holds the free hit, whose
+    # best one-week squad is the spine itself and gains nothing.
+    players, projections = flat([5, 6], 4.0)
+
+    _, path = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[5, 6],
+        decay=DECAY, available_chips=frozenset({BENCH_BOOST, FREE_HIT}),
+    )
+
+    assert path.week1_chip == BENCH_BOOST
+    assert path.week1_freehit_squad is None
+    assert path.week1_freehit_xi is None
+
 
 def test_a_free_hit_below_its_bar_is_held():
     # The reservation brake. Heroes worth 6.4 in GW5 against a spine topping out

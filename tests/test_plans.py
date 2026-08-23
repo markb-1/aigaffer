@@ -106,6 +106,7 @@ def stub_optimize_path(monkeypatch, answers: dict[int, Plan | None]) -> list[dic
         decay,
         forced_first_transfers=None,
         time_limit=None,
+        available_chips=frozenset(),
     ):
         calls.append(
             {
@@ -118,6 +119,7 @@ def stub_optimize_path(monkeypatch, answers: dict[int, Plan | None]) -> list[dic
                 "decay": decay,
                 "forced_first_transfers": forced_first_transfers,
                 "time_limit": time_limit,
+                "available_chips": available_chips,
             }
         )
         plan = answers[forced_first_transfers]
@@ -232,6 +234,31 @@ def test_the_window_is_solved_at_every_opening_count(monkeypatch):
     # apiece is the single solve's budget, not the sweep's.
     assert all(call["time_limit"] == SWEEP_TIME_LIMIT for call in calls)
     assert single == []
+
+
+def test_the_available_chips_ride_through_to_every_windowed_solve(monkeypatch):
+    # The chips the window may schedule are handed to it on every opening count,
+    # unchanged: one place derives them and the sweep only carries them.
+    chips = frozenset({"bench_boost", "free_hit"})
+    calls = stub_optimize_path(monkeypatch, windows(range(4)))
+
+    generate_plans(
+        PLAYERS, XP, SQUAD, bank=0, free_transfers=1,
+        projections_events=EVENTS, available_chips=chips,
+    )
+
+    assert [call["available_chips"] for call in calls] == [chips] * 4
+
+
+def test_no_available_chips_is_the_default_and_reaches_the_solve(monkeypatch):
+    # The gate closed: the sweep asks for the pre-chip model, empty set and all.
+    calls = stub_optimize_path(monkeypatch, windows(range(4)))
+
+    generate_plans(
+        PLAYERS, XP, SQUAD, bank=0, free_transfers=1, projections_events=EVENTS
+    )
+
+    assert all(call["available_chips"] == frozenset() for call in calls)
 
 
 def test_the_openings_asked_for_stop_where_the_free_transfer_bank_does(monkeypatch):

@@ -592,6 +592,24 @@ def test_the_road_ahead_names_every_move_the_window_intends():
     ]
 
 
+def test_the_road_ahead_shows_planned_chip_weeks():
+    # A chip the window means to play rides on its gameweek's line, and a
+    # gameweek that only plays a chip — moving nobody — is the chip alone.
+    boost = PlannedMove(
+        event=5, transfers_in=[], transfers_out=[], hits=0, chip="bench_boost"
+    )
+    swap = PlannedMove(
+        event=6, transfers_in=[17], transfers_out=[6], hits=0, chip="wildcard"
+    )
+    road = section(report(choice=with_path(ONE, [boost, swap])), "The road ahead")
+
+    assert "- GW5: Bench Boost" in road
+    assert any(
+        line.startswith("- GW6: out Fenn") and line.endswith("— Wildcard")
+        for line in road
+    )
+
+
 def test_the_road_ahead_follows_the_shortlist_it_came_off():
     headings = [
         line for line in report(choice=AHEAD).splitlines() if line.startswith("#")
@@ -667,6 +685,121 @@ def test_the_wildcard_row_says_it_is_not_a_gameweek_number():
 
     assert "except the wildcard" in panel[0]
     assert "horizon" in panel[-1] and "horizon" not in " ".join(panel[1:-1])
+
+
+# --- a chip the solver itself plans ----------------------------------------
+#
+# With no manager the chip is the solver's own: the recommended plan's path
+# carries the chip it plays this week, and the checklist, the panel and (for a
+# free hit) the team sheet all read it from there. The pre-chip behaviour is the
+# same object with a week1_chip of "none", which is every single-week plan.
+
+
+def planning(chip: str, **path_fields) -> Plan:
+    """The recommended plan with a chip on its opening gameweek — a window plan
+    that plays ``chip`` this week, the way the solver hands it over."""
+    return replace(
+        ONE,
+        path=PlannedPath(
+            moves=[], objective=ONE.objective, weekly_xp={}, week1_chip=chip,
+            **path_fields,
+        ),
+    )
+
+
+def test_a_chip_the_solver_plans_is_a_line_to_act_on_with_no_manager():
+    # Ruling 4: when the recommended plan plays a chip this week, the checklist
+    # says so even with nobody in the manager's chair.
+    played = section(report(choice=planning("bench_boost")), "Do this")
+
+    assert "PLAY Bench Boost" in played
+
+
+def test_the_chip_panel_notes_a_planned_chip_as_planned():
+    # Priced like the others until the plan plays it; then the panel says it is
+    # planned, because the reader is being asked to act on it and not only weigh
+    # it. The four numbers are unchanged — the note rides below them.
+    panel = section(report(choice=planning("triple_captain")), "Chip EV")
+
+    assert "- Triple captain: +8.4" in panel
+    assert any(line.startswith("Planned this gameweek: Triple Captain") for line in panel)
+
+
+def test_a_plan_that_plans_no_chip_notes_nothing():
+    # week1_chip "none" is the pre-chip world, and the panel is the one it was.
+    assert not any(
+        line.startswith("Planned this gameweek") for line in section(report(), "Chip EV")
+    )
+
+
+# --- a free hit fields a temporary team (the critical T3 carry) -------------
+#
+# On a free-hit week the plan's own squad is the STANDING team, which reverts;
+# the eleven Mark fields is the temporary one the solver priced, surfaced on the
+# path. The report fields that eleven — in the team sheet and the checklist,
+# clearly labelled — not the standing squad.
+
+FREE_HIT_SQUAD = [20, 3, 4, 5, 17, 21, 8, 9, 10, 11, 16, 13, 14, 18, 2]
+FREE_HIT_XI = [20, 3, 4, 5, 8, 9, 10, 11, 13, 14, 18]
+FREE_HIT_LINEUP = Lineup(xi=FREE_HIT_XI, captain=8, vice=13, bench=[2, 21, 16, 17])
+FREE_HIT_LABEL = "Free Hit XI (this week only)"
+
+
+def free_hit_report() -> str:
+    # A roll that plays a free hit: the standing squad rolls (ROLL), the path
+    # carries the temporary fifteen, and the lineup handed in is that team's.
+    choice = replace(
+        ROLL,
+        path=PlannedPath(
+            moves=[], objective=ROLL.objective, weekly_xp={},
+            week1_chip="free_hit",
+            week1_freehit_squad=FREE_HIT_SQUAD,
+            week1_freehit_xi=FREE_HIT_XI,
+        ),
+    )
+    return report(choice=choice, lineup=FREE_HIT_LINEUP)
+
+
+def test_the_starting_xi_is_the_free_hit_team_labelled_as_temporary():
+    report_text = free_hit_report()
+    xi = section(report_text, "Starting XI")
+
+    # Labelled as the one-week team it is, on the heading itself.
+    heading = next(line for line in report_text.splitlines() if "Starting XI" in line)
+    assert heading == f"## Starting XI (3-4-3) — {FREE_HIT_LABEL}"
+    # The free-hit keeper is on the sheet; the standing keeper is not — this is a
+    # different eleven, not the standing one.
+    assert any("Tovey" in row for row in xi)
+    assert not any("Alvez" in row for row in xi)
+
+
+def test_the_do_this_block_builds_the_free_hit_team_and_says_it_reverts():
+    block = section(free_hit_report(), "Do this")
+
+    assert "PLAY Free Hit" in block
+    built = next(line for line in block if line.startswith(FREE_HIT_LABEL))
+    assert "Tovey" in built and "Reid" in built
+    assert "reverts next week" in built
+    # It is a temporary build, not a swap on the standing squad: no roll line and
+    # no sell/buy line belongs here.
+    assert not any(line.startswith("No transfers") for line in block)
+    assert not any("SELL" in line for line in block)
+
+
+def test_a_free_hit_with_no_temp_squad_fields_the_standing_eleven():
+    # A degenerate case — the effective chip is a free hit but no squad was put
+    # behind it — falls back to the standing eleven rather than mislabelling one.
+    choice = replace(
+        ROLL,
+        path=PlannedPath(
+            moves=[], objective=ROLL.objective, weekly_xp={}, week1_chip="free_hit",
+        ),
+    )
+    heading = next(
+        line for line in report(choice=choice).splitlines() if "Starting XI" in line
+    )
+
+    assert heading == "## Starting XI (3-4-3)"
 
 
 # --- the gaffer's view -----------------------------------------------------

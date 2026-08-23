@@ -66,6 +66,11 @@ jobs:
           # misbehaves is a week the single-week solver reports on time, and
           # neither answer needs a commit to this file.
           AIGAFFER_PLANNER: ${{ vars.AIGAFFER_PLANNER || 'multi' }}
+          # The chip planner, same arrangement again: on by default, with a
+          # repository variable of the same name set to 'off' as the kill
+          # switch. Off makes chips advisory only — Phase 2.5's behaviour — and
+          # is one variable to set, not a commit to this file.
+          AIGAFFER_CHIPS: ${{ vars.AIGAFFER_CHIPS || 'on' }}
       - name: Commit state
         # Even when the run failed: it may have sent a report before it died,
         # and a report that went out but was never recorded is one the next
