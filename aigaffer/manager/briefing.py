@@ -148,6 +148,27 @@ PLANNED_GUARD = (
 # but about a single field being unable to swamp the document it sits in.
 MAX_FIELD = 60
 
+# Below this many finished gameweeks the season is "early". The per-90 rates
+# the projections rest on are then one or two matches of evidence, and even
+# shrunk toward their positional priors (see :mod:`aigaffer.model.xp`) they are
+# the shakiest they will be all year. The manager is warned once, and told to
+# lean on his own team news rather than the numbers.
+EARLY_SEASON_GWS = 5
+
+# The warning itself. A constant with one integer filled in, so the line is
+# deterministic and carries nothing off the wire that could forge the document
+# around it. Marked plainly as "Early season" so a model skimming the situation
+# block cannot mistake it for a per-player fact.
+EARLY_SEASON_NOTE = (
+    "Early season (only {played} played): the per-90 rates behind these"
+    " projections are still stabilising, and are already shrunk toward"
+    " positional averages — but they remain unreliable this early, especially"
+    " for cheap or unproven players showing elite-looking numbers off one or"
+    " two games. Weight your own team-news findings heavily, and be wary of"
+    " taking multiple point-hits justified only by projection outliers rather"
+    " than by news."
+)
+
 
 @dataclass(frozen=True)
 class _Board:
@@ -361,19 +382,37 @@ def _situation(
         )
     )
 
-    return "\n".join(
-        [
-            f"# AI Gaffer — manager briefing: GW{event.id}{draft_label}",
-            "",
-            f"Today: {today.strftime(DATE_FORMAT)}",
-            f"Deadline: {deadline(event)}",
-            money,
-            f"Numbers:{minutes}"
-            f' "xP GW{event.id}" is next gameweek alone;'
-            f' "xP{board.horizon}" is the decayed {board.horizon}-gameweek'
-            " total the solver maximises.",
-        ]
-    )
+    lines = [
+        f"# AI Gaffer — manager briefing: GW{event.id}{draft_label}",
+        "",
+        f"Today: {today.strftime(DATE_FORMAT)}",
+        f"Deadline: {deadline(event)}",
+        money,
+        f"Numbers:{minutes}"
+        f' "xP GW{event.id}" is next gameweek alone;'
+        f' "xP{board.horizon}" is the decayed {board.horizon}-gameweek'
+        " total the solver maximises.",
+    ]
+    # Only when the season is too young to trust its own rates, and then set off
+    # as its own paragraph. Omitted, the block is byte for byte what it was.
+    note = _early_season_note(inputs.bootstrap.events)
+    if note:
+        lines += ["", note]
+    return "\n".join(lines)
+
+
+def _early_season_note(events: list) -> str:
+    """The advisory for a season too young to trust its own rates, or nothing.
+
+    Counts the gameweeks actually finished — never the one ahead — and speaks
+    up only below :data:`EARLY_SEASON_GWS` of them. Once the season is old
+    enough it returns the empty string, and the briefing is byte for byte what
+    it was before this existed.
+    """
+    played = sum(1 for event in events if event.finished)
+    if played >= EARLY_SEASON_GWS:
+        return ""
+    return EARLY_SEASON_NOTE.format(played=plural(played, "gameweek"))
 
 
 def _squad(held: list[int], board: _Board, event: int, drafting: bool) -> str:

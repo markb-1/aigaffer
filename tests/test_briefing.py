@@ -57,6 +57,8 @@ import pytest
 
 from aigaffer.data.models import Bootstrap, Event, Pick, Player, Squad
 from aigaffer.manager.briefing import (
+    EARLY_SEASON_GWS,
+    EARLY_SEASON_NOTE,
     build_briefing,
     format_plans,
     initial_plan_ids,
@@ -888,3 +890,70 @@ def test_every_status_the_api_serves_gets_a_word(code: str, label: str):
     inputs.players[1] = PLAYERS[1].model_copy(update={"status": code})
 
     assert squad_line(1, briefing(inputs=inputs)).endswith(f"| {label}")
+
+
+# --- early-season caution ---------------------------------------------------
+#
+# One or two gameweeks in, the per-90 rates are one or two matches of evidence,
+# and even shrunk toward the positional priors they are the shakiest they will
+# be all year. The briefing warns the manager, once, and tells him to lean on
+# his own team news; a settled season carries no such line at all.
+
+
+def with_finished(n: int) -> PipelineInputs:
+    """A fetch whose bootstrap reports exactly ``n`` finished gameweeks."""
+    events = [
+        Event(
+            id=i,
+            deadline_time=EVENT.deadline_time,
+            is_next=False,
+            is_current=False,
+            finished=True,
+        )
+        for i in range(1, n + 1)
+    ] + [EVENT]
+    inputs = pipeline_inputs()
+    inputs.bootstrap = BOOTSTRAP.model_copy(update={"events": events})
+    return inputs
+
+
+NOTE_1GW = EARLY_SEASON_NOTE.format(played="1 gameweek")
+
+
+def test_early_season_warns_the_gaffer_to_trust_his_own_news():
+    # The default fixture is one gameweek in — GW1 finished, GW2 ahead — so the
+    # briefing carries the advisory, marked plainly and counting the gameweeks.
+    text = briefing()
+
+    assert "Early season (only 1 gameweek played):" in text
+    assert "shrunk toward positional averages" in text
+    assert "Weight your own team-news findings heavily" in text
+
+
+def test_a_settled_season_drops_the_advisory_and_reads_as_before():
+    # Five gameweeks in the rates have had time to settle: the line is gone, and
+    # its absence is the *only* difference from the early-season briefing, which
+    # is the byte-for-byte promise the feature makes when it is not early.
+    early = briefing()
+    settled = briefing(inputs=with_finished(EARLY_SEASON_GWS))
+
+    assert NOTE_1GW in early
+    assert "Early season" not in settled
+    assert early.replace("\n\n" + NOTE_1GW, "") == settled
+
+
+def test_the_early_season_boundary_is_the_constant():
+    # Below the constant is early; at it and above is not. And the count is
+    # pluralised: four finished gameweeks read as "gameweeks", not "gameweek".
+    early = briefing(inputs=with_finished(EARLY_SEASON_GWS - 1))
+    settled = briefing(inputs=with_finished(EARLY_SEASON_GWS))
+
+    assert f"only {EARLY_SEASON_GWS - 1} gameweeks played" in early
+    assert "Early season" not in settled
+
+
+def test_the_advisory_is_a_line_not_a_section():
+    # It rides inside the situation block under the title, so it can neither add
+    # a heading nor disturb the seven the briefing reads top to bottom.
+    assert headings(briefing()) == HEADINGS
+    assert "Early season" not in " ".join(headings(briefing()))
