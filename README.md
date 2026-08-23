@@ -30,6 +30,7 @@ No transfers are executed in Phase 1 — you make the final call.
 | `AIGAFFER_MANAGER` | Set to `0` to run the solver alone even with a key |
 | `AIGAFFER_MANAGER_MODEL` | Which model the manager is (default `claude-opus-5`) |
 | `AIGAFFER_PLANNER` | Set to exactly `single` to solve one gameweek at a time instead of the window |
+| `AIGAFFER_CHIPS` | Set to exactly `off` to make chips advisory only, never planned into the window |
 
 ### Backtest sanity check
 
@@ -254,6 +255,84 @@ variables → Actions → Variables → `AIGAFFER_PLANNER` = `single` — so a w
 window misbehaves is a week the single-week solver reports on time, without a
 commit to the workflow and without a lost report.
 
+## Phase 2.6 — "The Chip Planner"
+
+Phase 2.5 taught the window to plan transfers; it left the chips where Phase 2
+had them, priced to one side and handed to a human with the question *is this
+the week?* still open. Phase 2.6 puts the question inside the model. A chip is
+a gameweek whose rules are different — a bench boost scores all fifteen, a
+triple captain adds an armband multiple, a wildcard makes that week's transfers
+free and uncapped, a free hit fields a one-week squad that reverts — and each is
+now a per-gameweek binary the window may switch on, at most one chip a gameweek
+and each chip at most once across the horizon. The solver decides *when*, and
+when the optimum plays a chip in the gameweek being decided the report leads
+with it (**PLAY Free Hit**), the manager may finalize it, and the store records
+it. The chip weeks further out ride **The road ahead** exactly as the transfer
+moves do — advisory, re-planned every run, never a commitment.
+
+The formulation lives in `aigaffer/solver/multiweek.py`. Three of the four chips
+change that week's scoring or transfer rules directly; the free hit is priced by
+a small solve of its own — the best legal one-week fifteen the pool holds inside
+the manager's budget — and a binary chooses the week to spend it, which keeps the
+revert *structural*: the free-hit squad is never a variable of the window, so it
+cannot leak into next week's team however the search wanders.
+
+### Why it holds a chip — the reservation value
+
+A chip is free to play, so a model with nothing pulling the other way would burn
+every chip it holds in the best week of the window, however ordinary that week
+is. That is wrong: a chip is worth holding for an *exceptional* week, and the
+whole skill of chips is knowing an ordinary good week from one worth a chip. So
+each chip carries a **reservation value** — the opportunity cost of not saving
+it — and is played only where its marginal points for the week clear that bar:
+
+| Chip | Reservation (undecayed xP) |
+| --- | --- |
+| Bench boost | 12.0 |
+| Triple captain | 12.0 |
+| Free hit | 18.0 |
+| Wildcard | 30.0 |
+
+A bench boost that gains 10.8 points this week is held; one that gains 14.4 is
+played, and the objective keeps only the 2.4 above the bar. The bar decides
+play-or-hold; within the window the model still picks the *best* qualifying week.
+Played nowhere is a real answer — a quiet stretch clears no bar and every chip
+stays in hand.
+
+**But the bar is judged over the next six gameweeks, not the season.** This is
+the honest limit, and it is worth stating plainly because it is easy to mistake
+for a bug. The window sees six gameweeks. It cannot see a blank in GW29 or a
+double in GW34 announced months out, so "is this week chip-worthy?" is only ever
+asked against the near horizon. The reservation stops the model firing on a
+mediocre quiet week, but it cannot make the model hold a wildcard *this* month
+for a better week it has no way of knowing is coming. Run early in a season, with
+every chip in hand and projections at their most uncertain, the planner will
+sometimes schedule a chip the near horizon rates highly that a season-long view
+would save — and the road-ahead lines are where you will see it reach for one.
+Read them as "the best week the model can currently see", not "the best week
+there will be". The numbers in the table are first-guess constants tuned to FPL
+norms, not measured against results; they are the dial that most wants turning as
+live seasons accumulate. Both limits are on the Deferred list below.
+
+### Turning it off
+
+`AIGAFFER_CHIPS=off` in the environment, and chips go back to advisory only: the
+window plans transfers as Phase 2.5 did, the Chip EV panel still prices all four,
+and nothing is ever planned or finalized. The value has to be exactly `off` — the
+same convention as `AIGAFFER_PLANNER` and `AIGAFFER_MANAGER`, where one literal
+value switches and everything else leaves the default (chips on) standing. On the
+workflow it is Settings → Secrets and variables → Actions → Variables →
+`AIGAFFER_CHIPS` = `off`.
+
+### The mid-season reset is out of scope
+
+The planner only ever plans a chip the API currently reports as unused, and FPL's
+mid-season reset — a fresh wildcard and free hit from the halfway point — is not
+modelled: a chip counts as gone the moment it appears in the season's history,
+whichever half it was played in. From GW20 the bot is therefore too strict rather
+than too generous, declining a chip it in fact holds again. That is the safer
+mistake, and it is the same boundary the Deferred list has carried since Phase 2.
+
 ## Operations
 
 The bot runs itself from `.github/workflows/gaffer.yml`. To set it up on a
@@ -340,8 +419,10 @@ These are deliberate. Do not "fix" them without revisiting the design:
 
 Still not shipped, deliberately. The fetch / project / solve seam that used to
 head this list went in with Phase 2 — it is what `resolve` re-solves through —
-and the multi-week planner above went in with Phase 2.5, which took the captain
-into the model on the way past. Neither is a gap any more.
+the multi-week planner went in with Phase 2.5, which took the captain into the
+model on the way past, and chip-aware solving went in with Phase 2.6, which let
+the window decide the week a chip is played. None of the three is a gap any more;
+what the chip work left behind is two narrower boundaries, items 4 and 5 below.
 
 1. **Weekly input-data snapshots.** The store keeps the report and the decision
    for each run, not the bootstrap and histories they were computed from, so a
@@ -354,43 +435,49 @@ into the model on the way past. Neither is a gap any more.
    ships is a single-gameweek ranking sanity check against the live API (above),
    which cannot say whether the bot would have beaten the average manager over a
    season — the question the spec actually asks.
-3. **Chip economics against the plan actually chosen.** The chip EV panel is
+3. **Chip economics against the plan actually chosen.** The Chip EV panel is
    priced once, against the plan that rolls the transfer, before the manager is
    asked anything. If he picks a different plan and plays a chip on it, the
    numbers he argued from describe a squad he did not enter. Re-pricing the
    chips per plan is a solve per chip per plan, which is why it is not done yet.
-   The same missing piece is why a wildcard or a free hit cannot be finalized at
-   all: planning one means solving the week with fifteen free transfers and no
-   hits, and nothing here does that. The panel still prices both — the wildcard
-   over the six-gameweek horizon, which is what the row says, and the other
-   three over next gameweek — so the case can be made in the rationale.
-
-   **This is now the next thing the solver should learn.** A chip is a gameweek
-   whose transfer rules are different, which is one more quantity to carry from
-   one gameweek to the next — exactly the shape of thing the multi-week window
-   already carries the bank and the free transfers as. Chip-aware solving is not
-   a solver of its own to write; it is a chip variable a gameweek in the one
-   that is there, and the answer it would give is the question the report
-   currently has to hand back to a human: *is this the week?*
-4. **The mid-season chip reset.** `played_chips` counts a chip as gone the
+   Chip-aware *solving* itself is no longer here — Phase 2.6 above puts a chip
+   variable in the window and lets the solver decide the week — but the advisory
+   panel a human reads is still priced against the roll, not against whatever
+   plan he finally chooses.
+4. **Season-long chip timing.** The chip planner above sees six gameweeks and no
+   further, so it weighs a chip-worthy week against the near horizon rather than
+   the season. It will not fire on a mediocre quiet week — the reservation bars
+   stop that — but it cannot hold a wildcard *this* month for a double gameweek
+   in GW34 it has no way of seeing, and run early in a season it will sometimes
+   reach for a chip a season-long view would save. A true season-long chip
+   schedule is a much larger model than a six-gameweek window, and is the honest
+   ceiling on what the planner can promise.
+5. **The reservation bars are first-guess constants.** The bars that decide a
+   chip's play-or-hold — bench boost and triple captain at 12.0, free hit at
+   18.0, wildcard at 30.0 undecayed xP — are tuned to FPL norms by hand, not
+   measured against results. They live in one place (`CHIP_RESERVATION` in
+   `aigaffer/solver/multiweek.py`) precisely so they can move under review, and
+   refining them against real seasons is the dial most likely to change how
+   often the planner reaches for a chip.
+6. **The mid-season chip reset.** `played_chips` counts a chip as gone the
    moment it appears in the season's history, without asking which half of the
    season it was played in. Modern FPL hands out a second set at the halfway
    point, so from GW20 the bot is too strict rather than too generous — it will
    decline to recommend a chip it actually holds. That is the safer of the two
    mistakes, and it is still a mistake.
-5. **The bench order the design asks the manager for.** The spec has him
+7. **The bench order the design asks the manager for.** The spec has him
    returning a bench order with his decision; he is not asked for one. The
    order the report prints is the solver's — substitute keeper first, then by
    next gameweek's projection — and it is a good default and nobody's judgement
    about which of two fringe players is likelier to have a game at all.
-6. **Price-change pressure in the briefing.** The spec lists it among the
+8. **Price-change pressure in the briefing.** The spec lists it among the
    manager's inputs and the briefing does not carry it, so a player about to
    rise or fall reads to him exactly like one who is not, and "buy him this week
    rather than next" is an argument he cannot make. The bootstrap does publish
    the transfer counts it would be estimated from; the estimate itself is a
    model of an algorithm FPL does not document, which is why it is not in here
    pretending to be a fact.
-7. **A search budget for the run.** `max_uses: 8` on the web search tool is a
+9. **A search budget for the run.** `max_uses: 8` on the web search tool is a
    per-request cap — one assistant turn — not a budget for the conversation, so
    a twelve-turn run could in principle spend eight searches in each of them.
    Nothing counts them across turns or stops the loop when the total gets
