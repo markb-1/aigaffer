@@ -88,6 +88,18 @@ def pick_lineup(
     projection is worth nothing, not a guess. ``squad`` is a legal fifteen —
     two keepers, five defenders, five midfielders, three forwards — which is
     what makes every formation fillable.
+
+    The armband goes to the best *attacker* in the eleven, not simply the best
+    projected player. A captain is picked for ceiling — the doubled points come
+    from a goal or an assist — and a defender's projection is mostly floor:
+    appearance, a clean sheet, a reliable defensive contribution, none of which
+    double into a haul. Early in a season, when a nailed defender's steady floor
+    can out-project a forward whose one-game rate is still shrinking, captaining
+    on raw xP hands the armband to a defender, which is almost never right. So
+    captain and vice are the two highest-projected midfielders or forwards in
+    the XI; the any-position ordering behind them is a pure fallback for a
+    malformed eleven with too few attackers, which a legal formation — two
+    midfielders and a forward at the very least — never is.
     """
     ranked = _ranked(squad, positions, gw_xp)
     xi = max(
@@ -96,11 +108,19 @@ def pick_lineup(
     )
 
     armbands = sorted(xi, key=lambda pid: (-gw_xp.get(pid, 0.0), pid))
+    attackers = [pid for pid in armbands if positions[pid] in (MIDFIELDER, FORWARD)]
+    others = [pid for pid in armbands if pid not in set(attackers)]
+    # Attackers first, in projection order, then everyone else as a last resort:
+    # the first two are the captain and vice, so both are attackers whenever the
+    # eleven holds two, which every legal one does.
+    preferred = attackers + others
     bench = sorted(
         set(squad) - set(xi),
         key=lambda pid: (positions[pid] != GOALKEEPER, -gw_xp.get(pid, 0.0), pid),
     )
-    return Lineup(xi=sorted(xi), captain=armbands[0], vice=armbands[1], bench=bench)
+    return Lineup(
+        xi=sorted(xi), captain=preferred[0], vice=preferred[1], bench=bench
+    )
 
 
 def chip_evs(

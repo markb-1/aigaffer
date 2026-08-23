@@ -173,11 +173,47 @@ def test_five_defenders_when_that_is_where_the_points_are():
     assert lineup.xi == [1, 3, 4, 5, 6, 7, 8, 9, 10, 13, 14]
 
 
-def test_the_two_best_starters_take_the_armbands():
+def test_the_two_best_attackers_take_the_armbands():
+    # Here the two best starters (8, 9) are also the two best attackers, so the
+    # armbands land on them; the tests below pull the two apart.
     lineup = pick_lineup(SQUAD, POSITIONS, GW_XP)
 
     assert lineup.captain == 8
     assert lineup.vice == 9
+    assert POSITIONS[lineup.captain] in (MID, FWD)
+    assert POSITIONS[lineup.vice] in (MID, FWD)
+
+
+def test_the_captain_is_an_attacker_not_the_defender_who_tops_the_sheet():
+    # A nailed defender's steady floor can top the raw sheet early in a season,
+    # but the armband is for ceiling — a doubled clean sheet is not a haul — so
+    # it goes to the best attacker. Defender 3 tops the board at 20.0; forward
+    # 13 is the best midfielder-or-forward and takes it, with midfielder 8 vice.
+    gw_xp = {**GW_XP, 3: 20.0, 13: 9.5}
+    lineup = pick_lineup(SQUAD, POSITIONS, gw_xp)
+
+    assert lineup.captain == 13 and POSITIONS[13] == FWD
+    assert lineup.vice == 8 and POSITIONS[8] == MID
+    assert POSITIONS[lineup.captain] in (MID, FWD)
+    assert POSITIONS[lineup.vice] in (MID, FWD)
+    assert 3 in lineup.xi  # the defender still starts; he just does not captain
+
+
+def test_tied_attackers_take_the_armbands_by_id():
+    # Two attackers level at the top: the tie breaks by id so the choice never
+    # wobbles between runs.
+    tie = {**GW_XP, 8: 9.0, 13: 9.0}
+    lineup = pick_lineup(SQUAD, POSITIONS, tie)
+
+    assert lineup.captain == 8 and lineup.vice == 13
+
+
+def test_the_armbands_do_not_depend_on_the_squad_order():
+    # Same fifteen, opposite input order, same captain and vice.
+    forward = pick_lineup(SQUAD, POSITIONS, GW_XP)
+    backward = pick_lineup(list(reversed(SQUAD)), POSITIONS, GW_XP)
+
+    assert (forward.captain, forward.vice) == (backward.captain, backward.vice)
 
 
 def test_the_bench_starts_with_the_keeper_then_ranks_by_points():
