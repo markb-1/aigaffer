@@ -63,6 +63,7 @@ from aigaffer.solver.multiweek import (
     MAX_HITS,
     SOLVER,
     TRIPLE_CAPTAIN,
+    WILDCARD,
     PlannedMove,
     PlannedPath,
     _solver,
@@ -70,6 +71,7 @@ from aigaffer.solver.multiweek import (
 )
 from aigaffer.solver.optimizer import (
     MAX_PER_CLUB,
+    MAX_TRANSFERS,
     SQUAD_QUOTAS,
     SQUAD_SIZE,
     optimize,
@@ -312,6 +314,13 @@ def assert_legal_path(
     holds, and the bank it leaves behind must be
     ``min(5, ft - moves + hits + 1)``.
 
+    A wildcard gameweek is the exception the game writes into both of those: its
+    transfers are all free however many it makes, so it charges no hits at all,
+    and it spends none of its free-transfer bank, so the bank carries as though
+    the gameweek had moved no one — ``min(5, ft + 1)``. The chip is read from
+    ``path.week1_chip`` for the opening gameweek and from each move's ``chip``
+    thereafter.
+
     Returns the free-transfer bank standing at each gameweek's deadline, which
     is how a test can pin the way the bank fills and where it stops.
     """
@@ -326,11 +335,13 @@ def assert_legal_path(
             incoming, outgoing, hits = (
                 plan.transfers_in, plan.transfers_out, plan.hits
             )
+            chip = path.week1_chip
         else:
             move = moves.get(event)
             incoming = move.transfers_in if move else []
             outgoing = move.transfers_out if move else []
             hits = move.hits if move else 0
+            chip = move.chip if move else "none"
 
         assert set(outgoing) <= squad
         assert not set(incoming) & squad
@@ -341,10 +352,14 @@ def assert_legal_path(
         assert_legal(players, sorted(squad), cash)
 
         series.append(banked)
-        owed = max(0, len(incoming) - banked)
-        assert hits == owed, f"GW{event}: {len(incoming)} moves on {banked} free"
-        assert owed <= MAX_HITS
-        banked = min(MAX_FREE_TRANSFERS, banked - len(incoming) + owed + 1)
+        if chip == WILDCARD:
+            assert hits == 0, f"GW{event}: a wildcard charges no hits"
+            banked = min(MAX_FREE_TRANSFERS, banked + 1)
+        else:
+            owed = max(0, len(incoming) - banked)
+            assert hits == owed, f"GW{event}: {len(incoming)} moves on {banked} free"
+            assert owed <= MAX_HITS
+            banked = min(MAX_FREE_TRANSFERS, banked - len(incoming) + owed + 1)
 
     assert set(plan.squad) == set(current_squad) - set(plan.transfers_out) | set(
         plan.transfers_in
@@ -1208,3 +1223,207 @@ def test_a_chip_is_played_at_most_once_across_the_horizon():
     assert all(move.chip == "none" for move in path.moves)
     assert plan.objective == pytest.approx(165.495, abs=1e-4)
     assert_legal_path(players, SQUAD, 0, 1, [5, 6, 7], plan, path)
+
+
+# --------------------------------------------------------------------------
+# Wildcard: free, uncapped transfers for one gameweek of the window
+# --------------------------------------------------------------------------
+
+
+def _rebuild_and_arrivals(
+    events: list[int], squad_value: float, arrival_value: float
+) -> tuple[dict, dict]:
+    """The legal fifteen, every man worth ``squad_value``, plus five midfielders
+    and two forwards worth ``arrival_value``.
+
+    The seven arrivals are exactly the men an XI wants — five midfield slots and
+    two forward — so a full rebuild starts all seven, and everyone costs 50, so
+    money never decides. It is the board a wildcard exists for: a rebuild that
+    needs more moves than a gameweek's cap allows.
+    """
+    rows = [
+        (pid, FLAT_POSITIONS[pid - 1], 50, {event: squad_value for event in events})
+        for pid in range(1, 16)
+    ]
+    for pid, position in SEVEN:
+        rows.append((pid, position, 50, {event: arrival_value for event in events}))
+    return _build(rows)
+
+
+def test_a_wildcard_rebuilds_the_whole_squad_in_one_week():
+    # Seven men worth 20.0 straight away — five midfielders and two forwards —
+    # and a squad on the spine, one free transfer, one gameweek. Without a chip
+    # the opening gameweek moves at most three; the wildcard makes every transfer
+    # free and lifts the cap, so all seven arrive at once for no hit.
+    #
+    # The XI is 1 | 3 4 5 | 16 17 18 19 20 | 21 22: 5.0 + (4.4 + 4.3 + 4.2) +
+    # 100.0 + 40.0 = 157.9 started, 20.0 for the captain, and a bench of
+    # 2 6 7 13 worth 0.5 + 0.5 + 0.5 + 4.1 = 5.6 at a tenth, 0.56. The week
+    # scores 157.9 + 20.0 + 0.56 = 178.46; the wildcard's 30.0 reservation comes
+    # off, and seven bought cost seven hundredths of the churn tiebreak:
+    # 178.46 - 30.0 - 0.07 = 148.39.
+    players, projections = seven_arrivals([5])
+
+    plan, path = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[5],
+        decay=DECAY, available_chips=frozenset({WILDCARD}),
+    )
+    no_chip, _ = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[5],
+        decay=DECAY, available_chips=frozenset(),
+    )
+
+    assert path.week1_chip == WILDCARD
+    assert len(plan.transfers_in) == 7
+    assert plan.hits == 0
+    assert plan.objective == pytest.approx(148.39, abs=1e-4)
+    assert path.weekly_xp[5] == pytest.approx(177.9, abs=1e-4)
+    # Without the chip the same rebuild is throttled to the opening cap and can
+    # never take all seven in a single gameweek.
+    assert len(no_chip.transfers_in) <= MAX_TRANSFERS
+    assert_legal_path(players, SQUAD, 0, 1, [5], plan, path)
+
+
+def test_a_wildcard_uncaps_the_gameweek():
+    # A seven-move gameweek is more than the three the opening cap allows and
+    # more than a one-transfer bank plus the two-hit ceiling can buy. It is legal
+    # only under the wildcard, which is the one thing that lifts the cap.
+    players, projections = seven_arrivals([5])
+
+    on, _ = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[5],
+        decay=DECAY, available_chips=frozenset({WILDCARD}),
+    )
+    off, _ = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[5],
+        decay=DECAY, available_chips=frozenset(),
+    )
+
+    assert len(on.transfers_in) == 7
+    assert on.hits == 0
+    assert len(off.transfers_in) < 7
+
+
+def test_a_wildcard_week_spends_no_free_transfers_and_no_hits():
+    # The carry across a wildcard gameweek, pinned. The rebuild lands in GW5 —
+    # the earliest week, where the horizon's decay bites least — takes all seven
+    # for no hit, and leaves the two later gameweeks with nothing to do. A normal
+    # seven-move gameweek would empty the bank; a wildcard spends none of it, so
+    # the bank carries as though no one moved: 1 into GW5, then min(5, 1 + 1) = 2
+    # at GW6's deadline and min(5, 2 + 1) = 3 at GW7's.
+    players, projections = seven_arrivals([5, 6, 7])
+
+    plan, path = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[5, 6, 7],
+        decay=DECAY, available_chips=frozenset({WILDCARD}),
+    )
+
+    assert path.week1_chip == WILDCARD
+    assert len(plan.transfers_in) == 7
+    assert plan.hits == 0
+    assert path.moves == []
+    banked = assert_legal_path(players, SQUAD, 0, 1, [5, 6, 7], plan, path)
+    assert banked == [1, 2, 3]
+
+
+def test_a_wildcard_and_a_bench_boost_cannot_share_a_gameweek():
+    # One gameweek, both chips in hand, and a board where each earns its keep on
+    # its own: fifteen men worth 10.0 (a bench of 4 x 10.0 = 40.0, boosted 0.9 x
+    # 40.0 = 36.0, well over the 12.0 bar) and seven arrivals worth 30.0 (a
+    # rebuild worth far more than the 30.0 wildcard bar). Both would be played
+    # were there room; the one-chip-a-week rule is the whole of what stops it,
+    # and the wildcard, worth the most, takes the week. The bench boost is held.
+    players, projections = _rebuild_and_arrivals(
+        [5], squad_value=10.0, arrival_value=30.0
+    )
+
+    both, path = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[5],
+        decay=DECAY, available_chips=frozenset({WILDCARD, BENCH_BOOST}),
+    )
+    boost_only, boost_path = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[5],
+        decay=DECAY, available_chips=frozenset({BENCH_BOOST}),
+    )
+
+    # The bench boost is worth playing on this board — it is played when it has
+    # the week to itself — so its absence when the wildcard is available is the
+    # one-chip-a-week rule doing its work.
+    assert boost_path.week1_chip == BENCH_BOOST
+    assert path.week1_chip == WILDCARD
+    assert_legal_path(players, SQUAD, 0, 1, [5], both, path)
+
+
+def test_a_wildcard_is_played_at_most_once_across_the_horizon():
+    # Two gameweeks, each with its own set of seven arrivals worth 20.0 in that
+    # gameweek and nothing in the other. Each week would take its own wildcard
+    # rebuild if it could; the horizon allows one wildcard in all, so the model
+    # spends it on a single week and never twice.
+    rows = [
+        (pid, FLAT_POSITIONS[pid - 1], 50, {5: 4.0, 6: 4.0}) for pid in range(1, 16)
+    ]
+    for pid, position in SEVEN:
+        rows.append((pid, position, 50, {5: 20.0, 6: 0.0}))
+    for offset, (_, position) in enumerate(SEVEN):
+        rows.append((23 + offset, position, 50, {5: 0.0, 6: 20.0}))
+    players, projections = _build(rows)
+
+    plan, path = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[5, 6],
+        decay=DECAY, available_chips=frozenset({WILDCARD}),
+    )
+
+    played = (1 if path.week1_chip == WILDCARD else 0) + sum(
+        1 for move in path.moves if move.chip == WILDCARD
+    )
+    assert played <= 1
+
+
+def test_a_rebuild_worth_less_than_the_bar_holds_the_wildcard():
+    # Three midfielders worth 20.0 replacing the spine's cheapest three (5.6,
+    # 5.7, 5.8) is a rebuild worth having — 42.9 in the XI — but it fits inside
+    # the opening cap: three moves on one free transfer is two hits, eight
+    # points. A wildcard would save those eight and no more, and eight is a long
+    # way under its 30.0 bar, so the chip is held and the hits are paid instead.
+    rows = [
+        (pid, position, 50, {5: points}) for pid, position, points in SPINE
+    ]
+    for pid in (16, 17, 18):
+        rows.append((pid, MID, 50, {5: 20.0}))
+    players, projections = _build(rows)
+
+    with_wc, wc_path = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[5],
+        decay=DECAY, available_chips=frozenset({WILDCARD}),
+    )
+    without, _ = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[5],
+        decay=DECAY, available_chips=frozenset(),
+    )
+
+    assert wc_path.week1_chip == "none"
+    assert len(with_wc.transfers_in) == 3
+    assert with_wc.hits == MAX_HITS
+    assert with_wc.objective == pytest.approx(without.objective, abs=1e-4)
+
+
+def test_a_wildcard_in_hand_but_unused_matches_the_plain_solve():
+    # The byte-for-byte guarantee at the wildcard's own reservation. The spine
+    # has nothing worth buying, so a wildcard buys nothing and is held; the
+    # objective is exactly the do-nothing solve, whether the chip is offered or
+    # withheld.
+    players, projections = spine([5, 6, 7])
+
+    offered, path = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[5, 6, 7],
+        decay=DECAY, available_chips=frozenset({WILDCARD}),
+    )
+    withheld, _ = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[5, 6, 7],
+        decay=DECAY, available_chips=frozenset(),
+    )
+
+    assert path.week1_chip == "none"
+    assert all(move.chip == "none" for move in path.moves)
+    assert offered.objective == pytest.approx(withheld.objective, abs=1e-4)
+    assert offered.objective == pytest.approx(158.31165, abs=1e-4)

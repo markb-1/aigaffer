@@ -54,6 +54,36 @@ burn) restated a gameweek at a time. That ceiling is the whole reason a plan
 ever moves early: five moves do not fit into one gameweek, so the one that only
 raises money goes first.
 
+**A wildcard week rewrites all three of those, and the carry is the subtle
+one.** A wildcard makes a single gameweek's transfers free and uncapped. Free
+is two rows: the hit ceiling ``paid[w] ≤ MAX_HITS·(1 − wc[w])`` forces the
+gameweek's hits to zero when it is wildcarded, and the pin's lower half is
+relaxed to ``paid[w] ≥ transfers[w] − ft[w] − SQUAD_SIZE·wc[w]`` so that a
+gameweek moving more men than it holds free is no longer made to buy hits it
+does not owe — ``SQUAD_SIZE`` is a valid big-M because no gameweek ever makes
+more than fifteen moves, and at ``wc = 1`` the floor drops to at most zero,
+which ``paid ≥ 0`` already gives. Uncapped is one more term on the opening
+gameweek's move cap, ``+ SQUAD_SIZE·wc[1]``; the later gameweeks were never
+capped except through that same relaxed pin, so relaxing it uncaps them too.
+
+The carry is where the care goes. The game does not spend a wildcard week's
+free-transfer bank: whatever stood before the gameweek stands after it, plus
+the usual one, capped at five — ``ft[w+1] = min(5, ft[w] + 1)`` however many
+men moved. The ordinary carry reads ``ft[w+1] ≤ ft[w] − transfers[w] +
+paid[w] + 1``, and on a wildcarded gameweek ``paid[w]`` is zero, so that
+right-hand side is ``ft[w] − transfers[w] + 1`` — short of the truth by exactly
+the ``transfers[w]`` the week did not really spend. So the carry gains
+``+ z[w]``, an auxiliary standing for ``transfers[w]·wc[w]``, which adds the
+spend back precisely when the gameweek is wildcarded and not otherwise. ``z``
+is pinned from above alone, ``z ≤ transfers[w]`` and ``z ≤ SQUAD_SIZE·wc[w]``,
+and needs no floor for the same reason ``ft`` itself needs none: it appears
+only on the raise-``ft`` side of the one carry row, so the solver has every
+reason to push it to the smaller of its two ceilings and none to hold it down.
+At ``wc = 0`` that smaller ceiling is zero and the carry is the game's
+unchanged; at ``wc = 1`` it is ``transfers[w]`` and the carry becomes
+``ft[w] + 1`` — exact at both binary points, which is the whole of what the
+formulation has to be.
+
 **The captain is continuous and lands on an integer anyway.** With the XI
 fixed, ``0 ≤ captain ≤ xi`` and ``Σ captain = 1`` describe a simplex whose
 vertices are single players, so the solver cannot gain by splitting an armband
@@ -133,11 +163,17 @@ CHURN_EPSILON = 0.01
 # The strings are the game's own, shared with the rest of the codebase.
 BENCH_BOOST = "bench_boost"
 TRIPLE_CAPTAIN = "triple_captain"
+# A wildcard turns one gameweek's transfers free and uncapped: the squad can be
+# rebuilt from scratch that week for no hit and with no ceiling on the moves.
+# Unlike the bench boost and the triple captain it changes no player's score —
+# it changes the transfer rules — so its value is entirely the squad the free
+# rebuild reaches and the hits it does not pay, weighed against holding it.
+WILDCARD = "wildcard"
 NO_CHIP = "none"
-# Wildcard and free hit belong to later tasks; a chip the solver does not yet
-# know how to play is simply ignored rather than trusted, so a caller can hand
-# in the whole available set without this one over-promising.
-_PLANNABLE_CHIPS = (BENCH_BOOST, TRIPLE_CAPTAIN)
+# Free hit belongs to a later task; a chip the solver does not yet know how to
+# play is simply ignored rather than trusted, so a caller can hand in the whole
+# available set without this one over-promising.
+_PLANNABLE_CHIPS = (BENCH_BOOST, TRIPLE_CAPTAIN, WILDCARD)
 
 # The reservation is what stops the model burning a chip in the best week of the
 # next six when a far better week waits later in the season the horizon cannot
@@ -156,6 +192,12 @@ _PLANNABLE_CHIPS = (BENCH_BOOST, TRIPLE_CAPTAIN)
 CHIP_RESERVATION: dict[str, float] = {
     BENCH_BOOST: 12.0,
     TRIPLE_CAPTAIN: 12.0,
+    # A wildcard is a whole free rebuild, so its bar sits far higher than a
+    # boost's: a good one clears an ordinary week by thirty-odd points, and the
+    # chip is worth burning only where the free uncapped squad and the hits it
+    # spares beat that over the horizon. Undecayed, tuned to FPL norms, refined
+    # under review like the others.
+    WILDCARD: 30.0,
 }
 
 
@@ -243,8 +285,9 @@ def optimize_path(
     what a blank is.
 
     ``available_chips`` are the chips still in hand — a subset of
-    :data:`BENCH_BOOST` and :data:`TRIPLE_CAPTAIN`, the two this solver plans;
-    any other name is ignored. Empty, which is the default, is the fallback
+    :data:`BENCH_BOOST`, :data:`TRIPLE_CAPTAIN` and :data:`WILDCARD`, the three
+    this solver plans; any other name is ignored. Empty, which is the default,
+    is the fallback
     guarantee: the model built is the pre-chip one to the last variable, so a
     caller who wants chips advisory-only need only withhold them. A chip in the
     set becomes a per-week binary the window may play, at most one chip a
@@ -345,6 +388,15 @@ def optimize_path(
     # [0, 1], so the bound is exact rather than a relaxation.
     z_bb = per_week("zbb", lowBound=0, upBound=1) if BENCH_BOOST in chips else {}
     z_tc = per_week("ztc", lowBound=0, upBound=1) if TRIPLE_CAPTAIN in chips else {}
+    # One auxiliary a gameweek, not one a player: ``z_wc[w]`` is ``moves[w]·wc[w]``,
+    # the free transfers a wildcarded gameweek did not really spend, added back to
+    # the next gameweek's carry. Pinned from above only in the gameweek loop; the
+    # module docstring says why that is exact.
+    z_wc = (
+        {w: problem.add_variable(f"zwc{w}", lowBound=0) for w in weeks}
+        if WILDCARD in chips
+        else {}
+    )
 
     objective = (
         pulp.lpSum(
@@ -383,6 +435,15 @@ def optimize_path(
                 pulp.lpSum(points[p, w] * z_tc[w][p] for p in pool)
                 - CHIP_RESERVATION[TRIPLE_CAPTAIN] * play[TRIPLE_CAPTAIN][w]
             )
+            for w in weeks
+        )
+    if WILDCARD in chips:
+        # The wildcard adds no scoring term of its own — its gain is the better
+        # squad the free uncapped rebuild reaches and the hits it spares, both of
+        # which the objective already counts. So only its bar goes in, and the
+        # chip is played only where that endogenous gain clears it.
+        objective -= pulp.lpSum(
+            decay ** (w - 1) * CHIP_RESERVATION[WILDCARD] * play[WILDCARD][w]
             for w in weeks
         )
     problem += objective
@@ -431,11 +492,25 @@ def optimize_path(
             players[p].now_cost * (sell[w][p] - buy[w][p]) for p in pool
         )
 
-        problem += paid[w] >= moves[w] - banked[w]
+        # The hit pin, wildcarded. On an ordinary gameweek both rows below read
+        # exactly as they did before chips: the floor is ``moves − ft`` and the
+        # ceiling is the variable's own ``MAX_HITS``. A wildcarded gameweek drops
+        # the floor to zero or below and the ceiling to zero, so it charges no
+        # hits however many men it moves — free transfers, made linear.
+        floor = moves[w] - banked[w]
+        if WILDCARD in chips:
+            floor = floor - SQUAD_SIZE * play[WILDCARD][w]
+            problem += paid[w] <= MAX_HITS * (1 - play[WILDCARD][w])
+        problem += paid[w] >= floor
         problem += paid[w] <= moves[w] - banked[w] + big_m * (1 - owing[w])
         problem += paid[w] <= big_m * owing[w]
         if w > 1:
-            problem += banked[w] <= banked[w - 1] - moves[w - 1] + paid[w - 1] + 1
+            # The carry gains the wildcard add-back only when a wildcard is in
+            # play; without it the row is the pre-chip one, term for term.
+            carry = banked[w - 1] - moves[w - 1] + paid[w - 1] + 1
+            if WILDCARD in chips:
+                carry = carry + z_wc[w - 1]
+            problem += banked[w] <= carry
 
         # At most one chip a gameweek (a single chip cannot break its own binary,
         # so the row is only worth writing when two could clash).
@@ -454,13 +529,25 @@ def optimize_path(
                 problem += z_tc[w][p] <= captain[w][p]
                 problem += z_tc[w][p] <= tc
                 problem += z_tc[w][p] >= captain[w][p] - (1 - tc)
+        if WILDCARD in chips:
+            # The two ceilings on the carry's add-back: it cannot exceed the
+            # gameweek's moves and it vanishes off a non-wildcarded gameweek. No
+            # floor — the carry pushes it to whichever is smaller on its own.
+            problem += z_wc[w] <= moves[w]
+            problem += z_wc[w] <= SQUAD_SIZE * play[WILDCARD][w]
 
     # Each chip is the game's once-a-season, so once across the horizon too.
     for chip in chips:
         problem += pulp.lpSum(play[chip][w] for w in weeks) <= 1
 
     if forced_first_transfers is None:
-        problem += moves[1] <= max(MAX_TRANSFERS, opening_bank)
+        # The opening cap, lifted for a wildcarded first gameweek: fifteen is the
+        # most any gameweek can move, so the term uncaps it without unbounding it.
+        cap = max(MAX_TRANSFERS, opening_bank)
+        if WILDCARD in chips:
+            problem += moves[1] <= cap + SQUAD_SIZE * play[WILDCARD][1]
+        else:
+            problem += moves[1] <= cap
     else:
         problem += moves[1] == forced_first_transfers
 
@@ -503,12 +590,19 @@ def optimize_path(
         # Which chip this gameweek plays, if any — at most one, by construction.
         bb_on = BENCH_BOOST in chips and (play[BENCH_BOOST][w].value() or 0) > 0.5
         tc_on = TRIPLE_CAPTAIN in chips and (play[TRIPLE_CAPTAIN][w].value() or 0) > 0.5
-        chip = BENCH_BOOST if bb_on else TRIPLE_CAPTAIN if tc_on else "none"
+        wc_on = WILDCARD in chips and (play[WILDCARD][w].value() or 0) > 0.5
+        chip = (
+            BENCH_BOOST if bb_on
+            else TRIPLE_CAPTAIN if tc_on
+            else WILDCARD if wc_on
+            else "none"
+        )
 
         # weekly_xp is the points the gameweek actually earns, chip and all: a
-        # boosted week's whole bench, a tripled week's third armband. The
-        # objective carries the same, less the chip's reservation — the number
-        # the plan was chosen by, exactly as it prices the churn tiebreak below.
+        # boosted week's whole bench, a tripled week's third armband. A wildcard
+        # changes no score, only the transfers, so it touches weekly_xp not at
+        # all. The objective carries the same, less each chip's reservation — the
+        # number the plan was chosen by, exactly as it prices the churn below.
         week_xp = started + armband
         week_score = started + armband + BENCH_WEIGHT * benched
         if bb_on:
@@ -517,6 +611,8 @@ def optimize_path(
         if tc_on:
             week_xp += armband
             week_score += armband - CHIP_RESERVATION[TRIPLE_CAPTAIN]
+        if wc_on:
+            week_score -= CHIP_RESERVATION[WILDCARD]
 
         weekly_xp[event] = week_xp
         objective += decay ** (w - 1) * week_score
