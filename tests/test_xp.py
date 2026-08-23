@@ -16,8 +16,13 @@ from aigaffer.data.models import Bootstrap, Fixture, Player, Team
 from aigaffer.model.xp import (
     ASSIST_PTS,
     CS_PTS,
+    DEFCON90_PRIOR,
     GOAL_PTS,
     LEAGUE_AVG_GOALS,
+    SAVES90_PRIOR,
+    SHRINKAGE_NINETIES,
+    XA90_PRIOR,
+    XG90_PRIOR,
     LeagueAverages,
     PlayerProjection,
     appearance_points,
@@ -137,20 +142,32 @@ def test_appearance_pays_once_for_playing_and_once_for_the_hour():
 
 
 def test_goals_are_paid_at_the_position_rate():
-    # 5.0 xG in 900 minutes is 0.5 a game.
+    # 5.0 xG in 900 minutes is 0.5 a game — but ten full matches (10 nineties)
+    # is only 0.625 of the shrinkage weight against K = 6, so the rate is
+    # pulled three-eighths of the way to the positional prior: a midfielder's
+    # toward 0.12, a forward's toward the higher 0.30.
+    mid_rate = 0.625 * 0.5 + 0.375 * 0.12  # 0.3575
+    fwd_rate = 0.625 * 0.5 + 0.375 * 0.30  # 0.425
     mid = player(element_type=3)
-    assert goal_points(mid, 90.0, 1.2) == approx(0.5 * 1.0 * 1.2 * GOAL_PTS[3])
+    assert goal_points(mid, 90.0, 1.2) == approx(mid_rate * 1.0 * 1.2 * GOAL_PTS[3])
     forward = player(element_type=4)
-    assert goal_points(forward, 90.0, 1.2) == approx(0.5 * 1.0 * 1.2 * GOAL_PTS[4])
+    assert goal_points(forward, 90.0, 1.2) == approx(fwd_rate * 1.0 * 1.2 * GOAL_PTS[4])
 
 
 def test_goals_scale_with_minutes_and_the_attack_factor():
-    assert goal_points(player(), 45.0, 0.8) == approx(0.5 * 0.5 * 0.8 * 5)
+    # The shrunk rate (0.3575 for this midfielder) still scales linearly with
+    # the minutes on the pitch and the attack factor.
+    rate = 0.625 * 0.5 + 0.375 * 0.12  # 0.3575
+    assert goal_points(player(), 45.0, 0.8) == approx(rate * 0.5 * 0.8 * 5)
 
 
 def test_assists_pay_the_same_for_every_position():
-    expected = approx(0.3 * 1.2 * ASSIST_PTS)
-    assert assist_points(player(element_type=2), 90.0, 1.2) == expected
+    # ASSIST_PTS is one number, not a per-position table like goals and clean
+    # sheets: three points to anyone. Midfielders and forwards share the same
+    # expected-assist prior (0.12), so their shrunk rates match too, and the
+    # equality isolates the points multiplier from the shrinkage.
+    expected = approx((0.625 * 0.3 + 0.375 * 0.12) * 1.2 * ASSIST_PTS)
+    assert assist_points(player(element_type=3), 90.0, 1.2) == expected
     assert assist_points(player(element_type=4), 90.0, 1.2) == expected
 
 
@@ -220,38 +237,60 @@ def test_the_same_floor_governs_goals_assists_and_saves():
     assert save_points(stale, 90.0) == 0.0
 
 
-def test_a_cameo_is_a_sample_not_a_rate():
-    # Six defensive actions in a minute off the bench is six a game at the
-    # very most — not the five hundred and forty a naive rate reads it as,
-    # which would have him clearing any threshold there is.
+def test_a_shrunk_cameo_reads_as_the_prior_not_as_a_rate():
+    # Six defensive actions in a minute off the bench is a sample, not a rate.
+    # _per_90 floors its own rate at six a game; then shrinkage weighs that one
+    # ninetieth of a match against six pseudo-matches of the midfield prior (8
+    # actions a game) and lands him at essentially the prior, ~7.996 — not the
+    # 540 a naive division reads, and nowhere near clearing his threshold on
+    # his own evidence.
     cameo = player(minutes=1, defensive_contribution=6)
-    assert defcon_points(cameo, 90.0) == 0.0
+    nineties = 1 / 90
+    weight = nineties / (nineties + 6.0)
+    rate = weight * 6.0 + (1 - weight) * 8.0  # ~7.996, the MID prior
+    chance = (rate - 12 / 2) / 12  # threshold 12 for a midfielder
+    assert defcon_points(cameo, 90.0) == approx(2 * chance)
 
 
-def test_a_goal_off_the_bench_is_not_a_goal_a_minute():
-    # One expected goal in the one minute he has played reads as one per
-    # ninety, because the denominator is floored at a full match. Ninety
-    # goals a game is the number the floor is there to refuse.
+def test_a_shrunk_bench_goal_is_a_fraction_of_a_full_rate():
+    # One expected goal in the one minute he has played: the floor reads it as
+    # one per ninety, and shrinkage then pulls that lone match of evidence
+    # almost all the way back to the midfield prior of 0.12. So the cameo goal
+    # is worth about six-tenths of a point, not the five a genuine goal-a-game
+    # midfielder's rate would score.
     cameo = player(minutes=1, expected_goals=1.0)
-    assert goal_points(cameo, 90.0, 1.0) == approx(GOAL_PTS[3])
+    nineties = 1 / 90
+    weight = nineties / (nineties + 6.0)
+    rate = weight * 1.0 + (1 - weight) * 0.12
+    assert goal_points(cameo, 90.0, 1.0) == approx(rate * GOAL_PTS[3])
 
 
-def test_a_defender_averaging_his_threshold_is_a_coin_flip_on_it():
-    # 100 defensive actions in 900 minutes is 10 a game, and 10 is what a
-    # defender needs. Half the two points.
+def test_shrinkage_lifts_a_threshold_level_defender_toward_the_field():
+    # 100 defensive actions in 900 minutes is 10 a game, a defender's threshold
+    # exactly — a coin flip on its own. But defenders average 14, and ten full
+    # matches is only 0.625 of the weight, so his rate is pulled up to 11.5 and
+    # his chance of clearing to (11.5 - 5) / 10 = 0.65: better than even.
     defender = player(element_type=2, minutes=900, defensive_contribution=100)
-    assert defcon_points(defender, 90.0) == approx(1.0)
+    rate = 0.625 * 10.0 + 0.375 * 14.0  # 11.5
+    chance = (rate - 10 / 2) / 10
+    assert defcon_points(defender, 90.0) == approx(2 * chance)
 
 
-def test_a_midfielder_well_short_of_his_threshold_never_earns_it():
-    # 5 a game against a threshold of 12 is not a defensive contributor.
+def test_a_quiet_midfielder_barely_scrapes_the_bar_after_shrinkage():
+    # 5 a game against a threshold of 12 is no defensive contributor. Shrinkage
+    # pulls him toward the midfield prior of 8, which itself sits just over the
+    # half-threshold, so he lands at 6.125 and earns a hair over the bar — two
+    # hundredths of a point, which is to say next to nothing.
     quiet = player(element_type=3, minutes=900, defensive_contribution=50)
-    assert defcon_points(quiet, 90.0) == 0.0
+    rate = 0.625 * 5.0 + 0.375 * 8.0  # 6.125
+    chance = (rate - 12 / 2) / 12
+    assert defcon_points(quiet, 90.0) == approx(2 * chance)
 
 
 def test_even_the_busiest_defender_is_not_a_certainty():
-    # 30 a game is three times the bar and still not every week — and half a
-    # match on the pitch is half the chances to do it.
+    # 30 a game shrinks to 24 (toward the 14 prior) and is still more than
+    # twice the bar — capped below certainty all the same, because nobody does
+    # it every week. Half a match on the pitch is half the chances to do it.
     monster = player(element_type=2, minutes=900, defensive_contribution=300)
     assert defcon_points(monster, 45.0) == approx(1.9 * 0.5)
 
@@ -260,6 +299,77 @@ def test_a_keeper_earns_nothing_for_defensive_contributions():
     # Keepers are not eligible for the points, whatever they do.
     keeper = player(element_type=1, minutes=900, defensive_contribution=900)
     assert defcon_points(keeper, 90.0) == 0.0
+
+
+# --- rate shrinkage --------------------------------------------------------
+
+
+def test_the_shrinkage_constants_are_the_documented_ones():
+    # They are tunables the whole caution turns on; a change to any of them
+    # should be a deliberate edit here, not a silent drift in the model.
+    assert SHRINKAGE_NINETIES == 6.0
+    assert XG90_PRIOR == {1: 0.0, 2: 0.05, 3: 0.12, 4: 0.30}
+    assert XA90_PRIOR == {1: 0.0, 2: 0.05, 3: 0.12, 4: 0.12}
+    assert DEFCON90_PRIOR == {1: 0.0, 2: 14.0, 3: 8.0, 4: 3.0}
+    assert SAVES90_PRIOR == {1: 3.0, 2: 0.0, 3: 0.0, 4: 0.0}
+
+
+def test_shrinkage_pulls_a_one_game_outlier_defender_toward_the_prior():
+    # The bug in miniature: a £4.5m defender with 1.4 xG in his one 90-minute
+    # game reads, divided honestly, as a 1.4-xG/90 elite striker. Shrinkage
+    # weighs that single match against six pseudo-matches of the 0.05 defender
+    # prior and drags the rate down to about a quarter of a goal a game.
+    outlier = player(element_type=2, minutes=90, expected_goals=1.4)
+    w = 1 / (1 + SHRINKAGE_NINETIES)  # one ninety played
+    rate = w * 1.4 + (1 - w) * XG90_PRIOR[2]
+    assert goal_points(outlier, 90.0, 1.0) == approx(rate * GOAL_PTS[2])
+    assert rate == pytest.approx(0.242857, abs=1e-5)  # down from 1.4
+
+
+def test_a_full_season_of_minutes_barely_shrinks_a_genuine_rate():
+    # The same 1.4-xG/90 output, earned over a full season (3000 minutes, ~33
+    # nineties) rather than one game. Now his own play carries 0.847 of the
+    # weight, so the rate barely leaves his own: the genuine elite keeps his
+    # number where the one-game fluke above lost his.
+    own = 1.4
+    proven = player(element_type=4, minutes=3000, expected_goals=own * 3000 / 90)
+    w = (3000 / 90) / ((3000 / 90) + SHRINKAGE_NINETIES)
+    rate = w * own + (1 - w) * XG90_PRIOR[4]
+    assert goal_points(proven, 90.0, 1.0) == approx(rate * GOAL_PTS[4])
+    assert abs(rate - own) < abs(rate - XG90_PRIOR[4])  # own data dominates
+    assert rate == pytest.approx(1.232, abs=1e-3)
+
+
+def test_the_de_cuyper_haaland_ordering_flip():
+    # The live GW2 bug this shrinkage exists to fix. De Cuyper (DEF, 1.4 xG) and
+    # Guehi (DEF, 0.9 xG) each played one 90-minute game; so did Haaland (FWD,
+    # 0.8 xG). Unshrunk, the cheap defenders' goal rates dwarf Haaland's and the
+    # model captains one of them. Shrunk toward the positional priors — 0.05 for
+    # a defender, 0.30 for a forward — Haaland's rate comes out on top, which is
+    # the whole point of the exercise.
+    de_cuyper = player(element_type=2, minutes=90, expected_goals=1.4)
+    guehi = player(element_type=2, minutes=90, expected_goals=0.9)
+    haaland = player(element_type=4, minutes=90, expected_goals=0.8)
+
+    def goal_rate(p: object) -> float:
+        # goal_points over a neutral fixture, with the position's goal value
+        # divided back out, is exactly the shrunk goal rate.
+        return goal_points(p, 90.0, 1.0) / GOAL_PTS[p.element_type]
+
+    assert goal_rate(haaland) > goal_rate(de_cuyper) > goal_rate(guehi)
+    assert goal_rate(haaland) == pytest.approx(0.371429, abs=1e-5)
+    assert goal_rate(de_cuyper) == pytest.approx(0.242857, abs=1e-5)
+    assert goal_rate(guehi) == pytest.approx(0.171429, abs=1e-5)
+
+
+def test_no_minutes_gets_no_prior_only_zero():
+    # Shrinkage anchors a thin sample to the prior, but a player with no minutes
+    # has no sample to anchor — the stale payload of a season's totals against
+    # zero minutes played — so he stays at zero, prior included. No minutes is
+    # no evidence, and inventing a league-average rate for him would undo the
+    # very caution the no-minutes rule is there for.
+    fresh = player(element_type=4, minutes=0, expected_goals=5.0)
+    assert goal_points(fresh, 90.0, 1.0) == 0.0
 
 
 # --- opponent strength -----------------------------------------------------
@@ -421,21 +531,29 @@ def test_fixture_points_sum_every_component():
 def test_projects_a_midfielder_at_home():
     mid = player(id=10, team=1, element_type=3)
     projection = project(mid, [HOME_FIXTURE], horizon=1)
+    # 900 minutes is ten nineties, 0.625 of the weight on his own rates: goals
+    # shrink 0.5 -> 0.3575 (toward 0.12), assists 0.3 -> 0.2325 (toward 0.12),
+    # and his 12-a-game defensive rate falls to 10.5 (toward 8), a 0.375 chance.
+    goal_rate = 0.625 * 0.5 + 0.375 * 0.12  # 0.3575
+    assist_rate = 0.625 * 0.3 + 0.375 * 0.12  # 0.2325
+    defcon_rate = 0.625 * 12.0 + 0.375 * 8.0  # 10.5
     expected = (
         2.0  # appearance
-        + 0.5 * 1.2 * GOAL_PTS[3]  # goals: 3.0
-        + 0.3 * 1.2 * ASSIST_PTS  # assists: 1.08
+        + goal_rate * 1.2 * GOAL_PTS[3]  # goals: 2.145
+        + assist_rate * 1.2 * ASSIST_PTS  # assists: 0.837
         + math.exp(-1.54) * CS_PTS[3]  # clean sheet
-        + 0.9  # bonus: 9 in 900 minutes
-        + 1.0  # defcon: 12 actions a game is a coin flip on 2 points
+        + 0.9  # bonus: 9 in 900 minutes, unshrunk
+        + 2 * ((defcon_rate - 12 / 2) / 12)  # defcon: 0.375 chance of 2 points
     )
     assert projection.per_gw[2] == approx(expected)
     assert projection.player_id == 10
 
 
 def test_projects_a_defender_away():
-    # 720 minutes is eight full matches, so his season totals are eight
-    # times his rates: 0.8 xG is 0.1 a game and 1.6 xA is 0.2 a game.
+    # 720 minutes is eight nineties, weight 8/14 on his own rates: 0.8 xG is
+    # 0.1 a game shrunk to 0.0786 (toward the 0.05 defender prior), 1.6 xA is
+    # 0.2 shrunk to 0.1357, and 80 actions is 10 a game lifted to 11.71 (toward
+    # 14). His threshold is ten, so that is a 0.6714 chance of the two points.
     defender = player(
         id=20,
         team=2,
@@ -447,14 +565,18 @@ def test_projects_a_defender_away():
         defensive_contribution=80,
     )
     projection = project(defender, [HOME_FIXTURE], minutes=72.0, horizon=1)
+    w = 8 / 14
+    goal_rate = w * 0.1 + (1 - w) * 0.05
+    assist_rate = w * 0.2 + (1 - w) * 0.05
+    defcon_rate = w * 10.0 + (1 - w) * 14.0
     expected = (
         1.8  # appearance: played 1.0 + p60 0.8
-        + 0.1 * 0.8 * 0.8 * GOAL_PTS[2]  # goals: 0.384
-        + 0.2 * 0.8 * 0.8 * ASSIST_PTS  # assists: 0.384
+        + goal_rate * 0.8 * 0.8 * GOAL_PTS[2]  # minutes 72/90 = 0.8, att 0.8
+        + assist_rate * 0.8 * 0.8 * ASSIST_PTS
         + math.exp(-1.19) * CS_PTS[2] * 0.8  # clean sheet
         - (1.19 / 2) * 0.8  # conceded: -0.476
-        + 0.5 * 0.8  # bonus: 4 in 720 minutes
-        + 1.0 * 0.8  # defcon: 80 in 720 is 10 a game, his threshold exactly
+        + 0.5 * 0.8  # bonus: 4 in 720 minutes, unshrunk
+        + 2 * ((defcon_rate - 10 / 2) / 10) * 0.8  # defcon over 72 minutes
     )
     assert projection.per_gw[2] == approx(expected)
 
