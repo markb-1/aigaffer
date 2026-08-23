@@ -84,6 +84,55 @@ unchanged; at ``wc = 1`` it is ``transfers[w]`` and the carry becomes
 ``ft[w] + 1`` — exact at both binary points, which is the whole of what the
 formulation has to be.
 
+**A free hit is priced beside the model, not inside it, and that is what
+makes the revert exact.** A free hit fields a whole one-week squad chosen fresh
+from the pool and hands it back: the gameweek after it owns exactly the fifteen
+the gameweek before it did, whatever the free-hit week fielded. Two formulations
+were on the table — a second set of selection variables for the free-hit week's
+own eleven, pinned so they never reach the next gameweek's squad, or a hybrid
+that prices the free-hit week to one side and lets a binary choose it. The
+hybrid is taken, because it makes the revert *structural* rather than a
+constraint the solver has to be trusted to honour: the free-hit squad is never a
+variable of this program at all, so it cannot leak into ``squad[w+1]`` however
+the branch-and-bound wanders.
+
+The price is a per-gameweek constant, ``best_oneweek[w]`` — the value of the
+best legal one-week fifteen the pool holds within the manager's budget, scored
+for that gameweek with the armband and the tenth-weighted bench exactly as the
+objective scores the standing squad, computed by :func:`_best_one_week_squad` in
+its own small program before this one is built. The budget it is held to is the
+one the manager actually has: the bank plus the sale value of the current squad,
+which under this module's constant-price approximation is a constant over the
+window — a free hit buys a better eleven, not an unlimited one.
+
+A free-hit gameweek ``fh[w] = 1`` then does two things. It makes no permanent
+transfers — ``moves[w] ≤ SQUAD_SIZE·(1 − fh[w])`` pins the gameweek's moves to
+zero, which is the game's rule (a free hit is not a transfer window) and which is
+what carries the standing squad through untouched: ``squad[w]`` equals
+``squad[w−1]``, the hit pin gives ``paid[w] = 0`` off zero moves, and the free-
+transfer carry is the ordinary ``min(5, ft[w] + 1)`` with nothing special added.
+So the revert needs no machinery of its own — a free-hit gameweek is a hold
+gameweek as far as the squad, the bank and the free transfers are concerned. And
+it *replaces that gameweek's score*: the objective already counts
+``decay**(w−1)·normal_score[w]`` for the standing squad, and the free hit adds
+``decay**(w−1)·(best_oneweek[w]·fh[w] − y[w] − reservation·fh[w])`` where ``y[w]``
+stands for ``fh[w]·normal_score[w]``. When ``fh[w] = 1`` the standing score and
+``y[w]`` cancel and the gameweek is worth ``best_oneweek[w] − reservation``; when
+``fh[w] = 0`` both new terms vanish and the gameweek is the standing squad's
+unchanged.
+
+The linearization of ``y[w]`` is where the tidiness is. ``y[w] ≤ normal_score[w]``,
+``y[w] ≤ best_oneweek[w]·fh[w]`` and ``y[w] ≥ normal_score[w] −
+best_oneweek[w]·(1 − fh[w])`` with ``y ≥ 0`` — a standard big-M product, and its
+big-M is not a guessed bound but ``best_oneweek[w]`` itself, which is genuinely
+an upper bound on ``normal_score[w]``: the standing squad is a legal fifteen
+inside the same budget drawn from the same pool, so its one-week score cannot
+beat the best such squad's. Because ``best_oneweek[w] ≥ normal_score[w]`` always,
+the free-hit gain is never negative before its reservation, and at ``fh = 1`` the
+three rows pin ``y = normal_score`` exactly whatever eleven the model names for
+that gameweek — the choice of a free-hit gameweek's standing XI cannot change the
+objective, which is right, since that XI is the one that does not play.
+
 **The captain is continuous and lands on an integer anyway.** With the XI
 fixed, ``0 ≤ captain ≤ xi`` and ``Σ captain = 1`` describe a simplex whose
 vertices are single players, so the solver cannot gain by splitting an armband
@@ -169,11 +218,15 @@ TRIPLE_CAPTAIN = "triple_captain"
 # it changes the transfer rules — so its value is entirely the squad the free
 # rebuild reaches and the hits it does not pay, weighed against holding it.
 WILDCARD = "wildcard"
+# A free hit fields a whole one-week squad chosen fresh from the pool and then
+# reverts: the gameweek after it owns exactly the fifteen the gameweek before it
+# did. Unlike the other three it neither scores the standing squad differently
+# nor changes its transfer rules — it replaces the standing squad for one week
+# with the best legal one the budget can field, and takes it back. See the
+# module docstring for how that revert is made structural rather than modelled.
+FREE_HIT = "free_hit"
 NO_CHIP = "none"
-# Free hit belongs to a later task; a chip the solver does not yet know how to
-# play is simply ignored rather than trusted, so a caller can hand in the whole
-# available set without this one over-promising.
-_PLANNABLE_CHIPS = (BENCH_BOOST, TRIPLE_CAPTAIN, WILDCARD)
+_PLANNABLE_CHIPS = (BENCH_BOOST, TRIPLE_CAPTAIN, WILDCARD, FREE_HIT)
 
 # The reservation is what stops the model burning a chip in the best week of the
 # next six when a far better week waits later in the season the horizon cannot
@@ -198,6 +251,11 @@ CHIP_RESERVATION: dict[str, float] = {
     # spares beat that over the horizon. Undecayed, tuned to FPL norms, refined
     # under review like the others.
     WILDCARD: 30.0,
+    # A free hit fields one exceptional week's squad and gives it back, so its
+    # bar sits between a boost's and a wildcard's: worth burning on a blank or a
+    # lopsided gameweek an ordinary squad cannot cover, and held otherwise.
+    # Undecayed, tuned to FPL norms, refined under review like the others.
+    FREE_HIT: 18.0,
 }
 
 
@@ -285,9 +343,9 @@ def optimize_path(
     what a blank is.
 
     ``available_chips`` are the chips still in hand — a subset of
-    :data:`BENCH_BOOST`, :data:`TRIPLE_CAPTAIN` and :data:`WILDCARD`, the three
-    this solver plans; any other name is ignored. Empty, which is the default,
-    is the fallback
+    :data:`BENCH_BOOST`, :data:`TRIPLE_CAPTAIN`, :data:`WILDCARD` and
+    :data:`FREE_HIT`, the four this solver plans; any other name is ignored.
+    Empty, which is the default, is the fallback
     guarantee: the model built is the pre-chip one to the last variable, so a
     caller who wants chips advisory-only need only withhold them. A chip in the
     set becomes a per-week binary the window may play, at most one chip a
@@ -325,6 +383,29 @@ def optimize_path(
         (p, w): _projected(projections, p, events[w - 1]) for p in pool for w in weeks
     }
     owned = {p: 1 if p in current else 0 for p in pool}
+
+    by_position = _grouped(pool, lambda p: players[p].element_type)
+    by_club = _grouped(pool, lambda p: players[p].team)
+
+    # A free hit's value each gameweek is priced to one side, as a constant, so
+    # its squad is never a variable of this program and cannot reach the next
+    # gameweek's fifteen — the revert is structural, not a constraint. The budget
+    # is the one the manager holds: the bank plus the sale value of the current
+    # squad, a constant over the window under this module's constant-price
+    # approximation. A gameweek whose best legal one-week squad the budget cannot
+    # even field is no window at all, which is None like any other infeasibility.
+    best_oneweek: dict[int, float] = {}
+    if FREE_HIT in available_chips:
+        budget = bank + sum(players[p].now_cost for p in current)
+        for w in weeks:
+            week_points = {p: points[p, w] for p in pool}
+            priced = _best_one_week_squad(
+                pool, players, by_position, by_club, week_points, budget,
+                _solver(time_limit),
+            )
+            if priced is None:
+                return None
+            best_oneweek[w] = priced[0]
 
     problem = pulp.LpProblem("aigaffer_transfer_path", pulp.LpMaximize)
 
@@ -397,6 +478,16 @@ def optimize_path(
         if WILDCARD in chips
         else {}
     )
+    # One auxiliary a gameweek: ``y_fh[w]`` is ``fh[w]·normal_score[w]``, the
+    # standing squad's own score for the gameweek, which a free hit takes off so
+    # that the constant free-hit score can replace it. Pinned by the usual big-M
+    # pair in the gameweek loop, its big-M being ``best_oneweek[w]`` itself — a
+    # true upper bound on the standing score, so the pin is exact.
+    y_fh = (
+        {w: problem.add_variable(f"yfh{w}", lowBound=0) for w in weeks}
+        if FREE_HIT in chips
+        else {}
+    )
 
     objective = (
         pulp.lpSum(
@@ -446,10 +537,23 @@ def optimize_path(
             decay ** (w - 1) * CHIP_RESERVATION[WILDCARD] * play[WILDCARD][w]
             for w in weeks
         )
+    if FREE_HIT in chips:
+        # The free-hit gameweek is worth its best one-week squad in place of the
+        # standing one: the objective already counts the standing score, so the
+        # chip adds the constant ``best_oneweek``, takes the standing score back
+        # off through ``y_fh``, and pays its bar. Where ``fh[w] = 1`` the two
+        # standing terms cancel and the gameweek is worth ``best_oneweek − bar``;
+        # where ``fh[w] = 0`` both new terms are zero and nothing changes.
+        objective += pulp.lpSum(
+            decay ** (w - 1)
+            * (
+                best_oneweek[w] * play[FREE_HIT][w]
+                - y_fh[w]
+                - CHIP_RESERVATION[FREE_HIT] * play[FREE_HIT][w]
+            )
+            for w in weeks
+        )
     problem += objective
-
-    by_position = _grouped(pool, lambda p: players[p].element_type)
-    by_club = _grouped(pool, lambda p: players[p].team)
 
     for w in weeks:
         held = {p: owned[p] if w == 1 else squad[w - 1][p] for p in pool}
@@ -535,6 +639,30 @@ def optimize_path(
             # floor — the carry pushes it to whichever is smaller on its own.
             problem += z_wc[w] <= moves[w]
             problem += z_wc[w] <= SQUAD_SIZE * play[WILDCARD][w]
+        if FREE_HIT in chips:
+            fh = play[FREE_HIT][w]
+            # A free hit makes no permanent transfers — that is the game's rule
+            # and the whole of the revert: with the gameweek's moves pinned to
+            # zero the standing squad carries through untouched, the hit pin
+            # gives no hits off zero moves, and the free-transfer carry is the
+            # ordinary one. So a free-hit gameweek is a hold gameweek here.
+            problem += moves[w] <= SQUAD_SIZE * (1 - fh)
+            # The big-M pin on ``y_fh[w] = fh·normal_score``. Its big-M is the
+            # gameweek's own ``best_oneweek``, a true upper bound on the standing
+            # score, so at ``fh = 1`` the pair forces ``y_fh = normal_score`` and
+            # at ``fh = 0`` forces ``y_fh = 0``.
+            normal_score = pulp.lpSum(
+                points[p, w]
+                * (
+                    starting[w][p]
+                    + captain[w][p]
+                    + BENCH_WEIGHT * (squad[w][p] - starting[w][p])
+                )
+                for p in pool
+            )
+            problem += y_fh[w] <= normal_score
+            problem += y_fh[w] <= best_oneweek[w] * fh
+            problem += y_fh[w] >= normal_score - best_oneweek[w] * (1 - fh)
 
     # Each chip is the game's once-a-season, so once across the horizon too.
     for chip in chips:
@@ -591,10 +719,12 @@ def optimize_path(
         bb_on = BENCH_BOOST in chips and (play[BENCH_BOOST][w].value() or 0) > 0.5
         tc_on = TRIPLE_CAPTAIN in chips and (play[TRIPLE_CAPTAIN][w].value() or 0) > 0.5
         wc_on = WILDCARD in chips and (play[WILDCARD][w].value() or 0) > 0.5
+        fh_on = FREE_HIT in chips and (play[FREE_HIT][w].value() or 0) > 0.5
         chip = (
             BENCH_BOOST if bb_on
             else TRIPLE_CAPTAIN if tc_on
             else WILDCARD if wc_on
+            else FREE_HIT if fh_on
             else "none"
         )
 
@@ -613,6 +743,13 @@ def optimize_path(
             week_score += armband - CHIP_RESERVATION[TRIPLE_CAPTAIN]
         if wc_on:
             week_score -= CHIP_RESERVATION[WILDCARD]
+        if fh_on:
+            # A free hit fields its best one-week squad in place of the standing
+            # one, so the gameweek earns that squad's whole score — the standing
+            # squad's own points do not count at all — less the reservation. It
+            # made no transfers, so nothing is added to the hit or churn totals.
+            week_xp = best_oneweek[w]
+            week_score = best_oneweek[w] - CHIP_RESERVATION[FREE_HIT]
 
         weekly_xp[event] = week_xp
         objective += decay ** (w - 1) * week_score
@@ -674,3 +811,82 @@ def _projected(
     """
     projection = projections.get(player_id)
     return projection.per_gw.get(event, 0.0) if projection else 0.0
+
+
+def _best_one_week_squad(
+    pool: list[int],
+    players: dict[int, Player],
+    by_position: dict[int, list[int]],
+    by_club: dict[int, list[int]],
+    week_points: dict[int, float],
+    budget: int,
+    solver: pulp.LpSolver,
+) -> tuple[float, list[int], list[int]] | None:
+    """The best legal one-week fifteen the pool holds within ``budget``.
+
+    This is the price of a free hit for one gameweek, computed to one side of the
+    window program and handed in as a constant: the whole point of the hybrid
+    free-hit formulation is that the free-hit squad is never a variable of the
+    window itself, so it cannot leak into the next gameweek's squad. See the
+    module docstring.
+
+    The fifteen is chosen fresh — no current squad, no transfers, no hits, a free
+    hit costs none of those — subject to the game's own legality: the 2/5/5/3
+    quota, three to a club, an eleven of one keeper and at least three defenders
+    and a forward, and a total price inside ``budget``, which is the bank plus the
+    sale value of the squad the manager holds. It is scored for the one gameweek
+    with the armband doubled and the bench at :data:`BENCH_WEIGHT`, exactly as the
+    window scores the standing squad, so the two are comparable to the point.
+
+    Returns ``(value, squad, xi)`` — the score, the fifteen and the eleven — or
+    None if no legal fifteen fits the budget, which the caller treats as it
+    treats any infeasible window: no plan, fall back. ``squad`` and ``xi`` are
+    returned for the caller that wants to show the free-hit eleven; the window
+    objective needs only ``value``.
+    """
+    problem = pulp.LpProblem("aigaffer_free_hit_week", pulp.LpMaximize)
+    squad = problem.add_variable_dicts("fhsquad", pool, cat=pulp.LpBinary)
+    starting = problem.add_variable_dicts("fhxi", pool, cat=pulp.LpBinary)
+    # Continuous for the same reason the window's captain is — the XI fixed, the
+    # armband lands on a single man without being made a binary.
+    captain = problem.add_variable_dicts("fhcap", pool, lowBound=0, upBound=1)
+
+    problem += pulp.lpSum(
+        week_points[p]
+        * (starting[p] + captain[p] + BENCH_WEIGHT * (squad[p] - starting[p]))
+        for p in pool
+    )
+
+    problem += pulp.lpSum(squad.values()) == SQUAD_SIZE
+    for position, quota in SQUAD_QUOTAS.items():
+        problem += pulp.lpSum(squad[p] for p in by_position[position]) == quota
+    for club_mates in by_club.values():
+        problem += pulp.lpSum(squad[p] for p in club_mates) <= MAX_PER_CLUB
+    problem += pulp.lpSum(players[p].now_cost * squad[p] for p in pool) <= budget
+
+    problem += pulp.lpSum(starting.values()) == XI_SIZE
+    for p in pool:
+        problem += starting[p] <= squad[p]
+        problem += captain[p] <= starting[p]
+    problem += (
+        pulp.lpSum(starting[p] for p in by_position[GOALKEEPER]) == XI_GOALKEEPERS
+    )
+    problem += (
+        pulp.lpSum(starting[p] for p in by_position[DEFENDER]) >= MIN_XI_DEFENDERS
+    )
+    problem += pulp.lpSum(starting[p] for p in by_position[FORWARD]) >= MIN_XI_FORWARDS
+    problem += pulp.lpSum(captain.values()) == 1
+
+    if pulp.LpStatus[problem.solve(solver)] != "Optimal":
+        return None
+
+    chosen = _chosen(squad)
+    eleven = _chosen(starting)
+    bench = set(chosen) - set(eleven)
+    armband = sum(week_points[p] * (captain[p].value() or 0.0) for p in pool)
+    value = (
+        sum(week_points[p] for p in eleven)
+        + armband
+        + BENCH_WEIGHT * sum(week_points[p] for p in bench)
+    )
+    return value, chosen, eleven
