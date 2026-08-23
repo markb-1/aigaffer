@@ -228,6 +228,21 @@ FREE_HIT = "free_hit"
 NO_CHIP = "none"
 _PLANNABLE_CHIPS = (BENCH_BOOST, TRIPLE_CAPTAIN, WILDCARD, FREE_HIT)
 
+# No chip is played before this gameweek. The reservation bars below are the
+# opportunity cost of spending a chip inside the window rather than saving it,
+# but early in the season that cost is one the six-gameweek horizon cannot
+# price: the real doubles and blanks a chip is worth holding for lie months
+# past the horizon's edge, and projection noise alone can push an ordinary week
+# past a bar it does not deserve — the live GW2 that recommended a free hit off
+# nothing but early-season noise. So chips are held outright before this floor,
+# whatever their EV; a week in the window earlier than the floor may play no
+# chip and schedule none, and the chips become eligible only once the horizon
+# reaches a gameweek that is not before it. A conservative first guess — chips
+# are late-season weapons, and ten is early enough to keep them in hand through
+# the noisy opening without giving away a genuinely early double gameweek.
+# Tunable, and a constant like the bars: one place, moved under review.
+CHIP_FLOOR_GW = 10
+
 # The reservation is what stops the model burning a chip in the best week of the
 # next six when a far better week waits later in the season the horizon cannot
 # see. A chip is free to play, so without a bar the model would spend it at the
@@ -237,25 +252,29 @@ _PLANNABLE_CHIPS = (BENCH_BOOST, TRIPLE_CAPTAIN, WILDCARD, FREE_HIT)
 # same week factor as the benefit it is weighed against, so within the window
 # the model still chooses the best week and the bar only decides play-or-hold.
 #
-# These are undecayed points, tuned to FPL norms — a bench boost or a triple
-# captain earns its keep on a double gameweek, and twelve points is about what a
-# good one clears an ordinary week by — and meant to be refined against live
-# seasons, not treated as exact. A constant, deliberately: there is no env
-# override, so the number lives in one place and moves under review.
+# These are undecayed points, tuned to FPL norms and raised from a first pass
+# once the live run showed weeks clearing them on projection noise alone: past
+# the early-season floor above, only a genuinely exceptional gameweek should
+# spend a chip the horizon cannot see the season's real opportunity for. A bench
+# boost or a triple captain earns its keep on a double gameweek, and twenty-odd
+# points is about what a strong one clears an ordinary week by. Meant to be
+# refined against live seasons, not treated as exact. A constant, deliberately:
+# there is no env override, so the number lives in one place and moves under
+# review.
 CHIP_RESERVATION: dict[str, float] = {
-    BENCH_BOOST: 12.0,
-    TRIPLE_CAPTAIN: 12.0,
+    BENCH_BOOST: 20.0,
+    TRIPLE_CAPTAIN: 18.0,
     # A wildcard is a whole free rebuild, so its bar sits far higher than a
     # boost's: a good one clears an ordinary week by thirty-odd points, and the
     # chip is worth burning only where the free uncapped squad and the hits it
     # spares beat that over the horizon. Undecayed, tuned to FPL norms, refined
     # under review like the others.
-    WILDCARD: 30.0,
+    WILDCARD: 35.0,
     # A free hit fields one exceptional week's squad and gives it back, so its
     # bar sits between a boost's and a wildcard's: worth burning on a blank or a
     # lopsided gameweek an ordinary squad cannot cover, and held otherwise.
     # Undecayed, tuned to FPL norms, refined under review like the others.
-    FREE_HIT: 18.0,
+    FREE_HIT: 25.0,
 }
 
 
@@ -362,9 +381,12 @@ def optimize_path(
     guarantee: the model built is the pre-chip one to the last variable, so a
     caller who wants chips advisory-only need only withhold them. A chip in the
     set becomes a per-week binary the window may play, at most one chip a
-    gameweek and each chip at most once across the horizon, and only where its
-    marginal xP beats :data:`CHIP_RESERVATION` — else it is held and played
-    nowhere. The window plans the chip in the best week of the next few, which
+    gameweek and each chip at most once across the horizon, never in a gameweek
+    before :data:`CHIP_FLOOR_GW`, and only where its marginal xP beats
+    :data:`CHIP_RESERVATION` — else it is held and played nowhere. The floor
+    holds every chip through the noisy opening weeks whatever their EV; the bar
+    decides play-or-hold in the eligible weeks past it. The window plans the
+    chip in the best week of the next few, which
     is not the best week of the season: it cannot see past its own horizon, and
     a chip it plays here is one it is not saving for a double gameweek beyond.
 
@@ -703,6 +725,19 @@ def optimize_path(
     # Each chip is the game's once-a-season, so once across the horizon too.
     for chip in chips:
         problem += pulp.lpSum(play[chip][w] for w in weeks) <= 1
+
+    # The early-season floor: no chip is played before CHIP_FLOOR_GW. A week in
+    # the window whose gameweek is earlier than the floor has every chip's play
+    # binary pinned to zero, so the chip is neither played there nor scheduled
+    # there — it is held until the horizon reaches an eligible gameweek. This is
+    # the hard brake behind the reservation bar: it holds the noise-driven early
+    # chip the bar alone let through, whatever the EV. It binds only when chips
+    # are in hand — an empty ``available_chips`` leaves ``chips`` empty and adds
+    # no row, so the pre-chip model is untouched to the last variable.
+    for w in weeks:
+        if events[w - 1] < CHIP_FLOOR_GW:
+            for chip in chips:
+                problem += play[chip][w] == 0
 
     if forced_first_transfers is None:
         # The opening cap, lifted for a wildcarded first gameweek: fifteen is the
