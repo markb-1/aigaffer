@@ -54,9 +54,9 @@ from aigaffer.orchestrator import (
 )
 from aigaffer.report.render import render_report
 from aigaffer.report.telegram import send_report
-from aigaffer.solver.lineup import Lineup, pick_lineup
+from aigaffer.solver.lineup import Lineup, attacking_evs, pick_lineup
 from aigaffer.solver.multiweek import PlannedPath
-from aigaffer.solver.optimizer import Plan
+from aigaffer.solver.optimizer import FORWARD, MIDFIELDER, Plan
 from aigaffer.store import Store
 from tests.fixtures import (
     ELEMENT_SUMMARY_JSON,
@@ -521,6 +521,7 @@ def test_a_dry_run_leaves_nothing_behind(tmp_path):
 # over without touching the API, and an override reaches the projection.
 
 FERRER = 5  # the premium midfielder in the pipeline universe, and its captain
+REYES = 17  # the next-best attacker, whose total tops Ferrer's once his bonus goes
 
 
 class Seam(NamedTuple):
@@ -644,6 +645,41 @@ def test_a_player_given_no_minutes_is_not_fielded(seam, scout_run):
     solved = solve(seam.inputs, projections, seam.cfg)
 
     assert FERRER not in solved.lineup.xi
+
+
+def test_the_pipeline_captains_the_goal_threat_not_the_padded_total(tmp_path):
+    # The armband plumbing, end to end: solve hands pick_lineup the attacking
+    # slice project_all computed, and on the stock universe nothing would
+    # notice if it stopped — Ferrer tops the total and the ceiling both, so
+    # the total-ranked fallback crowns the same man. So the universe is bent
+    # until the two columns disagree: with his bonus struck out Ferrer's floor
+    # sinks below Reyes' total while his goals and assists stay the best on
+    # the board. Only a captaincy ranked on the attacking slice finds him now.
+    payload = copy.deepcopy(PIPELINE_BOOTSTRAP_JSON)
+    next(e for e in payload["elements"] if e["id"] == FERRER)["bonus"] = 0
+    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path)
+    inputs = fetch_inputs(cfg, make_client(pipeline_routes(bootstrap=payload)))
+
+    _, projections = build_projections(inputs, cfg)
+    solved = solve(inputs, projections, cfg)
+
+    # The scenario holds: among the eleven's attackers, the biggest total and
+    # the biggest ceiling are different players — otherwise this proves
+    # nothing about which of the two the armband was ranked on.
+    gw = inputs.event.id
+    positions = {pid: p.element_type for pid, p in inputs.players.items()}
+    attacking = attacking_evs(projections, gw)
+    candidates = [
+        pid for pid in solved.lineup.xi if positions[pid] in (MIDFIELDER, FORWARD)
+    ]
+    by_total = max(candidates, key=lambda pid: projections[pid].per_gw[gw])
+    by_ceiling = max(candidates, key=lambda pid: attacking[pid])
+    assert by_total == REYES and by_ceiling == FERRER
+
+    # Ferrer captains on the ceiling; ranked on the total he would not even be
+    # vice, which is how this test fails if the plumbing is ever dropped.
+    assert solved.lineup.captain == FERRER
+    assert solved.lineup.vice == REYES
 
 
 def test_a_solve_with_no_squad_drafts_a_fifteen(tmp_path):

@@ -6,8 +6,9 @@ he is around for, and his season so far says what he does with the time. A
 gameweek is the sum over his club's fixtures in it, so a blank scores nothing
 and a double scores twice without any special case.
 
-Every rate the model uses — goals, assists, saves, defensive contributions —
-starts as a season total divided by season minutes by the same function,
+Every rate the model uses — goals, assists, saves, bonus, defensive
+contributions — starts as a season total divided by season minutes by the same
+function,
 :func:`_per_90`, and so obeys the same small-sample rule: a player with no
 minutes has no rate at all, and a rate is never taken over less than a full
 match. That rule is the whole of the model's first line of caution about thin

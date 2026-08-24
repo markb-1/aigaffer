@@ -89,7 +89,10 @@ def attacking_evs(
     fixtures is needed. None when no projection carries an attacking figure for
     the gameweek, which is how a set of projections built by hand for a test
     says "no ceiling claim here" and lets :func:`pick_lineup` fall back on the
-    total. It is the basis the armband is chosen on.
+    total. In practice coverage is all or nothing — ``project_all`` fills the
+    slice for every player over the same gameweeks — which is as well, because
+    a mixed set would not fall back: the dict is truthy, and the players absent
+    from it would simply rank at 0.0. It is the basis the armband is chosen on.
     """
     ev = {
         pid: projection.attacking_per_gw[event]

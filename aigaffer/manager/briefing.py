@@ -40,7 +40,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import TYPE_CHECKING
 
-from aigaffer.data.models import Player
+from aigaffer.data.models import Event, Player
 from aigaffer.manager.tools import played_chips
 from aigaffer.model.xp import PlayerProjection
 from aigaffer.report.render import (
@@ -401,7 +401,7 @@ def _situation(
     return "\n".join(lines)
 
 
-def _early_season_note(events: list) -> str:
+def _early_season_note(events: list[Event]) -> str:
     """The advisory for a season too young to trust its own rates, or nothing.
 
     Counts the gameweeks actually finished — never the one ahead — and speaks
