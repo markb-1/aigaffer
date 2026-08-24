@@ -79,8 +79,31 @@ class ChipEvs:
     wildcard: float
 
 
+def attacking_evs(
+    projections: dict[int, PlayerProjection], event: int
+) -> dict[int, float] | None:
+    """Each player's goals-and-assists expected points for ``event``, or None.
+
+    Read off the projections themselves — :attr:`PlayerProjection.attacking_per_gw`
+    is the ceiling slice the model already computed — so no second pass over the
+    fixtures is needed. None when no projection carries an attacking figure for
+    the gameweek, which is how a set of projections built by hand for a test
+    says "no ceiling claim here" and lets :func:`pick_lineup` fall back on the
+    total. It is the basis the armband is chosen on.
+    """
+    ev = {
+        pid: projection.attacking_per_gw[event]
+        for pid, projection in projections.items()
+        if event in projection.attacking_per_gw
+    }
+    return ev or None
+
+
 def pick_lineup(
-    squad: list[int], positions: dict[int, int], gw_xp: dict[int, float]
+    squad: list[int],
+    positions: dict[int, int],
+    gw_xp: dict[int, float],
+    attacking_ev: dict[int, float] | None = None,
 ) -> Lineup:
     """The best eleven from ``squad`` for one gameweek, and the bench behind it.
 
@@ -89,17 +112,20 @@ def pick_lineup(
     two keepers, five defenders, five midfielders, three forwards — which is
     what makes every formation fillable.
 
-    The armband goes to the best *attacker* in the eleven, not simply the best
-    projected player. A captain is picked for ceiling — the doubled points come
-    from a goal or an assist — and a defender's projection is mostly floor:
-    appearance, a clean sheet, a reliable defensive contribution, none of which
-    double into a haul. Early in a season, when a nailed defender's steady floor
-    can out-project a forward whose one-game rate is still shrinking, captaining
-    on raw xP hands the armband to a defender, which is almost never right. So
-    captain and vice are the two highest-projected midfielders or forwards in
-    the XI; the any-position ordering behind them is a pure fallback for a
-    malformed eleven with too few attackers, which a legal formation — two
-    midfielders and a forward at the very least — never is.
+    The eleven and the bench are chosen on ``gw_xp``, the whole projected points
+    — you field the side that scores most. The armband is not: a captain is
+    doubled, and what doubles into a haul is a goal or an assist, so it goes to
+    the biggest *attacking* threat, not the biggest total. Two reasons the two
+    differ. A defender's total is mostly floor — appearance, a clean sheet, a
+    defensive contribution — none of which a doubled score touches, so captain
+    and vice are drawn from the midfielders and forwards only. And among those,
+    a cheap player's total can be padded past a genuine goal threat's by that
+    same floor and a kind fixture, so within them the armband is ranked by
+    ``attacking_ev`` — the goals-and-assists points alone — when the caller has
+    it, and only by ``gw_xp`` as a fallback. The any-position ordering behind
+    the attackers is itself a last resort, for a malformed eleven holding fewer
+    than two of them, which a legal formation — two midfielders and a forward at
+    the very least — never is.
     """
     ranked = _ranked(squad, positions, gw_xp)
     xi = max(
@@ -107,12 +133,17 @@ def pick_lineup(
         key=lambda eleven: sum(gw_xp.get(pid, 0.0) for pid in eleven),
     )
 
-    armbands = sorted(xi, key=lambda pid: (-gw_xp.get(pid, 0.0), pid))
-    attackers = [pid for pid in armbands if positions[pid] in (MIDFIELDER, FORWARD)]
-    others = [pid for pid in armbands if pid not in set(attackers)]
-    # Attackers first, in projection order, then everyone else as a last resort:
-    # the first two are the captain and vice, so both are attackers whenever the
-    # eleven holds two, which every legal one does.
+    # Ceiling when we have it, total as a fallback; a defender is never a
+    # candidate, so his high floor cannot win the armband whichever key is used.
+    key = attacking_ev if attacking_ev is not None else gw_xp
+    attackers = sorted(
+        (pid for pid in xi if positions[pid] in (MIDFIELDER, FORWARD)),
+        key=lambda pid: (-key.get(pid, 0.0), pid),
+    )
+    others = sorted(
+        (pid for pid in xi if positions[pid] not in (MIDFIELDER, FORWARD)),
+        key=lambda pid: (-gw_xp.get(pid, 0.0), pid),
+    )
     preferred = attackers + others
     bench = sorted(
         set(squad) - set(xi),

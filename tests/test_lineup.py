@@ -35,7 +35,14 @@ import pytest
 
 from aigaffer.model.xp import PlayerProjection
 from aigaffer.solver import lineup as lineup_module
-from aigaffer.solver.lineup import FORMATIONS, ChipEvs, Lineup, chip_evs, pick_lineup
+from aigaffer.solver.lineup import (
+    FORMATIONS,
+    ChipEvs,
+    Lineup,
+    attacking_evs,
+    chip_evs,
+    pick_lineup,
+)
 from aigaffer.solver.optimizer import Plan
 
 GK, DEF, MID, FWD = 1, 2, 3, 4
@@ -214,6 +221,63 @@ def test_the_armbands_do_not_depend_on_the_squad_order():
     backward = pick_lineup(list(reversed(SQUAD)), POSITIONS, GW_XP)
 
     assert (forward.captain, forward.vice) == (backward.captain, backward.vice)
+
+
+# --- the armband is chosen on the ceiling, not the total -------------------
+
+
+def test_the_armband_prefers_the_goal_threat_over_the_padded_total():
+    # The Haaland-vs-cheap-mid case in miniature. Midfielder 8 has the highest
+    # TOTAL projection (8.0), padded by appearance, a kind fixture and defensive
+    # points. Forward 13 totals less (7.2) but is the real goal threat — the
+    # higher goals-and-assists EV — so he takes the armband, with midfielder 9
+    # (next on attacking EV) as vice. Captaining on the total would have picked 8.
+    attacking = {pid: 1.0 for pid in SQUAD}
+    attacking[13] = 6.5  # the forward's ceiling
+    attacking[9] = 5.0  # the next-best threat
+    attacking[8] = 2.0  # top total, floor-padded ceiling
+    lineup = pick_lineup(SQUAD, POSITIONS, GW_XP, attacking)
+
+    assert lineup.captain == 13 and POSITIONS[lineup.captain] == FWD
+    assert lineup.vice == 9 and POSITIONS[lineup.vice] == MID
+    assert POSITIONS[lineup.captain] in (MID, FWD)
+    assert POSITIONS[lineup.vice] in (MID, FWD)
+
+
+def test_the_attacking_armband_is_deterministic():
+    # Distinct attacking figures, opposite input orders: same choice both ways.
+    attacking = {pid: float(pid) for pid in SQUAD}
+    a = pick_lineup(SQUAD, POSITIONS, GW_XP, attacking)
+    b = pick_lineup(list(reversed(SQUAD)), POSITIONS, GW_XP, attacking)
+
+    assert (a.captain, a.vice) == (b.captain, b.vice)
+    assert POSITIONS[a.captain] in (MID, FWD) and POSITIONS[a.vice] in (MID, FWD)
+
+
+def test_without_attacking_ev_the_armband_falls_back_to_the_total():
+    # No ceiling figures supplied: the armband is chosen on total gw_xp, which
+    # is what a set of hand-built projections with no attacking slice gets.
+    lineup = pick_lineup(SQUAD, POSITIONS, GW_XP)  # attacking_ev defaults to None
+
+    assert lineup.captain == 8 and lineup.vice == 9
+
+
+def test_attacking_evs_reads_the_projection_slice_or_says_none():
+    event = NEXT_EVENT
+    projections = {
+        1: PlayerProjection(
+            player_id=1, per_gw={event: 5.0}, total=7.5, attacking_per_gw={event: 3.0}
+        ),
+        2: PlayerProjection(
+            player_id=2, per_gw={event: 4.0}, total=6.0, attacking_per_gw={event: 1.0}
+        ),
+    }
+    assert attacking_evs(projections, event) == {1: 3.0, 2: 1.0}
+
+    # A hand-built projection carries no attacking slice and so makes no ceiling
+    # claim: the helper says None, and pick_lineup falls back to the total.
+    bare = {1: PlayerProjection(player_id=1, per_gw={event: 5.0}, total=7.5)}
+    assert attacking_evs(bare, event) is None
 
 
 def test_the_bench_starts_with_the_keeper_then_ranks_by_points():

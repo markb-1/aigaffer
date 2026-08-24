@@ -34,7 +34,7 @@ each gameweek by a decay factor before summing.
 
 from collections import defaultdict
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from math import exp
 
 from aigaffer.data.models import Bootstrap, Fixture, Player, Team
@@ -100,9 +100,20 @@ MAX_DEFCON_CHANCE = 0.95
 
 @dataclass
 class PlayerProjection:
+    """A player's expected points, gameweek by gameweek, and the decayed total.
+
+    ``attacking_per_gw`` is the goals-and-assists slice of each gameweek — the
+    ceiling half of the same numbers, carried alongside the whole so that the
+    captaincy can be chosen on it without a second pass over the fixtures (see
+    :func:`aigaffer.solver.lineup.pick_lineup`). It defaults to empty, because a
+    projection built by hand for a test is not making a claim about a player's
+    ceiling, and a caller that has none falls back on the total.
+    """
+
     player_id: int
     per_gw: dict[int, float]
     total: float
+    attacking_per_gw: dict[int, float] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -186,6 +197,23 @@ def assist_points(player: Player, minutes: float, att_factor: float) -> float:
     )
     assists = rate * (minutes / 90) * att_factor
     return assists * ASSIST_PTS
+
+
+def attacking_points(player: Player, minutes: float, att_factor: float) -> float:
+    """Expected points from goals and assists in one fixture — the ceiling.
+
+    The high-variance half of a player's return, the part that doubles into a
+    haul, as against the floor of appearance, clean sheets, saves, bonus and
+    defensive contributions, none of which a captain's armband multiplies into
+    anything worth having. It is the sum of the two attacking components and
+    adds no formula of its own; the captaincy is chosen on it
+    (:func:`aigaffer.solver.lineup.pick_lineup`) so the armband goes to a genuine
+    goal threat rather than to a cheap player whose *total* a steady floor and a
+    kind fixture have padded past one.
+    """
+    return goal_points(player, minutes, att_factor) + assist_points(
+        player, minutes, att_factor
+    )
 
 
 def clean_sheet_points(player: Player, minutes: float, lam: float) -> float:
@@ -312,16 +340,23 @@ def project_all(
     for player in bootstrap.elements:
         minutes = xmins.get(player.id, 0.0)
         per_gw = {}
+        attacking_per_gw = {}
         for gw in gameweeks:
             points = 0.0
+            attacking = 0.0
             for opponent_id, opponent_at_home in schedule.get((gw, player.team), ()):
                 opponent = teams[opponent_id]
                 averages = home_averages if opponent_at_home else away_averages
                 att_factor, lam = fixture_factors(opponent, opponent_at_home, averages)
                 points += fixture_points(player, minutes, att_factor, lam)
+                attacking += attacking_points(player, minutes, att_factor)
             per_gw[gw] = points
+            attacking_per_gw[gw] = attacking
         projections[player.id] = PlayerProjection(
-            player_id=player.id, per_gw=per_gw, total=decayed_total(per_gw, decay)
+            player_id=player.id,
+            per_gw=per_gw,
+            total=decayed_total(per_gw, decay),
+            attacking_per_gw=attacking_per_gw,
         )
     return projections
 

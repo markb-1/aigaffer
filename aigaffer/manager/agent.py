@@ -47,7 +47,7 @@ from aigaffer.manager.tools import (
     validate_finalize,
 )
 from aigaffer.model.xp import PlayerProjection
-from aigaffer.solver.lineup import Lineup, pick_lineup
+from aigaffer.solver.lineup import Lineup, attacking_evs, pick_lineup
 from aigaffer.solver.optimizer import Plan
 
 if TYPE_CHECKING:  # the orchestrator imports the manager, so never the reverse
@@ -608,13 +608,20 @@ class _Conversation:
         return applied, unapplied
 
     def _lineup(self, plan: Plan) -> Lineup:
-        """The eleven ``plan`` fields next gameweek, on the projections in force."""
+        """The eleven ``plan`` fields next gameweek, on the projections in force.
+
+        The armband is chosen on the same ceiling — goals and assists — the
+        solver uses, read off the projections now in force so a re-solve on the
+        manager's own minutes moves the captain the same way it moves the team.
+        """
         event = self.inputs.event.id
         gw_xp = {
             pid: projection.per_gw.get(event, 0.0)
             for pid, projection in self.projections.items()
         }
-        return pick_lineup(plan.squad, self.positions, gw_xp)
+        return pick_lineup(
+            plan.squad, self.positions, gw_xp, attacking_evs(self.projections, event)
+        )
 
     def _count(self, response: Any) -> None:
         """Note the searches in one turn. The server ran them and billed them;

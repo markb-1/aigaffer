@@ -610,7 +610,12 @@ def test_unscheduled_fixtures_are_ignored():
 
 def test_a_player_expected_to_play_no_minutes_projects_zero():
     projection = project(player(id=10), [HOME_FIXTURE], minutes=0.0, horizon=2)
-    assert projection == PlayerProjection(player_id=10, per_gw={2: 0.0, 3: 0.0}, total=0.0)
+    assert projection == PlayerProjection(
+        player_id=10,
+        per_gw={2: 0.0, 3: 0.0},
+        total=0.0,
+        attacking_per_gw={2: 0.0, 3: 0.0},
+    )
 
 
 def test_a_player_missing_from_xmins_projects_zero():

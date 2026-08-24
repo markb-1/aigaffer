@@ -69,7 +69,13 @@ from aigaffer.model.minutes import expected_minutes, season_prior
 from aigaffer.model.xp import PlayerProjection, project_all, projected_events
 from aigaffer.report.render import played_chip, render_report
 from aigaffer.report.telegram import send_report
-from aigaffer.solver.lineup import ChipEvs, Lineup, chip_evs, pick_lineup
+from aigaffer.solver.lineup import (
+    ChipEvs,
+    Lineup,
+    attacking_evs,
+    chip_evs,
+    pick_lineup,
+)
 from aigaffer.solver.multiweek import (
     BENCH_BOOST,
     FREE_HIT,
@@ -495,7 +501,11 @@ def solve(
         pid: projection.per_gw[inputs.event.id]
         for pid, projection in projections.items()
     }
-    lineup = pick_lineup(choice.squad, positions, gw_xp)
+    # The armband is chosen on the ceiling — goals and assists — not the total,
+    # so a nailed defender's floor or a cheap player's kind fixture cannot win
+    # it. Read off the projections the lineup is picked from, so the two agree.
+    attacking = attacking_evs(projections, inputs.event.id)
+    lineup = pick_lineup(choice.squad, positions, gw_xp, attacking)
 
     # A draft has no chips to weigh: they are played against a squad, and
     # there is not one yet.
@@ -504,7 +514,7 @@ def solve(
         baseline = _chip_baseline(plans, choice)
         chips = chip_evs(
             baseline,
-            pick_lineup(baseline.squad, positions, gw_xp),
+            pick_lineup(baseline.squad, positions, gw_xp, attacking),
             gw_xp,
             inputs.players,
             projections,
@@ -883,7 +893,10 @@ def _fielded_lineup(
         pid: projection.per_gw.get(event_id, 0.0)
         for pid, projection in projections.items()
     }
-    return pick_lineup(choice.path.week1_freehit_squad, positions, gw_xp)
+    attacking = attacking_evs(projections, event_id)
+    return pick_lineup(
+        choice.path.week1_freehit_squad, positions, gw_xp, attacking
+    )
 
 
 def _plans(
