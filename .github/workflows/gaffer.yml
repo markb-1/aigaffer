@@ -80,6 +80,14 @@ jobs:
           git config user.name "aigaffer-bot"
           git config user.email "bot@aigaffer.local"
           git add state/
+          # The root GW*.md files too — the polished verdicts the homepage
+          # shows. Conditionally, because this step runs even after a run
+          # that died before writing one, and on a first failure like that
+          # the glob matches nothing, which `git add GW*.md` treats as an
+          # error and would fail the step over.
+          if compgen -G "GW*.md" > /dev/null; then
+            git add GW*.md
+          fi
           if git diff --cached --quiet; then
             echo "state unchanged — nothing to commit"
             exit 0

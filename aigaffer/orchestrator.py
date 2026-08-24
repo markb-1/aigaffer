@@ -260,8 +260,10 @@ def run_pipeline(
 ) -> str:
     """Run ``mode`` for the next gameweek and return the report.
 
-    With ``save`` the report is written to ``state/reports/gw{n}-{mode}.md``
-    and recorded in the store; with ``send`` it goes to Telegram, if a token
+    With ``save`` the report is written to ``state/reports/gw{n}-{mode}.md``,
+    to ``GW{n}.md`` at the repo root — the copy the GitHub homepage shows,
+    where the deadline run overwrites the scout's — and recorded in the
+    store; with ``send`` it goes to Telegram, if a token
     and a chat are configured. A dry run turns both off and leaves nothing
     behind, which is what makes it safe to point at the live API.
 
@@ -1007,10 +1009,23 @@ def _label(mode: str, drafting: bool) -> str:
 
 
 def _write_report(cfg: Config, event_id: int, mode: str, report: str) -> None:
-    """Keep the report as a file: the repo is the managerial diary."""
+    """Keep the report as files: the repo is the managerial diary.
+
+    Two copies. ``state/reports/gw{n}-{mode}.md`` is the history, one file per
+    run, never overwritten by the other mode. ``GW{n}.md`` is the polished
+    verdict, written at the root beside README.md so the GitHub homepage's
+    file listing shows it: the scout run puts it there midweek and the
+    deadline run overwrites it with the operative plan, which the shared
+    filename does on its own — latest wins. The root is the directory holding
+    ``state_dir`` rather than the working directory by name: in CI those are
+    the same place, since the run starts at the checkout root with
+    ``state_dir="state"``, and in a test they are the tmp_path the test owns,
+    which is what keeps a test run from leaving verdicts in the real repo.
+    """
     path = cfg.state_dir / "reports" / f"gw{event_id}-{mode}.md"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(report, encoding="utf-8")
+    (cfg.state_dir.parent / f"GW{event_id}.md").write_text(report, encoding="utf-8")
 
 
 def _deliver(cfg: Config, report: str) -> None:

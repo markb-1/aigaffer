@@ -327,6 +327,37 @@ def test_the_run_is_recorded_with_its_report(scout_run):
     assert written.read_text(encoding="utf-8") == scout_run.report
 
 
+def test_the_root_gw_file_carries_the_report(tmp_path):
+    # Beside README.md, where the GitHub homepage's file listing shows it:
+    # GW{n}.md is the copy a visitor reads without digging into state/. Its
+    # root is the directory holding state_dir, which on a CI checkout is the
+    # checkout and here is a tmp_path the test owns.
+    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
+    store = Store(cfg.state_dir / "aigaffer.db")
+
+    report = run_pipeline(cfg, make_client(pipeline_routes()), store, "scout")
+
+    assert (tmp_path / "GW2.md").read_text(encoding="utf-8") == report
+
+
+def test_the_deadline_run_overwrites_the_scouts_root_file(tmp_path):
+    # Latest wins at the root — the midweek scout report stands until the
+    # deadline run replaces it with the operative plan — while the per-mode
+    # history in state/reports keeps both.
+    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
+    store = Store(cfg.state_dir / "aigaffer.db")
+    client = make_client(pipeline_routes())
+
+    scout = run_pipeline(cfg, client, store, "scout")
+    deadline = run_pipeline(cfg, client, store, "deadline")
+
+    assert scout != deadline
+    assert (tmp_path / "GW2.md").read_text(encoding="utf-8") == deadline
+    reports = cfg.state_dir / "reports"
+    assert (reports / "gw2-scout.md").read_text(encoding="utf-8") == scout
+    assert (reports / "gw2-deadline.md").read_text(encoding="utf-8") == deadline
+
+
 def test_the_decision_says_what_was_decided(scout_run):
     decision = scout_run.store.last_runs(1)[0]["decision"]
 
@@ -497,10 +528,10 @@ def test_a_season_with_no_gameweek_ahead_is_an_error(tmp_path):
 
 
 def test_a_dry_run_leaves_nothing_behind(tmp_path):
-    store = Store(tmp_path / "aigaffer.db")
+    store = Store(tmp_path / "state" / "aigaffer.db")
 
     run_pipeline(
-        Config(team_id=TEAM_ID, state_dir=tmp_path),
+        Config(team_id=TEAM_ID, state_dir=tmp_path / "state"),
         make_client(pipeline_routes()),
         store,
         "deadline",
@@ -509,7 +540,8 @@ def test_a_dry_run_leaves_nothing_behind(tmp_path):
     )
 
     assert store.last_runs() == []
-    assert not (tmp_path / "reports").exists()
+    assert not (tmp_path / "state" / "reports").exists()
+    assert list(tmp_path.glob("GW*.md")) == []
 
 
 # --- the seam: fetch, project, solve ---------------------------------------
