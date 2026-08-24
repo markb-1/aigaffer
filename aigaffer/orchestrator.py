@@ -5,16 +5,18 @@ them, in order, and writes down what came back. There is no cleverness here
 by design — the decisions are all made elsewhere — but there are three
 judgements it has to make on its own:
 
-* **When to run.** A report is only worth reading at two moments: two days
-  out, when there is still time to plan, and a day out, when the week has
-  taken shape and there is still an evening to act. :func:`decide_mode`
-  turns the hours to the deadline into one of those or into nothing at all,
-  so the cron job can fire as often as it likes and stand down quietly most
-  of the time.
+* **When to run.** A report is only worth reading at three moments: two days
+  out, when there is still time to plan; a day out, when the week has taken
+  shape and there is still an evening to act; and three hours out, when the
+  team news is in and the only question left is whether yesterday's plan
+  survived it — which is the reminder, a short alert and not a report.
+  :func:`decide_mode` turns the hours to the deadline into one of those or
+  into nothing at all, so the cron job can fire as often as it likes and
+  stand down quietly most of the time.
 * **Whose history to fetch.** A season of history is one request per player,
-  and six hundred requests is not a polite thing to do to a public API every
-  three hours. Only the squad and the players who could plausibly replace
-  someone in it are asked for.
+  and six hundred requests is not a polite thing to do to a public API on
+  every scheduled run. Only the squad and the players who could plausibly
+  replace someone in it are asked for.
 * **What to do when there is no squad.** Before the first deadline of a
   season there are no picks to fetch, and a manager who has just joined 404s
   on a gameweek he did not play. Either way the run degrades to drafting a
@@ -54,7 +56,12 @@ from typing import TYPE_CHECKING
 
 import httpx
 
-from aigaffer.config import DEADLINE_ANCHOR_HOURS, WINDOW_HOURS, Config
+from aigaffer.config import (
+    DEADLINE_ANCHOR_HOURS,
+    REMINDER_ANCHOR_HOURS,
+    WINDOW_HOURS,
+    Config,
+)
 from aigaffer.data.fpl_api import FplClient
 from aigaffer.data.free_transfers import compute_free_transfers
 from aigaffer.data.models import (
@@ -68,7 +75,13 @@ from aigaffer.data.models import (
 )
 from aigaffer.model.minutes import expected_minutes, season_prior
 from aigaffer.model.xp import PlayerProjection, project_all, projected_events
-from aigaffer.report.render import played_chip, render_report
+from aigaffer.report.render import (
+    NO_CHIP,
+    formation,
+    played_chip,
+    render_reminder,
+    render_report,
+)
 from aigaffer.report.telegram import send_report
 from aigaffer.solver.lineup import (
     ChipEvs,
@@ -97,7 +110,7 @@ from aigaffer.store import Store
 if TYPE_CHECKING:  # imported inside _consult and nowhere else at module scope
     from aigaffer.manager.agent import ManagerDecision
 
-DEADLINE_MODE, SCOUT_MODE = "deadline", "scout"
+DEADLINE_MODE, SCOUT_MODE, REMINDER_MODE = "deadline", "scout", "reminder"
 # The windows hang off the anchors in :mod:`aigaffer.config`, ending at the
 # anchor and opening ``WINDOW_HOURS`` before it, so the first tick to land
 # inside one runs as close to the anchor as the schedule managed and a dropped
@@ -106,6 +119,7 @@ DEADLINE_MODE, SCOUT_MODE = "deadline", "scout"
 # T-24h anchor now, where there is an evening to read it, and the last hours
 # belong to the reminder that checks it against the morning's team news.
 DEADLINE_WINDOW = (DEADLINE_ANCHOR_HOURS - WINDOW_HOURS, DEADLINE_ANCHOR_HOURS)
+REMINDER_WINDOW = (REMINDER_ANCHOR_HOURS - WINDOW_HOURS, REMINDER_ANCHOR_HOURS)
 SCOUT_WINDOW = (36, 60)
 
 NOT_CONFIGURED = "telegram not configured: the report was kept but not sent"
@@ -240,17 +254,26 @@ class SolveResult:
 def decide_mode(now: datetime, deadline: datetime) -> str | None:
     """Which report ``now`` calls for, or None for none at all.
 
-    The ninety minutes up to a day before the deadline are the full deadline
-    report — the week has taken shape and there is an evening left to act on
-    it — and a window a day and a half to two and a half days out is the
-    scout report. Between and either side of them there is nothing worth
-    saying, which is most of the week. Both datetimes must be timezone-aware.
+    Three windows, nearest the deadline first. The last hours hold the
+    reminder — the solver checking the full report against the morning's
+    news. The ninety minutes up to a day out are the full deadline report,
+    with an evening left to act on it. A day and a half to two and a half
+    days out is the scout report. Between and either side of them there is
+    nothing worth saying, which is most of the week.
+
+    The windows do not overlap as configured, but the constants are
+    constants: should widening one ever make a moment ambiguous, the report
+    nearest the deadline wins, because it is the one whose moment cannot be
+    made up on a later tick. Both datetimes must be timezone-aware.
     """
     hours = (deadline - now).total_seconds() / 3600
-    if _within(hours, DEADLINE_WINDOW):
-        return DEADLINE_MODE
-    if _within(hours, SCOUT_WINDOW):
-        return SCOUT_MODE
+    for window, mode in (
+        (REMINDER_WINDOW, REMINDER_MODE),
+        (DEADLINE_WINDOW, DEADLINE_MODE),
+        (SCOUT_WINDOW, SCOUT_MODE),
+    ):
+        if _within(hours, window):
+            return mode
     return None
 
 
@@ -278,7 +301,14 @@ def run_pipeline(
     A manager who was configured and could not be reached at all adds one line
     to the report before either flag is read, so that the file, the store and
     the message all say the same thing about who decided this week.
+
+    The reminder is the exception to almost all of that, and it branches off
+    at the top: no manager, no root file, a short alert instead of a report —
+    see :func:`_run_reminder`, which owns what it does keep of the flow.
     """
+    if mode == REMINDER_MODE:
+        return _run_reminder(cfg, client, store, send=send, save=save)
+
     inputs = fetch_inputs(cfg, client)
     xmins, projections = build_projections(inputs, cfg)
     solved = solve(inputs, projections, cfg)
@@ -339,6 +369,10 @@ def run_pipeline(
         "hits": choice.hits,
         "captain": lineup.captain,
         "vice": lineup.vice,
+        # The shape of the eleven, kept so the reminder can diff it: a plan
+        # whose swaps and armbands held but whose eleven swapped a defender
+        # for a forward is still a plan that changed on the sheet.
+        "formation": formation(lineup, inputs.players),
         "xp_total": choice.xp_total,
         "objective": choice.objective,
         # The chip this week actually plays: the manager's if he decided, the
@@ -373,6 +407,156 @@ def run_pipeline(
     if send:
         _deliver(cfg, report)
     return report
+
+
+def _run_reminder(
+    cfg: Config, client: FplClient, store: Store, send: bool, save: bool
+) -> str:
+    """Three hours out: solve again, diff against the verdict, buzz once.
+
+    The full report was decided a day ago, with the manager in the loop; what
+    is left to learn between then and the deadline is the team news, and what
+    is left to do about it is small. So this run is the solver alone — the
+    manager is structurally never consulted here, key or no key, because
+    three hours is no time for a twenty-minute conversation and the verdict
+    is already his — and its whole output is a short alert: the action block,
+    and whether it still matches what the full report decided.
+
+    The stored side of that comparison is the deadline run's decision record,
+    read back from the store (:meth:`~aigaffer.store.Store.decision`); the
+    fresh side is this run's own solve, reduced to the same actions shape by
+    :func:`plan_actions`. When the two agree the alert is one calm block.
+    When they differ the alert leads with what moved and shows both weeks,
+    labelled — the reminder never enters anything and never pretends the
+    fresh solve overrules the gaffer. When there is no record at all — the
+    T-24h tick was dropped wholesale — the fresh block goes out with a line
+    saying there was nothing to check it against.
+
+    Delivery is Telegram and the diary only. The alert is written to
+    ``state/reports/gw{n}-reminder.md`` and recorded in the store like any
+    run — which is what keeps a 30-minute schedule from sending it three
+    times — but it never touches the root ``GW{n}.md``: that file is the
+    polished verdict, and a checklist overwriting it would demote the one
+    document the homepage shows.
+
+    A draft week is the one shape this alert serves badly — fifteen buys are
+    not swaps, and the block would say "roll" about a squad that does not
+    exist — but a draft is entered off the full report, and the reminder's
+    armbands and deadline line still hold.
+    """
+    inputs = fetch_inputs(cfg, client)
+    _, projections = build_projections(inputs, cfg)
+    solved = solve(inputs, projections, cfg)
+    event = inputs.event
+
+    # The same reading of the solve the full report would make without a
+    # manager: the week-1 chip off the path, and on a free-hit week the
+    # temporary eleven that chip actually fields.
+    chip = played_chip(solved.choice, None)
+    lineup = _fielded_lineup(
+        chip, solved.choice, solved.lineup, inputs.players, projections, event.id
+    )
+    fresh = plan_actions(solved.choice, lineup, chip, inputs.players)
+    stored = _stored_actions(store.decision(event.id, DEADLINE_MODE))
+    changes = {} if stored is None else diff_actions(stored, fresh)
+
+    report = render_reminder(event, fresh, stored, changes, inputs.bootstrap)
+    decision = {
+        "mode": REMINDER_MODE,
+        "event": event.id,
+        "actions": fresh,
+        "full_report_plan": stored,
+        "changes": changes,
+    }
+    if save:
+        # Not _write_report: the history file goes, the root verdict stays.
+        path = cfg.state_dir / "reports" / f"gw{event.id}-{REMINDER_MODE}.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(report, encoding="utf-8")
+        store.save_run(event.id, REMINDER_MODE, report, decision)
+    if send:
+        _deliver(cfg, report)
+    return report
+
+
+def plan_actions(
+    choice: Plan, lineup: Lineup, chip: str, players: dict[int, Player]
+) -> dict:
+    """A decided week reduced to the actions a person enters.
+
+    The shape both sides of the reminder's comparison speak: ``transfers`` as
+    ``[out, in]`` pairs the way the app takes them, the armbands, the chip
+    (``"none"`` for most weeks) and the formation. Ids and one string, no
+    names — names are the renderer's job and would age worse than ids do.
+    This is also the shape the reminder's own decision record keeps.
+    """
+    return {
+        "transfers": [
+            [out, bought]
+            for out, bought in zip(choice.transfers_out, choice.transfers_in)
+        ],
+        "captain": lineup.captain,
+        "vice": lineup.vice,
+        "chip": chip,
+        "formation": formation(lineup, players),
+    }
+
+
+def _stored_actions(record: dict | None) -> dict | None:
+    """The full report's decision record, reduced to the same actions shape.
+
+    None in, None out: a record that does not exist is a comparison that
+    cannot be made, and the reminder says so rather than inventing one. The
+    reads are forgiving — ``get`` with the field absent meaning absent —
+    because the record was written by whatever version of the pipeline ran a
+    day ago, and a field this branch added (``formation``) is missing from
+    every record before it. :func:`diff_actions` treats a missing field as
+    unknowable rather than changed.
+    """
+    if record is None:
+        return None
+    return {
+        "transfers": [
+            [out, bought]
+            for out, bought in zip(
+                record.get("transfers_out") or [], record.get("transfers_in") or []
+            )
+        ],
+        "captain": record.get("captain"),
+        "vice": record.get("vice"),
+        "chip": record.get("chip") or NO_CHIP,
+        "formation": record.get("formation"),
+    }
+
+
+def diff_actions(stored: dict, fresh: dict) -> dict:
+    """What moved between the verdict and the fresh solve, machine-readably.
+
+    Empty when they agree, which is the fact the reminder's tone hangs off.
+    Transfers are compared as unordered pairs — the same swaps in another
+    order are the same plan — and come back split into ``transfers_added``
+    (the fresh solve wants it, the verdict did not) and ``transfers_dropped``
+    (the other way about), each sorted so the record is stable. The scalar
+    fields — ``captain``, ``vice``, ``chip``, ``formation`` — come back as
+    ``[before, after]`` pairs, and a field that is None on either side is
+    skipped: an old record that never kept the formation is a record with
+    less in it, not a plan that changed shape.
+
+    Decided here, once: the reminder's message and its decision record both
+    read this dict, so they cannot disagree about whether the plan moved.
+    """
+    diff: dict = {}
+    kept = {tuple(pair) for pair in stored["transfers"]}
+    now = {tuple(pair) for pair in fresh["transfers"]}
+    if added := sorted(now - kept):
+        diff["transfers_added"] = [list(pair) for pair in added]
+    if dropped := sorted(kept - now):
+        diff["transfers_dropped"] = [list(pair) for pair in dropped]
+    for field_name in ("captain", "vice", "chip", "formation"):
+        before, after = stored.get(field_name), fresh.get(field_name)
+        if before is not None and after is not None and before != after:
+            diff[field_name] = [before, after]
+    return diff
 
 
 def fetch_inputs(cfg: Config, client: FplClient) -> PipelineInputs:

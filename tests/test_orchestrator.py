@@ -45,13 +45,16 @@ from aigaffer.orchestrator import (
     SolveResult,
     _available_chips,
     _fielded_lineup,
+    _stored_actions,
     build_projections,
     decide_mode,
+    diff_actions,
     fetch_inputs,
     history_pool,
     run_pipeline,
     solve,
 )
+from aigaffer.report import render
 from aigaffer.report.render import render_report
 from aigaffer.report.telegram import send_report
 from aigaffer.solver.lineup import Lineup, attacking_evs, pick_lineup
@@ -86,6 +89,10 @@ DEADLINE = datetime(2025, 8, 22, 17, 30, tzinfo=UTC)
     ("hours_to_go", "mode"),
     [
         (0.5, None),
+        (1.5, None),
+        (2, "reminder"),
+        (3, "reminder"),
+        (3.5, None),
         (6, None),
         (20, None),
         (22.5, None),
@@ -109,6 +116,20 @@ def test_a_deadline_that_has_gone_is_no_window():
     # The gameweek is under way; the next one is what the next run is about.
     assert decide_mode(DEADLINE, DEADLINE) is None
     assert decide_mode(DEADLINE + timedelta(minutes=1), DEADLINE) is None
+
+
+def test_overlapping_windows_prefer_the_report_nearest_the_deadline(monkeypatch):
+    # The three windows do not overlap as configured, but the constants are
+    # constants and someone will widen one. The precedence is pinned here: the
+    # report nearest the deadline wins, because it is the one whose moment
+    # cannot be made up later.
+    monkeypatch.setattr(orchestrator, "REMINDER_WINDOW", (0, 30))
+    monkeypatch.setattr(orchestrator, "DEADLINE_WINDOW", (0, 60))
+    monkeypatch.setattr(orchestrator, "SCOUT_WINDOW", (0, 100))
+
+    assert decide_mode(DEADLINE - timedelta(hours=20), DEADLINE) == "reminder"
+    assert decide_mode(DEADLINE - timedelta(hours=50), DEADLINE) == "deadline"
+    assert decide_mode(DEADLINE - timedelta(hours=90), DEADLINE) == "scout"
 
 
 # --- the pipeline ----------------------------------------------------------
@@ -1823,6 +1844,233 @@ def test_the_report_the_gaffer_wrote_is_the_one_that_is_sent(monkeypatch, tmp_pa
     assert "## The Gaffer's view" in report
 
 
+# --- the reminder ----------------------------------------------------------
+#
+# Three hours out the schedule runs the solver again — never the manager — and
+# sends a short alert: the action block, and whether it still matches the plan
+# the full report decided a day before. The stored side of that comparison is
+# the decision record the deadline run already keeps in the store; the fresh
+# side is computed here. The diff between them is machine-readable and decided
+# in one place, so the record and the message cannot disagree about whether
+# the plan moved.
+
+NAMES = {element["id"]: element["web_name"] for element in PIPELINE_ELEMENTS_JSON}
+
+
+def plan_shape(**overrides) -> dict:
+    """One plan as the actions dict the reminder diffs: a swap, the armbands,
+    no chip, and the formation."""
+    shape = {
+        "transfers": [[7, 18]],
+        "captain": 5,
+        "vice": 13,
+        "chip": "none",
+        "formation": "3-4-3",
+    }
+    shape.update(overrides)
+    return shape
+
+
+def test_identical_actions_have_no_diff():
+    assert diff_actions(plan_shape(), plan_shape()) == {}
+
+
+def test_a_changed_transfer_is_an_add_and_a_drop():
+    diff = diff_actions(plan_shape(), plan_shape(transfers=[[7, 19]]))
+
+    assert diff == {"transfers_added": [[7, 19]], "transfers_dropped": [[7, 18]]}
+
+
+def test_a_moved_armband_and_a_changed_chip_are_each_named():
+    diff = diff_actions(
+        plan_shape(),
+        plan_shape(captain=13, vice=5, chip="free_hit", formation="3-5-2"),
+    )
+
+    assert diff == {
+        "captain": [5, 13],
+        "vice": [13, 5],
+        "chip": ["none", "free_hit"],
+        "formation": ["3-4-3", "3-5-2"],
+    }
+
+
+def test_a_record_from_before_formations_were_kept_is_not_a_change():
+    # A full report written before this field existed reads back with no
+    # formation. That is a record with less in it, not a plan that moved, and
+    # a reminder that shouted about it would be crying wolf on week one.
+    stored = plan_shape(formation=None)
+
+    assert diff_actions(stored, plan_shape()) == {}
+
+
+def test_a_stored_decision_becomes_the_actions_the_diff_reads():
+    record = {
+        "mode": "deadline",
+        "transfers_in": [18],
+        "transfers_out": [7],
+        "hits": 0,
+        "captain": 5,
+        "vice": 13,
+        "chip": "none",
+        "formation": "3-4-3",
+    }
+
+    assert _stored_actions(record) == plan_shape()
+    assert _stored_actions(None) is None
+
+
+def test_the_full_report_records_the_actions_for_the_reminder(tmp_path):
+    # The persistence half of the round trip: the deadline run's decision
+    # record, already in the store, carries everything the reminder diffs —
+    # the swaps, the armbands, the chip and now the formation.
+    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path)
+    store = Store(tmp_path / "aigaffer.db")
+
+    run_pipeline(cfg, make_client(pipeline_routes()), store, "deadline", send=False)
+    record = store.decision(2, "deadline")
+    stored = _stored_actions(record)
+
+    assert record["formation"].count("-") == 2
+    assert stored["transfers"] == [
+        [out, bought]
+        for out, bought in zip(record["transfers_out"], record["transfers_in"])
+    ]
+    assert stored["captain"] == record["captain"] == FERRER
+    assert stored["chip"] == "none"
+    assert stored["formation"] == record["formation"]
+
+
+def test_a_plan_that_held_reads_as_a_calm_reminder(tmp_path):
+    # The pipeline is deterministic, so a reminder straight after the full
+    # report re-solves to the same week and says so quietly.
+    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
+    store = Store(cfg.state_dir / "aigaffer.db")
+    client = make_client(pipeline_routes())
+
+    run_pipeline(cfg, client, store, "deadline", send=False)
+    alert = run_pipeline(cfg, client, store, "reminder", send=False)
+
+    assert alert.startswith("# AI Gaffer — GW2 reminder")
+    assert render.REMINDER_UNCHANGED in alert
+    assert "⚠️" not in alert
+    assert "## Candidate plans" not in alert and "## Watchlist" not in alert
+
+
+def test_a_plan_that_moved_is_shouted_about(tmp_path):
+    # The stored verdict is doctored so the fresh solve disagrees with it on
+    # every axis the diff reads: the warning leads, each change is named, and
+    # both weeks are shown — the gaffer's verdict is never silently replaced.
+    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
+    store = Store(cfg.state_dir / "aigaffer.db")
+    client = make_client(pipeline_routes())
+    run_pipeline(cfg, client, store, "deadline", send=False)
+    record = store.decision(2, "deadline")
+    doctored = dict(
+        record,
+        transfers_in=[],
+        transfers_out=[],
+        captain=record["vice"],
+        vice=record["captain"],
+        chip="bench_boost",
+    )
+    store.save_run(2, "deadline", "the doctored verdict", doctored)
+
+    alert = run_pipeline(cfg, client, store, "reminder", send=False)
+
+    assert render.PLAN_CHANGED in alert
+    assert alert.index("⚠️") < alert.index("⏰"), "the warning leads"
+    out, bought = record["transfers_out"][0], record["transfers_in"][0]
+    assert f"- Transfer added: SELL {NAMES[out]}" in alert
+    assert f"→ BUY {NAMES[bought]}" in alert
+    assert (
+        f"- Captain moved from {NAMES[record['vice']]}"
+        f" to {NAMES[record['captain']]}" in alert
+    )
+    assert "- Chip changed from bench boost to none" in alert
+    assert render.GAFFER_VERDICT in alert and render.FRESH_SOLVE in alert
+    assert alert.index(render.GAFFER_VERDICT) < alert.index(render.FRESH_SOLVE)
+    # And the record of the reminder keeps the same diff, machine-readably.
+    changes = store.decision(2, "reminder")["changes"]
+    assert changes["captain"] == [record["vice"], record["captain"]]
+    assert changes["chip"] == ["bench_boost", "none"]
+
+
+def test_a_reminder_with_no_full_report_behind_it_says_so(tmp_path):
+    # The T-24h tick can be dropped wholesale. The reminder still goes, with
+    # the fresh block and one honest line about what it could not compare.
+    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
+    store = Store(cfg.state_dir / "aigaffer.db")
+
+    alert = run_pipeline(
+        cfg, make_client(pipeline_routes()), store, "reminder", send=False
+    )
+
+    assert render.NO_FULL_REPORT in alert
+    assert "⚠️" not in alert
+    assert "⏰" in alert
+    assert store.decision(2, "reminder")["full_report_plan"] is None
+
+
+def test_the_reminder_never_touches_the_root_verdict(tmp_path):
+    # GW{n}.md at the root is the polished verdict the homepage shows. The
+    # reminder is history and a phone buzz, so it goes to state/reports and
+    # the store and nowhere else.
+    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
+    store = Store(cfg.state_dir / "aigaffer.db")
+    client = make_client(pipeline_routes())
+
+    full = run_pipeline(cfg, client, store, "deadline", send=False)
+    alert = run_pipeline(cfg, client, store, "reminder", send=False)
+
+    assert (tmp_path / "GW2.md").read_text(encoding="utf-8") == full
+    reports = cfg.state_dir / "reports"
+    assert (reports / "gw2-reminder.md").read_text(encoding="utf-8") == alert
+    assert store.has_run(2, "reminder") is True
+
+
+def test_the_manager_is_never_asked_for_the_reminder(monkeypatch, tmp_path):
+    # Three hours out is too late for a conversation that can take twenty
+    # minutes, and the verdict was his yesterday: the reminder is the solver
+    # checking the weather, with a key in the environment or without one.
+    def never(consult: Consult) -> ManagerDecision:
+        raise AssertionError("the manager was asked in reminder mode")
+
+    gaffer = stub_gaffer(monkeypatch, never)
+
+    alert = run_pipeline(
+        gaffer_cfg(tmp_path),
+        make_client(pipeline_routes()),
+        Store(tmp_path / "aigaffer.db"),
+        "reminder",
+        send=False,
+    )
+
+    assert gaffer.consults == []
+    assert "The Gaffer's view" not in alert
+
+
+def test_the_reminder_goes_to_telegram_and_only_telegram(monkeypatch, tmp_path):
+    sent = []
+    monkeypatch.setattr(orchestrator, "send_report", lambda *args: sent.append(args))
+    cfg = Config(
+        team_id=TEAM_ID,
+        telegram_token=TOKEN,
+        telegram_chat_id="42",
+        state_dir=tmp_path / "state",
+    )
+
+    alert = run_pipeline(
+        cfg,
+        make_client(pipeline_routes()),
+        Store(cfg.state_dir / "aigaffer.db"),
+        "reminder",
+    )
+
+    assert sent == [(TOKEN, "42", alert)]
+    assert list(tmp_path.glob("GW*.md")) == []
+
+
 # --- whose history to fetch ------------------------------------------------
 
 
@@ -1983,6 +2231,42 @@ def test_auto_runs_the_full_report_the_day_before(monkeypatch, store):
 
     assert cli.main(["auto"]) == 0
     assert store.has_run(2, "deadline") is True
+
+
+def test_auto_runs_the_reminder_in_the_final_hours(monkeypatch, store):
+    serve(monkeypatch, pipeline_routes(bootstrap=bootstrap_due_in(2)))
+
+    assert cli.main(["auto"]) == 0
+    assert store.has_run(2, "reminder") is True
+    assert store.has_run(2, "deadline") is False
+
+
+def test_a_reminder_already_sent_is_not_sent_twice(monkeypatch, capsys, store):
+    # The 30-minute schedule puts three ticks inside the reminder window; the
+    # store is what keeps the second and third quiet.
+    store.save_run(2, "reminder", "the reminder from half an hour ago", {})
+    serve(monkeypatch, pipeline_routes(bootstrap=bootstrap_due_in(2)))
+
+    assert cli.main(["auto"]) == 0
+    assert len(store.last_runs()) == 1
+    assert capsys.readouterr().out == ""
+
+
+def test_force_runs_the_reminder_again(monkeypatch, store):
+    store.save_run(2, "reminder", "the reminder from half an hour ago", {})
+    serve(monkeypatch, pipeline_routes())
+
+    assert cli.main(["reminder", "--force"]) == 0
+    assert len(store.last_runs()) == 2
+
+
+def test_a_dry_run_reminder_prints_and_leaves_nothing(monkeypatch, capsys, store):
+    serve(monkeypatch, pipeline_routes())
+
+    assert cli.main(["reminder", "--dry-run", "--force"]) == 0
+
+    assert capsys.readouterr().out.startswith("# AI Gaffer — GW2 reminder")
+    assert store.last_runs() == []
 
 
 def test_auto_stands_down_between_the_windows(monkeypatch, capsys, store):

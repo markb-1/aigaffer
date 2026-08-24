@@ -45,7 +45,16 @@ import pytest
 from aigaffer.data.models import Bootstrap, Event, Player
 from aigaffer.manager.agent import ManagerDecision
 from aigaffer.model.xp import PlayerProjection
-from aigaffer.report.render import render_report
+from aigaffer.report.render import (
+    FRESH_SOLVE,
+    GAFFER_VERDICT,
+    HUMAN_JUDGES,
+    NO_FULL_REPORT,
+    PLAN_CHANGED,
+    REMINDER_UNCHANGED,
+    render_reminder,
+    render_report,
+)
 from aigaffer.solver.lineup import ChipEvs, Lineup
 from aigaffer.solver.multiweek import PlannedMove, PlannedPath
 from aigaffer.solver.optimizer import Plan
@@ -1000,3 +1009,113 @@ def test_the_watchlist_is_the_five_best_players_the_plan_leaves_behind():
         "- Tovey (GKP, BRW, £5.0m) — 22.0 xP",
         "- Gale (DEF, CRV, £4.0m) — 10.0 xP",
     ]
+
+
+# --- the reminder ----------------------------------------------------------
+#
+# The short alert three hours out. It is rendered from actions dicts — the
+# machine shape the orchestrator persists for the full report and computes
+# fresh for the reminder — and from the diff between them, which the
+# orchestrator also computes. What is tested here is the saying, not the
+# deciding: the block reads like the "Do this" checklist, the warning leads
+# when there is one, and the message never grows the full report's sections.
+
+
+def actions(**overrides) -> dict:
+    """The recommended plan of this universe as an actions dict: Gale out,
+    Reid in, Hume's armband, Moss's vice, the 3-4-3."""
+    shape = {
+        "transfers": [[7, 18]],
+        "captain": 8,
+        "vice": 13,
+        "chip": "none",
+        "formation": "3-4-3",
+    }
+    shape.update(overrides)
+    return shape
+
+
+def reminder(
+    fresh: dict | None = None,
+    stored: dict | None = None,
+    changes: dict | None = None,
+) -> str:
+    return render_reminder(EVENT, fresh or actions(), stored, changes or {}, BOOTSTRAP)
+
+
+def test_the_reminder_is_the_checklist_and_nothing_else():
+    alert = reminder(stored=actions())
+
+    assert alert.startswith("# AI Gaffer — GW2 reminder")
+    assert "Deadline: Fri 22 Aug 2025 17:30 UTC" in alert
+    assert "⏰ Make these by Fri 22 Aug 2025 17:30 UTC — GW2" in alert
+    assert "SELL Gale (DEF CRV £4.0m) → BUY Reid (FWD CRV £9.5m)" in alert
+    assert "CAPTAIN Hume · VICE Moss" in alert
+    assert "Formation: 3-4-3" in alert
+    # Short means short: none of the full report's sections ride along.
+    for heading in ("Candidate plans", "Watchlist", "Chip EV", "Starting XI"):
+        assert f"## {heading}" not in alert
+
+
+def test_a_plan_that_held_is_a_calm_reminder():
+    alert = reminder(stored=actions())
+
+    assert REMINDER_UNCHANGED in alert
+    assert "⚠️" not in alert
+    assert alert.count("⏰") == 1, "one block; nothing to compare side by side"
+
+
+def test_a_changed_plan_leads_with_the_warning_and_shows_both():
+    stored = actions(transfers=[[6, 16]], captain=13, chip="bench_boost")
+    changes = {
+        "transfers_added": [[7, 18]],
+        "transfers_dropped": [[6, 16]],
+        "captain": [13, 8],
+        "chip": ["bench_boost", "none"],
+    }
+
+    alert = reminder(stored=stored, changes=changes)
+
+    assert PLAN_CHANGED in alert
+    # The warning leads: it comes before either action block.
+    assert alert.index("⚠️") < alert.index("⏰")
+    assert (
+        "- Transfer added: SELL Gale (DEF CRV £4.0m) → BUY Reid (FWD CRV £9.5m)"
+        in alert
+    )
+    assert (
+        "- Transfer dropped: SELL Fenn (DEF BRW £4.5m) → BUY Pike (MID ASH £8.0m)"
+        in alert
+    )
+    assert "- Captain moved from Moss to Hume" in alert
+    assert "- Chip changed from bench boost to none" in alert
+    # Both weeks are on show, labelled, the gaffer's first — and the message
+    # says whose the verdict is rather than letting the solver overrule him.
+    verdict = alert.index(GAFFER_VERDICT)
+    fresh = alert.index(FRESH_SOLVE)
+    assert alert.index("⚠️") < verdict < fresh
+    assert "PLAY Bench Boost" in alert[verdict:fresh]
+    assert "CAPTAIN Moss" in alert[verdict:fresh]
+    assert "CAPTAIN Hume" in alert[fresh:]
+    assert HUMAN_JUDGES in alert
+    assert REMINDER_UNCHANGED not in alert
+
+
+def test_a_reminder_with_no_full_report_behind_it_says_so():
+    alert = reminder(stored=None)
+
+    assert NO_FULL_REPORT in alert
+    assert "⚠️" not in alert
+    assert "⏰" in alert, "the fresh block still goes: it is the whole point"
+    assert GAFFER_VERDICT not in alert
+
+
+def test_a_stored_plan_the_board_has_never_heard_of_still_renders():
+    # The stored plan is read back from the diary, and a player the API has
+    # since renumbered is not worth losing the alert over.
+    stored = actions(transfers=[[999, 18]], captain=999)
+
+    alert = reminder(stored=stored, changes={"captain": [999, 8]})
+
+    assert "player 999" in alert
+    assert "- Captain moved from player 999 to Hume" in alert

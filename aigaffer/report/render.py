@@ -131,6 +131,30 @@ FREE_HIT_XI = "Free Hit XI (this week only)"
 # fortnight ago says it belongs in the next.
 ADVISORY = "Advisory — re-planned every run; only this week's moves are ever made."
 
+# The reminder's four fixed sentences. The calm one closes the ordinary
+# reminder; the loud one opens the rare one, and it is deliberately the only
+# line in either document that shouts — a warning that appears every week is a
+# warning nobody reads by October.
+REMINDER_UNCHANGED = "Unchanged since the full report — the plan above stands."
+PLAN_CHANGED = "⚠️ THE PLAN HAS CHANGED since the full report"
+NO_FULL_REPORT = (
+    "There was no full report to compare against — the day-before run never"
+    " happened. This is the solver's fresh answer, unreviewed."
+)
+# What a changed reminder must say about authority, in so many words: the
+# verdict was the gaffer's — or the solver's wearing his label, a day ago with
+# the manager in the loop — and the fresh block is a solver that has read
+# nothing. Neither overrules the other; the person holding the phone does.
+HUMAN_JUDGES = (
+    "The verdict is the gaffer's and the fresh solve is the solver's;"
+    " neither overrules the other. Read both, then enter one."
+)
+
+# The two blocks a changed reminder shows side by side, in this order: the
+# decision that was actually made, then the news that questions it.
+GAFFER_VERDICT = "## The gaffer's verdict (the full report)"
+FRESH_SOLVE = "## The solver's fresh answer"
+
 
 def render_report(
     mode: str,
@@ -207,6 +231,145 @@ def render_report(
         _watchlist(choice.squad, players, clubs, projections),
     ]
     return "\n\n".join(sections) + "\n"
+
+
+def render_reminder(
+    event: Event,
+    fresh: dict,
+    stored: dict | None,
+    changes: dict,
+    bootstrap: Bootstrap,
+) -> str:
+    """The short alert, three hours out. Pure; no I/O.
+
+    Not a report: the reminder exists so that the phone buzzes once with the
+    moves to make and whether they are still the moves the full report made a
+    day ago. It is built from **actions dicts** — ``transfers`` as
+    ``[out, in]`` pairs, ``captain``, ``vice``, ``chip``, ``formation`` — the
+    machine shape the orchestrator persists for the full report and computes
+    fresh here, and from ``changes``, the diff the orchestrator made between
+    the two (:func:`aigaffer.orchestrator.diff_actions`). The renderer decides
+    nothing about whether the plan moved; it only says so.
+
+    Three shapes. ``stored`` is None when the full report never ran, and the
+    fresh block goes out with one line admitting there was nothing to check
+    it against. An empty ``changes`` over a stored plan is the ordinary
+    reminder: the block and a calm sentence. A non-empty ``changes`` leads
+    with the one loud line either document is allowed, lists what moved, and
+    then shows both weeks labelled — the gaffer's verdict first, because it is
+    the decision that was actually made, and the fresh solve second, because
+    it is information and not an overruling. The reader judges.
+
+    The stored plan is read back from the diary and rendered against today's
+    bootstrap, so a player the API has since dropped or renumbered prints as
+    ``player {id}`` rather than costing the alert.
+    """
+    players = {player.id: player for player in bootstrap.elements}
+    clubs = {team.id: team.short_name for team in bootstrap.teams}
+
+    sections = [_header("reminder", event)]
+    if stored is None:
+        sections += [_actions_block("## Do this", event, fresh, players, clubs)]
+        sections += [NO_FULL_REPORT]
+    elif not changes:
+        sections += [_actions_block("## Do this", event, fresh, players, clubs)]
+        sections += [REMINDER_UNCHANGED]
+    else:
+        sections += [_changed(changes, players, clubs)]
+        sections += [_actions_block(GAFFER_VERDICT, event, stored, players, clubs)]
+        sections += [_actions_block(FRESH_SOLVE, event, fresh, players, clubs)]
+        sections += [HUMAN_JUDGES]
+    return "\n\n".join(sections) + "\n"
+
+
+def _changed(changes: dict, players: dict[int, Player], clubs: dict[int, str]) -> str:
+    """What moved between the verdict and the fresh solve, a line each.
+
+    The order is the order the moves are entered in: transfers, then the
+    chip, then the armbands, then the shape. ``added`` is what the fresh
+    solve wants and the verdict did not; ``dropped`` the other way about.
+    """
+    lines = [PLAN_CHANGED, ""]
+    for out, bought in changes.get("transfers_added", []):
+        lines.append(f"- Transfer added: {_swap(out, bought, players, clubs)}")
+    for out, bought in changes.get("transfers_dropped", []):
+        lines.append(f"- Transfer dropped: {_swap(out, bought, players, clubs)}")
+    if "chip" in changes:
+        before, after = changes["chip"]
+        lines.append(
+            f"- Chip changed from {_spoken(before)} to {_spoken(after)}"
+        )
+    for band in ("captain", "vice"):
+        if band in changes:
+            before, after = changes[band]
+            lines.append(
+                f"- {band.title()} moved from {_who(before, players)}"
+                f" to {_who(after, players)}"
+            )
+    if "formation" in changes:
+        before, after = changes["formation"]
+        lines.append(f"- Formation changed from {before} to {after}")
+    return "\n".join(lines)
+
+
+def _actions_block(
+    heading: str,
+    event: Event,
+    actions: dict,
+    players: dict[int, Player],
+    clubs: dict[int, str],
+) -> str:
+    """One plan as the ⏰ checklist, under ``heading``.
+
+    The same shape as the full report's "Do this" block, drawn from an
+    actions dict instead of a plan: the deadline, a swap to a line, the chip
+    if one plays, the armbands, and — always, where the report only nudges
+    when a signing starts — the formation, because a reminder with no team
+    sheet under it has nowhere else to say the shape. A stored plan from
+    before formations were kept simply drops the line.
+    """
+    lines = [heading, "", f"⏰ Make these by {deadline(event)} — GW{event.id}"]
+    if not actions["transfers"]:
+        lines.append("No transfers — roll.")
+    lines += [
+        _swap(out, bought, players, clubs) for out, bought in actions["transfers"]
+    ]
+    if actions["chip"] != NO_CHIP:
+        lines.append(f"PLAY {chip_label(actions['chip'])}")
+    lines.append(
+        f"CAPTAIN {_who(actions['captain'], players)}"
+        f" · VICE {_who(actions['vice'], players)}"
+    )
+    if actions.get("formation"):
+        lines.append(f"Formation: {actions['formation']}")
+    return "\n".join(lines)
+
+
+def _swap(
+    out: int, bought: int, players: dict[int, Player], clubs: dict[int, str]
+) -> str:
+    """``SELL Gale (DEF CRV £4.0m) → BUY Reid (FWD CRV £9.5m)`` — one move,
+    sell first, the way the app takes it and the way the report says it."""
+    return (
+        f"SELL {_tagged(out, players, clubs)} → BUY {_tagged(bought, players, clubs)}"
+    )
+
+
+def _tagged(pid: int, players: dict[int, Player], clubs: dict[int, str]) -> str:
+    """:func:`_named`, or the id when this board has never heard of him.
+
+    The report never needs the net — every id it prints came off this run's
+    bootstrap — but the reminder prints a plan read back from the diary, and
+    an id the API has since retired is not worth losing the alert over.
+    """
+    if pid in players:
+        return _named(pid, players, clubs)
+    return f"player {pid}"
+
+
+def _spoken(chip: str) -> str:
+    """A chip as a sentence says it: ``bench boost``, or ``none``."""
+    return chip.replace("_", " ")
 
 
 def _free_hitting(choice: Plan, chip: str) -> bool:
@@ -330,7 +493,7 @@ def _do_this(
         f"CAPTAIN {_who(lineup.captain, players)} · VICE {_who(lineup.vice, players)}"
     )
     if set(choice.transfers_in) & set(lineup.xi):
-        lines.append(f"Set lineup: {_formation(lineup, players)}")
+        lines.append(f"Set lineup: {formation(lineup, players)}")
     return "\n".join(lines)
 
 
@@ -378,8 +541,14 @@ def _named(pid: int, players: dict[int, Player], clubs: dict[int, str]) -> str:
     )
 
 
-def _formation(lineup: Lineup, players: dict[int, Player]) -> str:
-    """``3-4-3`` — the shape of the eleven, defenders through forwards."""
+def formation(lineup: Lineup, players: dict[int, Player]) -> str:
+    """``3-4-3`` — the shape of the eleven, defenders through forwards.
+
+    Public because the decision record keeps it now: the reminder three hours
+    out diffs the fresh solve against the full report's plan, and a shape that
+    moved is one of the things it has to be able to say. The orchestrator
+    computes it once, off the same lineup the record's armbands come off.
+    """
     counts: dict[int, int] = defaultdict(int)
     for pid in lineup.xi:
         counts[players[pid].element_type] += 1
@@ -582,7 +751,7 @@ def _team_sheet(
         rows[players[pid].element_type].append(_armband(pid, lineup, players))
 
     label = f" — {FREE_HIT_XI}" if free_hit else ""
-    lines = [f"## Starting XI ({_formation(lineup, players)}){label}", ""]
+    lines = [f"## Starting XI ({formation(lineup, players)}){label}", ""]
     lines += [
         f"- {label}: " + ", ".join(rows[position])
         for position, label in POSITIONS.items()

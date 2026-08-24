@@ -82,6 +82,26 @@ def test_reopening_the_same_path_keeps_the_data(tmp_path):
     assert len(reopened.last_runs()) == 1
 
 
+def test_decision_reads_back_the_newest_record_for_a_gw_and_mode(tmp_path):
+    # A --force rerun records a second row for the same gw and mode, and the
+    # newest is the operative one: it is what the person overruled the dedup
+    # to produce.
+    store = Store(tmp_path / "aigaffer.db")
+    store.save_run(2, "deadline", "# first", {"captain": 8})
+    store.save_run(2, "deadline", "# forced rerun", {"captain": 13})
+    store.save_run(2, "scout", "# scout", {"captain": 1})
+
+    assert store.decision(2, "deadline") == {"captain": 13}
+
+
+def test_decision_is_none_for_a_run_that_never_happened(tmp_path):
+    store = Store(tmp_path / "aigaffer.db")
+    store.save_run(2, "scout", "# scout", {"captain": 1})
+
+    assert store.decision(2, "deadline") is None
+    assert store.decision(3, "scout") is None
+
+
 def test_creates_missing_parent_directories(tmp_path):
     store = Store(tmp_path / "state" / "nested" / "aigaffer.db")
     store.save_run(12, "deadline", "# report", {})

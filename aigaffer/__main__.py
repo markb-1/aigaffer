@@ -2,12 +2,12 @@
 
 ``auto`` is what the schedule calls: it looks at the deadline, works out
 which report the hour calls for and runs it, or says nothing and exits
-cleanly, which is what it does most of the time. ``scout`` and ``deadline``
-run a report by name for someone sitting at a keyboard, and unlike ``auto``
-they explain themselves when they decide not to.
+cleanly, which is what it does most of the time. ``scout``, ``deadline`` and
+``reminder`` run a report by name for someone sitting at a keyboard, and
+unlike ``auto`` they explain themselves when they decide not to.
 
 A gameweek gets one of each report. The store is what remembers that, so a
-schedule that fires every three hours does not send the same thing twice;
+schedule that fires every half hour does not send the same thing twice;
 ``--force`` is how a person overrules it. ``--dry-run`` prints the report and
 writes nothing anywhere, which is what makes it safe against the live API.
 
@@ -39,7 +39,7 @@ from aigaffer.store import Store
 
 AUTO = "auto"
 BACKTEST = "backtest"
-COMMANDS = (AUTO, "scout", "deadline", BACKTEST)
+COMMANDS = (AUTO, "scout", "deadline", "reminder", BACKTEST)
 DB_NAME = "aigaffer.db"
 
 SCHEDULE_STAGE = "reading the schedule"
@@ -232,7 +232,7 @@ def _mode(
 
 def _explain(command: str, reason: str) -> None:
     """Say why nothing happened — unless nothing happening is the normal
-    course of events, which for a job that runs every three hours it is."""
+    course of events, which for a job that runs every half hour it is."""
     if command != AUTO:
         print(f"aigaffer: {reason}")
 

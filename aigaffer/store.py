@@ -58,6 +58,24 @@ class Store:
                 ),
             )
 
+    def decision(self, gw: int, mode: str) -> dict | None:
+        """The decision recorded for ``gw``'s ``mode`` run, or None for none.
+
+        The newest row wins when there is more than one: a second row for the
+        same gameweek and mode only exists because a person overruled the
+        dedup with ``--force``, and what they forced is the record that
+        stands. This is how the reminder reads back what the full report
+        decided a day earlier — across process restarts and, in CI, across
+        the state commit between two workflow runs.
+        """
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT decision_json FROM runs WHERE gw = ? AND mode = ?"
+                " ORDER BY id DESC LIMIT 1",
+                (gw, mode),
+            ).fetchone()
+        return None if row is None else json.loads(row[0])
+
     def has_run(self, gw: int, mode: str) -> bool:
         with self._connect() as conn:
             row = conn.execute(
