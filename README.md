@@ -143,8 +143,9 @@ the conversation is resent in full on every turn: a quiet week that searches
 twice and decides in three turns is cents, and a pathological one — a dozen
 searches, two re-solves, twelve turns each re-reading everything before them —
 costs an order of magnitude more. Two decision runs a gameweek (scout and
-deadline), so on the order of $2–8 a week and $50–200 for a season, weighted
-towards the low end because most weeks are quiet.
+deadline; the reminder never wakes the manager), so on the order of $2–8 a
+week and $50–200 for a season, weighted towards the low end because most
+weeks are quiet.
 
 Three cache breakpoints hold it down, of the four the API allows. Two never
 move — the system prompt and the briefing, which are the whole of what cannot
@@ -372,13 +373,26 @@ fork:
 2. **Actions → gaffer → Run workflow** to try it by hand; the `mode` input runs
    one report by name instead of asking the clock.
 
-The schedule fires every three hours (`7 */3 * * *`) and does nothing at all
-most of the time. Two windows before each deadline produce a report:
+The schedule fires every thirty minutes (`7,37 * * * *`) and does nothing at
+all most of the time — a curl-and-jq gate at the top of the workflow checks
+the next deadline and stands the tick down in seconds unless it is near a
+window (Python stays the authority on the windows; the gate is a generous
+superset that only exists to spare the pip install). Three windows before
+each deadline produce something:
 
 | Window | Report | What it is for |
 | --- | --- | --- |
 | 36–60 hours out | `scout` | transfer plans while there is still time to think |
-| 0–3 hours out | `deadline` | the final call, after the press conferences |
+| 22.5–24 hours out | `deadline` | the full verdict, with an evening left to act on it |
+| 1.5–3 hours out | `reminder` | a short alert: the moves, and whether the plan survived the team news |
+
+The reminder is the solver alone — the manager is never woken for it — and it
+diffs its fresh solve against the plan the full report recorded. If they
+agree it is one calm block; if they differ it leads with a ⚠️ section naming
+each change and shows both plans, the gaffer's verdict first, because the
+fresh solve is information and not an overruling. It goes to Telegram and
+`state/reports/` only, never to the root `GW{n}.md`, which stays the
+polished verdict.
 
 Each gameweek gets one of each: the SQLite store remembers, so a second tick
 inside a window is a no-op. A failed run says so on stdout and sends one line
