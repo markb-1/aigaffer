@@ -2,13 +2,14 @@ name: gaffer
 
 on:
   schedule:
-    # Every three hours; seven past, off the on-the-hour crush. The deadline
-    # window is the last three hours before the deadline, so one tick lands
-    # in it — after the press conferences, which is the whole point of the
-    # deadline report. GitHub drops scheduled runs under load, and a missed
-    # tick costs that week's deadline report, which is the price of reporting
-    # on team news that exists rather than team news that does not.
-    - cron: "7 */3 * * *"
+    # Every thirty minutes; seven past and thirty-seven past, off the
+    # on-the-hour crush. The report windows are ninety minutes wide, so a
+    # half-hour tick puts three chances inside each one and GitHub can drop
+    # two of them — under load it does drop scheduled runs, and a missed
+    # tick used to cost the week's report outright. Ticking this often is
+    # only affordable because of the gate below: a tick nowhere near a
+    # window costs one curl, not a pip install.
+    - cron: "7,37 * * * *"
   workflow_dispatch:
     inputs:
       mode:
@@ -19,12 +20,15 @@ on:
           - auto
           - scout
           - deadline
+          - reminder
 
 permissions:
   contents: write
 
 # One gaffer at a time: overlapping runs would race the state commit.
-# Never cancel a run in flight — it may already have sent a report.
+# Never cancel a run in flight — it may already have sent a report. A tick
+# that lands while a long manager run is still going simply queues behind it,
+# and its own gate decides afresh when it starts.
 concurrency:
   group: gaffer
   cancel-in-progress: false
@@ -37,15 +41,71 @@ jobs:
     # unstreamed turns of an agent that searches the web between them, and
     # twelve slow ones do not fit inside twenty minutes — a cap that cuts off a
     # conversation we have already paid for is worse than one that never fires.
-    # Thirty is still a sixth of the three hours to the next tick, so the
-    # concurrency group is never the thing at risk.
     timeout-minutes: 30
     steps:
+      # The gate, before the checkout and everything else. The schedule ticks
+      # every thirty minutes and Python is the authority on the windows, but
+      # asking Python costs a checkout, a toolchain and a pip install —
+      # minutes of billed runner for the "stand down" answer the tick gets
+      # almost every time. So the first step asks the same question crudely,
+      # with the curl and jq the runner already has: how long to the next
+      # deadline, and is that anywhere near a report window? "Near" is a
+      # generous superset of the Python windows on purpose — the gate exists
+      # to make a no-op tick cost five seconds, never to decide that a report
+      # does not run; every real decision still belongs to decide_mode.
+      #
+      # A manual dispatch bypasses the gate entirely: a person clicking the
+      # button has already decided the run should happen, and the mode input
+      # would be meaningless behind a clock check.
+      #
+      # The gate fails open. If curl cannot reach the API, or jq cannot find
+      # a future deadline in what came back, run=true stands: a wasted pip
+      # install costs cents, a missed deadline report costs the gameweek.
+      # (Off-season ticks therefore run and stand down in Python — the same
+      # money the old three-hour schedule spent all year round.)
+      - name: Ask the clock whether this tick could matter
+        id: gate
+        env:
+          GH_EVENT: ${{ github.event_name }}
+        run: |
+          if [ "$GH_EVENT" != "schedule" ]; then
+            echo "dispatched by hand — the gate stands aside"
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          run=true
+          # The next deadline still ahead of us, as epoch seconds. jq's
+          # fromdate reads the API's "2025-08-22T17:30:00Z" directly; the
+          # `?` swallows any row it cannot parse rather than failing the
+          # whole expression, and `min` of what is left is the one we face.
+          next=$(curl -sf --max-time 30 https://fantasy.premierleague.com/api/bootstrap-static/ \
+            | jq -r '[.events[].deadline_time // empty | fromdate? | select(. > now)] | min // empty') \
+            || next=""
+          if [ -n "$next" ]; then
+            secs=$(( next - $(date -u +%s) ))
+            # The supersets, in seconds to the deadline. Python's windows are
+            # reminder 1.5-3h, deadline 22.5-24h, scout 36-60h; each gets
+            # hours of slack on both sides so that clock skew, a slow queue
+            # or a retuned constant in config can never make the gate starve
+            # a window it did not know had moved.
+            run=false
+            if [ "$secs" -ge 0      ] && [ "$secs" -le 18000  ]; then run=true; fi  # reminder: 0-5h
+            if [ "$secs" -ge 72000  ] && [ "$secs" -le 93600  ]; then run=true; fi  # deadline: 20-26h
+            if [ "$secs" -ge 122400 ] && [ "$secs" -le 223200 ]; then run=true; fi  # scout: 34-62h
+            echo "next deadline in ${secs}s — run=$run"
+          else
+            echo "no deadline found (curl or jq came up empty) — failing open"
+          fi
+          echo "run=$run" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
+        if: steps.gate.outputs.run == 'true'
       - uses: actions/setup-python@v5
+        if: steps.gate.outputs.run == 'true'
         with: { python-version: "3.12" }
       - run: pip install .
+        if: steps.gate.outputs.run == 'true'
       - run: python -m aigaffer ${{ github.event.inputs.mode || 'auto' }}
+        if: steps.gate.outputs.run == 'true'
         env:
           FPL_TEAM_ID: ${{ secrets.FPL_TEAM_ID }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -74,8 +134,9 @@ jobs:
       - name: Commit state
         # Even when the run failed: it may have sent a report before it died,
         # and a report that went out but was never recorded is one the next
-        # tick sends again.
-        if: always()
+        # tick sends again. Only behind the gate, though — a gated-out tick
+        # checked nothing out and has nothing to commit.
+        if: always() && steps.gate.outputs.run == 'true'
         run: |
           git config user.name "aigaffer-bot"
           git config user.email "bot@aigaffer.local"
