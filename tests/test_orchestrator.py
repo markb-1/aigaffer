@@ -2038,7 +2038,11 @@ def test_a_failed_run_tells_the_phone_that_expects_the_report(
     assert cli.main(["auto"]) == 1
 
     assert posted == [
-        {"chat_id": "42", "text": "aigaffer run failed: HTTPStatusError (gw 2)"}
+        {
+            "chat_id": "42",
+            "text": "aigaffer run failed: HTTPStatusError (gw 2)",
+            "parse_mode": "HTML",
+        }
     ]
     assert TOKEN not in capsys.readouterr().out
 
@@ -2053,7 +2057,13 @@ def test_a_failure_with_no_gameweek_named_still_gets_an_alert(monkeypatch, store
     serve(monkeypatch, pipeline_routes(bootstrap=over))
 
     assert cli.main(["deadline", "--force"]) == 1
-    assert posted == [{"chat_id": "42", "text": "aigaffer run failed: PipelineError"}]
+    assert posted == [
+        {
+            "chat_id": "42",
+            "text": "aigaffer run failed: PipelineError",
+            "parse_mode": "HTML",
+        }
+    ]
 
 
 def test_an_alert_that_fails_too_is_not_a_second_failure(monkeypatch, capsys, store):
