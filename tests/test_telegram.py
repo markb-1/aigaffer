@@ -4,8 +4,9 @@ Every request is served by an ``httpx.MockTransport`` that keeps what it was
 handed, so the assertions are about the wire: one POST per chunk, to the
 sendMessage URL for the token, carrying the chat id and a piece of the report
 marked up as Telegram HTML — headings bold, everything else escaped — and,
-when Telegram turns a chunk down with a 4xx, the same chunk again as the
-plain text it came from.
+when Telegram turns a chunk down with a 400, the same chunk again as the
+plain text it came from. Only a 400 earns that resend; any other status
+raises as it stands.
 
 The markup is line-by-line, which is what the chunking tests lean on: a tag
 opened on one line is closed on the same line, so no cut — between lines or
@@ -22,7 +23,7 @@ import json
 import httpx
 import pytest
 
-from aigaffer.report.telegram import send_report
+from aigaffer.report.telegram import _utf16_len, send_report
 
 TOKEN = "123456:fake-bot-token"
 CHAT_ID = "42"
@@ -167,6 +168,20 @@ def test_a_cut_never_severs_a_heading_tag():
     assert chunks[0].startswith("<b>") and chunks[0].endswith("</b>")
 
 
+def test_an_emoji_heavy_line_is_budgeted_in_utf16_units():
+    # 🔥 is one Python character but two UTF-16 units, and UTF-16 units are
+    # what Telegram counts: 3000 of them measured as characters would look
+    # like one message and arrive as 6000 units, over the ceiling — and the
+    # plain fallback, same text, would be rejected identically. Every chunk
+    # must fit the budget as Telegram measures it, and a Python string cannot
+    # hold half a surrogate pair, so fitting is proof no cut split one.
+    line = "🔥" * 3000
+    chunks = texts(send(line))
+    assert len(chunks) > 1
+    assert all(_utf16_len(chunk) <= LIMIT for chunk in chunks)
+    assert "".join(chunks) == line
+
+
 def test_blank_report_sends_nothing():
     assert send("") == []
     assert send("\n\n") == []
@@ -197,6 +212,22 @@ def test_a_rejected_chunk_falls_back_before_the_next_chunk_is_sent():
 def test_a_plain_fallback_that_also_fails_still_raises():
     with pytest.raises(httpx.HTTPStatusError):
         send_html_rejected("Hello, gaffer.", plain_status=400)
+
+
+def test_a_rate_limited_chunk_is_not_resent_into_the_limiter():
+    # 429 is Telegram saying stop sending; the plain fallback exists for
+    # markup rejections, which arrive as 400. A resend here would be a second
+    # request aimed straight at the rate limiter.
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(429, json={"ok": False})
+
+    http = httpx.Client(transport=httpx.MockTransport(handler))
+    with pytest.raises(httpx.HTTPStatusError):
+        send_report(TOKEN, CHAT_ID, "Hello, gaffer.", http=http)
+    assert len(seen) == 1
 
 
 def test_non_200_raises():

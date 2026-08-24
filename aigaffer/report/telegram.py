@@ -2,9 +2,10 @@
 
 A message tops out at 4096 characters, so a report goes as several. The cut
 falls on a line boundary and never inside one, because the report is a list of
-lines and half a line at the top of a message reads as a mistake; 4000 rather
-than 4096 leaves room for the counting here to be about characters while
-Telegram's is about UTF-16 units — and, now that the chunks carry markup, for
+lines and half a line at the top of a message reads as a mistake; the budget
+is measured in UTF-16 units, because that is what Telegram counts — an emoji
+outside the Basic Multilingual Plane is one Python character but two units —
+and 4000 rather than 4096 leaves room, now that the chunks carry markup, for
 a heading's tags on top of that.
 
 The markup is Telegram HTML, made one line at a time: every line is escaped —
@@ -20,10 +21,13 @@ a tag half-sent.
 
 Markup is also a way to be rejected that plain text never had, so each chunk
 remembers the plain lines it was made from: if Telegram turns the HTML down
-with a 4xx, the same chunk goes again as that plain text, no ``parse_mode`` —
-a report that arrives ugly beats one that does not arrive. Only if that copy
-fails too does the error propagate, which leaves the chunks before it sent —
-a report that arrives truncated is still more use than one that never comes.
+with a 400 — "can't parse entities" comes back as exactly that — the same
+chunk goes again as that plain text, no ``parse_mode``. A report that arrives
+ugly beats one that does not arrive. Any other status raises as it always
+did: a 401 or 404 would fail the resend identically, and a 429 resent is a
+second request straight into the rate limiter. Only if the plain copy fails
+too does the error propagate, which leaves the chunks before it sent — a
+report that arrives truncated is still more use than one that never comes.
 
 The token is part of the URL Telegram publishes for its API, so it travels in
 every request line and comes back inside any ``httpx`` error. That is httpx's
@@ -46,10 +50,12 @@ def send_report(
 ) -> None:
     """Send ``text`` to ``chat_id`` as one message per chunk, in order.
 
-    Each chunk goes as HTML; a 4xx answer to that is retried once, as the
-    chunk's own plain text. Raises ``httpx.HTTPStatusError`` on the first
-    chunk Telegram refuses both ways, which leaves the ones before it sent —
-    a report that arrives truncated is more use than one that does not arrive.
+    Each chunk goes as HTML; a 400 — the status "can't parse entities" comes
+    back as — is retried once, as the chunk's own plain text, while any other
+    status raises untried: a plain copy cannot fix a bad token or appease a
+    rate limiter. Raises ``httpx.HTTPStatusError`` on the first chunk Telegram
+    refuses for good, which leaves the ones before it sent — a report that
+    arrives truncated is more use than one that does not arrive.
     """
     client = http or httpx.Client(timeout=30.0)
     url = f"{BASE_URL}/bot{token}/sendMessage"
@@ -57,9 +63,20 @@ def send_report(
         response = client.post(
             url, json={"chat_id": chat_id, "text": html, "parse_mode": "HTML"}
         )
-        if 400 <= response.status_code < 500:
+        if response.status_code == 400:
             response = client.post(url, json={"chat_id": chat_id, "text": plain})
         response.raise_for_status()
+
+
+def _utf16_len(text: str) -> int:
+    """``text`` measured as Telegram measures it: in UTF-16 code units.
+
+    A character inside the Basic Multilingual Plane is one unit; an emoji
+    beyond it is a surrogate pair, two. Counting Python characters instead
+    would let a chunk heavy with emoji pass the budget here and blow the
+    4096 there — and the plain fallback, same text, would fail identically.
+    """
+    return len(text.encode("utf-16-le")) // 2
 
 
 def _chunks(text: str) -> list[tuple[str, str]]:
@@ -67,9 +84,10 @@ def _chunks(text: str) -> list[tuple[str, str]]:
 
     Both renderings of a line stay in the same chunk, so a fallback resends
     exactly what the rejected message would have said. The budget is measured
-    against the HTML, tags and entities included — conservative, since
-    Telegram counts the text after parsing, but a count that can never send
-    an oversized message is worth the handful of characters it wastes.
+    against the HTML in UTF-16 units, tags and entities included —
+    conservative, since Telegram counts the text after parsing, but a count
+    that can never send an oversized message is worth the handful of
+    characters it wastes.
 
     Blank pieces are dropped: Telegram rejects an empty message, and a report
     that ends on a newline can otherwise leave one behind.
@@ -80,10 +98,10 @@ def _chunks(text: str) -> list[tuple[str, str]]:
     length = 0
     for line in _lines(text):
         html = _as_html(line)
-        if plain_lines and length + 1 + len(html) > MAX_CHARS:
+        if plain_lines and length + 1 + _utf16_len(html) > MAX_CHARS:
             chunks.append(("\n".join(plain_lines), "\n".join(html_lines)))
             plain_lines, html_lines, length = [], [], 0
-        length += len(html) + (1 if plain_lines else 0)
+        length += _utf16_len(html) + (1 if plain_lines else 0)
         plain_lines.append(line)
         html_lines.append(html)
     chunks.append(("\n".join(plain_lines), "\n".join(html_lines)))
@@ -117,19 +135,21 @@ def _lines(text: str) -> Iterator[str]:
 
     A single line longer than a message has to be broken somewhere; breaking
     it at the limit is the one cut that is guaranteed to make progress. The
-    limit is measured in escaped characters — an ``&`` costs five — so the
-    cut can never land inside an entity: each piece escapes to at most
-    ``MAX_CHARS``, and only a heading's ``<b></b>`` can carry a piece past
-    that, into slack the 4096 ceiling still covers.
+    limit is measured in escaped UTF-16 units — an ``&`` costs five, an
+    astral emoji two, and the two never compound because nothing that needs
+    escaping lies outside the Basic Multilingual Plane — so the cut can never
+    land inside an entity, and every character crosses whole: each piece
+    escapes to at most ``MAX_CHARS`` units, and only a heading's ``<b></b>``
+    can carry a piece past that, into slack the 4096 ceiling still covers.
     """
     for line in text.split("\n"):
-        if len(_escape(line)) <= MAX_CHARS:
+        if _utf16_len(_escape(line)) <= MAX_CHARS:
             yield line
             continue
         piece: list[str] = []
         cost = 0
         for char in line:
-            escaped = len(_ESCAPES.get(char, char))
+            escaped = _utf16_len(_ESCAPES.get(char, char))
             if cost + escaped > MAX_CHARS:
                 yield "".join(piece)
                 piece, cost = [], 0

@@ -165,7 +165,7 @@ class Run(NamedTuple):
 def scout_run(tmp_path_factory) -> Run:
     """One scout run, shared: the pipeline is deterministic and its half-dozen
     solves are not worth repeating for every assertion about the same report."""
-    state = tmp_path_factory.mktemp("state")
+    state = tmp_path_factory.mktemp("scout_run") / "state"
     cfg = Config(team_id=TEAM_ID, state_dir=state)
     store = Store(state / "aigaffer.db")
     report = run_pipeline(cfg, make_client(pipeline_routes()), store, "scout")
@@ -256,7 +256,7 @@ def test_the_single_week_planner_is_recorded_as_the_engine_it_is(tmp_path):
     # AIGAFFER_PLANNER=single: the other engine, on purpose. There is no path
     # to print and nothing to apologise for.
     store = Store(tmp_path / "aigaffer.db")
-    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path, planner="single")
+    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state", planner="single")
 
     report = run_pipeline(cfg, make_client(pipeline_routes()), store, "scout")
     decision = store.last_runs(1)[0]["decision"]
@@ -278,7 +278,7 @@ def test_a_window_that_answers_nothing_says_so_under_the_shortlist(
     store = Store(tmp_path / "aigaffer.db")
 
     report = run_pipeline(
-        Config(team_id=TEAM_ID, state_dir=tmp_path),
+        Config(team_id=TEAM_ID, state_dir=tmp_path / "state"),
         make_client(pipeline_routes()),
         store,
         "scout",
@@ -297,7 +297,10 @@ def test_a_draft_never_claims_the_window_was_unavailable(tmp_path):
     store = Store(tmp_path / "aigaffer.db")
 
     report = run_pipeline(
-        Config(team_id=TEAM_ID, state_dir=tmp_path), make_client(routes), store, "scout"
+        Config(team_id=TEAM_ID, state_dir=tmp_path / "state"),
+        make_client(routes),
+        store,
+        "scout",
     )
 
     assert "Single-week engine" not in report
@@ -385,7 +388,7 @@ def test_the_chip_switch_off_is_phase_2_5_to_the_byte(tmp_path, scout_run):
     store = Store(tmp_path / "aigaffer.db")
 
     report = run_pipeline(
-        Config(team_id=TEAM_ID, state_dir=tmp_path, chips=False),
+        Config(team_id=TEAM_ID, state_dir=tmp_path / "state", chips=False),
         make_client(pipeline_routes()),
         store,
         "scout",
@@ -410,7 +413,8 @@ def test_a_free_hit_the_solver_plans_reaches_the_report_and_the_record(
     # a free hit is actually planned: the report labels the free-hit eleven and
     # the record keeps the chip. No manager, so the chip is the solver's own.
     inputs = fetch_inputs(
-        Config(team_id=TEAM_ID, state_dir=tmp_path), make_client(pipeline_routes())
+        Config(team_id=TEAM_ID, state_dir=tmp_path / "state"),
+        make_client(pipeline_routes()),
     )
     _, projections = build_projections(inputs, Config(team_id=TEAM_ID))
     standing = inputs.squad.player_ids
@@ -436,7 +440,7 @@ def test_a_free_hit_the_solver_plans_reaches_the_report_and_the_record(
     store = Store(tmp_path / "aigaffer.db")
 
     report = run_pipeline(
-        Config(team_id=TEAM_ID, state_dir=tmp_path),
+        Config(team_id=TEAM_ID, state_dir=tmp_path / "state"),
         make_client(pipeline_routes()),
         store,
         "scout",
@@ -463,7 +467,10 @@ def test_a_squad_the_api_will_not_show_is_drafted_instead(tmp_path):
     store = Store(tmp_path / "aigaffer.db")
 
     report = run_pipeline(
-        Config(team_id=TEAM_ID, state_dir=tmp_path), make_client(routes), store, "scout"
+        Config(team_id=TEAM_ID, state_dir=tmp_path / "state"),
+        make_client(routes),
+        store,
+        "scout",
     )
 
     signings = bullets(report, "Recommendation")
@@ -481,7 +488,10 @@ def test_a_preseason_run_drafts_a_squad(tmp_path):
     store = Store(tmp_path / "aigaffer.db")
 
     report = run_pipeline(
-        Config(team_id=TEAM_ID, state_dir=tmp_path), make_client(routes), store, "scout"
+        Config(team_id=TEAM_ID, state_dir=tmp_path / "state"),
+        make_client(routes),
+        store,
+        "scout",
     )
 
     assert report.startswith("# AI Gaffer — GW1 scout — initial squad draft")
@@ -502,7 +512,7 @@ def test_one_history_the_api_will_not_serve_does_not_lose_the_report(tmp_path):
     store = Store(tmp_path / "aigaffer.db")
 
     report = run_pipeline(
-        Config(team_id=TEAM_ID, state_dir=tmp_path),
+        Config(team_id=TEAM_ID, state_dir=tmp_path / "state"),
         make_client(pipeline_routes(), statuses={"/api/element-summary/5/": 429}),
         store,
         "scout",
@@ -520,7 +530,7 @@ def test_a_season_with_no_gameweek_ahead_is_an_error(tmp_path):
 
     with pytest.raises(PipelineError):
         run_pipeline(
-            Config(team_id=TEAM_ID, state_dir=tmp_path),
+            Config(team_id=TEAM_ID, state_dir=tmp_path / "state"),
             make_client(pipeline_routes(bootstrap=over)),
             Store(tmp_path / "aigaffer.db"),
             "scout",
@@ -565,7 +575,7 @@ class Seam(NamedTuple):
 def seam(tmp_path_factory) -> Seam:
     """One fetch, shared: every stage test below re-runs from these inputs,
     which is the point of them being a value."""
-    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path_factory.mktemp("seam"))
+    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path_factory.mktemp("seam") / "state")
     return Seam(cfg=cfg, inputs=fetch_inputs(cfg, make_client(pipeline_routes())))
 
 
@@ -587,7 +597,7 @@ def test_the_chips_already_played_are_fetched_once_and_kept(tmp_path):
     transport = CountingTransport(pipeline_routes())
     client = FplClient(http=httpx.Client(transport=transport), sleep=lambda _: None)
 
-    inputs = fetch_inputs(Config(team_id=TEAM_ID, state_dir=tmp_path), client)
+    inputs = fetch_inputs(Config(team_id=TEAM_ID, state_dir=tmp_path / "state"), client)
 
     assert inputs.chips_used == HISTORY_JSON["chips"]
     assert transport.counts[HISTORY_PATH] == 1
@@ -598,7 +608,7 @@ def test_a_manager_with_no_squad_has_played_no_chips(tmp_path):
     # endpoints do not answer for him either.
     routes = pipeline_routes()
     del routes[PICKS_PATH]
-    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path)
+    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
 
     inputs = fetch_inputs(cfg, make_client(routes))
 
@@ -689,7 +699,7 @@ def test_the_pipeline_captains_the_goal_threat_not_the_padded_total(tmp_path):
     # the board. Only a captaincy ranked on the attacking slice finds him now.
     payload = copy.deepcopy(PIPELINE_BOOTSTRAP_JSON)
     next(e for e in payload["elements"] if e["id"] == FERRER)["bonus"] = 0
-    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path)
+    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
     inputs = fetch_inputs(cfg, make_client(pipeline_routes(bootstrap=payload)))
 
     _, projections = build_projections(inputs, cfg)
@@ -718,7 +728,7 @@ def test_a_solve_with_no_squad_drafts_a_fifteen(tmp_path):
     # The draft path lives inside solve now, and says so.
     routes = pipeline_routes()
     del routes[PICKS_PATH]
-    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path)
+    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
     inputs = fetch_inputs(cfg, make_client(routes))
 
     _, projections = build_projections(inputs, cfg)
@@ -925,7 +935,7 @@ def unplayed_routes(
 def test_a_round_nobody_has_played_is_not_history(tmp_path):
     # GW1 was played and GW2 has only been entered, so a history of both is a
     # history of one.
-    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path)
+    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
     routes = unplayed_routes(midweek_bootstrap(), (1, 90), (2, 0))
 
     inputs = fetch_inputs(cfg, make_client(routes))
@@ -941,7 +951,7 @@ def test_an_unplayed_round_does_not_drag_the_minutes_down(tmp_path):
     # the one that has not. The mean of what happened is ninety; averaging the
     # phantom in halves him, and the starts floor then hides the damage at 75
     # — a fit ninety-minute player marked down for a match nobody has played.
-    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path)
+    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
     routes = unplayed_routes(midweek_bootstrap(), (1, 90), (2, 0))
     inputs = fetch_inputs(cfg, make_client(routes))
 
@@ -956,7 +966,7 @@ def test_a_played_fixture_inside_an_unfinished_round_is_kept(tmp_path):
     # minutes are already in the payload, while the Monday match has a row of
     # nothing. The event is unfinished either way, so a rule written on the
     # event drops the eighty-five along with the phantom.
-    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path)
+    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
     routes = unplayed_routes(
         midweek_bootstrap(),
         (1, 90),
@@ -978,7 +988,7 @@ def test_a_fixture_at_full_time_counts_before_it_is_data_checked(tmp_path):
     # which is when the minutes appear. Checked live on 2026-08-22: a match
     # kicked off at 19:00 the previous evening still read ``finished: false``
     # with 90 minutes on the clock and its history rows served.
-    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path)
+    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
     routes = unplayed_routes(
         midweek_bootstrap(),
         (1, 90),
@@ -996,7 +1006,7 @@ def test_a_row_with_no_fixture_id_falls_back_on_its_round(tmp_path):
     # Nothing is finished in this fixtures payload, so a row judged on its
     # fixture would be dropped whatever round it is in. These rows carry no
     # fixture id, so the event rule decides: GW1 is finished and GW2 is not.
-    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path)
+    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
     routes = unplayed_routes(
         midweek_bootstrap(),
         (1, 90, 0),
@@ -1014,7 +1024,7 @@ def test_a_row_with_no_fixture_id_falls_back_on_its_round(tmp_path):
 def test_a_row_naming_a_fixture_nobody_has_heard_of_is_dropped(tmp_path):
     # Never silently kept: an id the fixtures payload does not carry is not
     # evidence that a match was played, and its round has not finished either.
-    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path)
+    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
     routes = unplayed_routes(
         midweek_bootstrap(), (1, 90), (2, 0, 4242), fixtures=fixtures_played(1, 2, 3)
     )
@@ -1039,7 +1049,7 @@ def test_the_opening_weekend_has_no_history_rather_than_a_history_of_zeroes(tmp_
     # kick off tomorrow. None of it is evidence of anything, so none of it is
     # kept, and the minutes model is left with the empty history it knows how
     # to fall back from.
-    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path)
+    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
     routes = unplayed_routes(
         opening_weekend_bootstrap(), (1, 0), fixtures=fixtures_played()
     )
@@ -1090,7 +1100,7 @@ def rested_opener_routes(minutes: int | None = 3230) -> dict:
 
 def test_the_fetch_carries_last_seasons_minutes_a_gameweek(tmp_path):
     # 3230 minutes over 38 gameweeks is 85.0.
-    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path)
+    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
 
     inputs = fetch_inputs(cfg, make_client(pipeline_routes()))
 
@@ -1100,7 +1110,7 @@ def test_the_fetch_carries_last_seasons_minutes_a_gameweek(tmp_path):
 def test_a_player_with_no_premier_league_past_has_no_prior(tmp_path):
     # Absent rather than zero: nothing to read is not the same as a season of
     # not playing, and the minutes model has to be able to tell them apart.
-    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path)
+    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
     routes = pipeline_routes()
     routes[f"/api/element-summary/{FERRER}/"] = summary((1, 90))
 
@@ -1115,7 +1125,7 @@ def test_last_season_lifts_a_returning_premium_the_opener_rested(tmp_path):
     # evidence he was overriding it with now in the payload. One played
     # gameweek, none of it his, and no starts to fall back on: the old floor
     # was a substitute's twenty. 3230 minutes last season is 85.0 a gameweek.
-    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path)
+    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
     inputs = fetch_inputs(cfg, make_client(rested_opener_routes()))
 
     xmins, _ = build_projections(inputs, cfg)
@@ -1126,7 +1136,7 @@ def test_last_season_lifts_a_returning_premium_the_opener_rested(tmp_path):
 def test_a_promoted_clubs_player_still_falls_back_on_his_starts(tmp_path):
     # Same week, same rested opener, and no season behind him: the old
     # behaviour, unchanged, because there is nothing better to have.
-    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path)
+    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
     inputs = fetch_inputs(cfg, make_client(rested_opener_routes(minutes=None)))
 
     xmins, _ = build_projections(inputs, cfg)
@@ -1155,7 +1165,7 @@ def test_a_prior_does_not_overrule_a_season_that_has_been_played(seam):
 
 
 def test_a_filter_that_empties_every_history_says_so(tmp_path, capsys):
-    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path)
+    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
     routes = unplayed_routes(
         opening_weekend_bootstrap(), (1, 0), fixtures=fixtures_played()
     )
@@ -1174,7 +1184,7 @@ def test_a_fetch_with_no_rows_to_remove_is_not_an_anomaly(tmp_path, capsys):
     # Pre-season, and the case the warning must stay quiet for: nobody had a
     # row, so nothing was taken. An empty history here is the season not having
     # started, not the filter having gone wrong.
-    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path)
+    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
     routes = unplayed_routes(opening_weekend_bootstrap(), fixtures=fixtures_played())
 
     inputs = fetch_inputs(cfg, make_client(routes))
@@ -1184,7 +1194,7 @@ def test_a_fetch_with_no_rows_to_remove_is_not_an_anomaly(tmp_path, capsys):
 
 
 def test_a_fetch_that_keeps_a_played_match_says_nothing(tmp_path, capsys):
-    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path)
+    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
 
     inputs = fetch_inputs(cfg, make_client(pipeline_routes()))
 
@@ -1199,7 +1209,7 @@ def test_a_deadline_that_has_gone_does_not_bench_a_fit_starter(tmp_path):
     # premium is a starter's minutes and a place in the eleven, not the zero
     # that sent the gaffer overriding seven players by hand.
     store = Store(tmp_path / "aigaffer.db")
-    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path)
+    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
     routes = unplayed_routes(
         opening_weekend_bootstrap(), (1, 0), fixtures=fixtures_played()
     )
@@ -1333,7 +1343,9 @@ def stub_gaffer(monkeypatch, decide=decided) -> Gaffer:
 
 
 def gaffer_cfg(tmp_path) -> Config:
-    return Config(team_id=TEAM_ID, state_dir=tmp_path, anthropic_api_key="sk-test")
+    return Config(
+        team_id=TEAM_ID, state_dir=tmp_path / "state", anthropic_api_key="sk-test"
+    )
 
 
 def gaffer_run(monkeypatch, tmp_path, decide=decided, mode="scout", **kwargs):
@@ -1414,7 +1426,7 @@ def test_the_kill_switch_leaves_the_solver_to_it(monkeypatch, tmp_path, scout_ru
     stub_gaffer(monkeypatch, never)
     cfg = Config(
         team_id=TEAM_ID,
-        state_dir=tmp_path,
+        state_dir=tmp_path / "state",
         anthropic_api_key="sk-test",
         manager_enabled=False,
     )
@@ -1633,7 +1645,9 @@ def test_a_manager_who_never_loaded_at_all_says_so_in_the_report(
 
     assert "## The Gaffer's view" not in report
     assert report.endswith(f"\n{orchestrator.MANAGER_UNAVAILABLE}\n")
-    written = (tmp_path / "reports" / "gw2-scout.md").read_text(encoding="utf-8")
+    written = (tmp_path / "state" / "reports" / "gw2-scout.md").read_text(
+        encoding="utf-8"
+    )
     assert written == report, "the diary and the phone read the same report"
 
 
@@ -1717,7 +1731,7 @@ def test_without_a_key_there_is_no_gaffer_and_no_difference(
     store = Store(tmp_path / "aigaffer.db")
 
     report = run_pipeline(
-        Config(team_id=TEAM_ID, state_dir=tmp_path),
+        Config(team_id=TEAM_ID, state_dir=tmp_path / "state"),
         make_client(pipeline_routes()),
         store,
         "scout",
@@ -1794,7 +1808,7 @@ def test_the_report_the_gaffer_wrote_is_the_one_that_is_sent(monkeypatch, tmp_pa
         team_id=TEAM_ID,
         telegram_token=TOKEN,
         telegram_chat_id="42",
-        state_dir=tmp_path,
+        state_dir=tmp_path / "state",
         anthropic_api_key="sk-test",
     )
 
@@ -1851,7 +1865,10 @@ def test_the_report_is_sent_to_telegram(monkeypatch, tmp_path):
     sent = []
     monkeypatch.setattr(orchestrator, "send_report", lambda *args: sent.append(args))
     cfg = Config(
-        team_id=TEAM_ID, telegram_token=TOKEN, telegram_chat_id="42", state_dir=tmp_path
+        team_id=TEAM_ID,
+        telegram_token=TOKEN,
+        telegram_chat_id="42",
+        state_dir=tmp_path / "state",
     )
 
     report = run_pipeline(
@@ -1869,7 +1886,7 @@ def test_nothing_is_sent_without_somewhere_to_send_it(monkeypatch, capsys, tmp_p
     monkeypatch.setattr(orchestrator, "send_report", lambda *args: sent.append(args))
 
     run_pipeline(
-        Config(team_id=TEAM_ID, telegram_token=TOKEN, state_dir=tmp_path),
+        Config(team_id=TEAM_ID, telegram_token=TOKEN, state_dir=tmp_path / "state"),
         make_client(pipeline_routes()),
         Store(tmp_path / "aigaffer.db"),
         "deadline",
@@ -1891,7 +1908,10 @@ def test_a_failed_send_keeps_the_run_and_never_prints_the_token(
     monkeypatch.setattr(orchestrator, "send_report", explode)
     store = Store(tmp_path / "aigaffer.db")
     cfg = Config(
-        team_id=TEAM_ID, telegram_token=TOKEN, telegram_chat_id="42", state_dir=tmp_path
+        team_id=TEAM_ID,
+        telegram_token=TOKEN,
+        telegram_chat_id="42",
+        state_dir=tmp_path / "state",
     )
 
     report = run_pipeline(cfg, make_client(pipeline_routes()), store, "deadline")
@@ -1918,10 +1938,10 @@ def bootstrap_due_in(hours: float) -> dict:
 def store(monkeypatch, tmp_path):
     """A configured environment, and the store the CLI will keep runs in."""
     monkeypatch.setenv("FPL_TEAM_ID", str(TEAM_ID))
-    monkeypatch.setenv("AIGAFFER_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("AIGAFFER_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
     monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
-    return Store(tmp_path / "aigaffer.db")
+    return Store(tmp_path / "state" / "aigaffer.db")
 
 
 def serve(monkeypatch, routes: dict, statuses: dict[str, int] | None = None) -> None:
