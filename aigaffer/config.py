@@ -19,6 +19,15 @@ REMINDER_ANCHOR_HOURS = 3.0
 # anchor means; narrower would hang the week on a single tick again.
 WINDOW_HOURS = 1.5
 
+# Below this many finished gameweeks the season is "early", and two readers
+# hang two different cautions off the one judgement. The briefing warns the
+# manager that the per-90 rates under the projections are one or two matches
+# of evidence; the fetch reads it the other way about — past this point a
+# bootstrap where not one price has moved all season is a missing field, not
+# a still market. It lives here rather than with either reader because the
+# orchestrator must never need the manager package just to fetch.
+EARLY_SEASON_GWS = 5
+
 
 @dataclass
 class Config:

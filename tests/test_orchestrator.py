@@ -692,6 +692,65 @@ def test_a_bank_the_ledger_predicted_exactly_earns_no_line(tmp_path):
     assert "purchase ledger" not in report
 
 
+def deep_season_bootstrap() -> dict:
+    """Five finished gameweeks behind GW2's deadline — a season old enough
+    that a board of six hundred unmoved prices cannot be a market."""
+    payload = copy.deepcopy(PIPELINE_BOOTSTRAP_JSON)
+    payload["events"][0].update(finished=True)
+    for gw in range(3, 7):
+        payload["events"].append(
+            {
+                "id": gw,
+                "name": f"Gameweek {gw}",
+                "deadline_time": "2026-01-30T17:30:00Z",
+                "finished": True,
+                "is_previous": False,
+                "is_current": False,
+                "is_next": False,
+                "average_entry_score": 0,
+            }
+        )
+    return payload
+
+
+def test_a_deep_season_where_no_price_ever_moved_reads_as_a_missing_field(
+    tmp_path, capsys
+):
+    # The model defaults cost_change_start to 0 so a hand-built fixture need
+    # not mention it — which means the live API dropping or renaming the field
+    # would parse cleanly and quietly seed the ledger at now_cost. Weeks into
+    # a season, every element claiming an unmoved price is that regression's
+    # signature, and the run says so, once.
+    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
+
+    fetch_inputs(cfg, make_client(pipeline_routes(bootstrap=deep_season_bootstrap())))
+    printed = capsys.readouterr().out
+
+    assert orchestrator.COST_CHANGES_MISSING in printed
+    assert printed.count("cost_change_start") == 1
+
+
+def test_a_single_price_that_moved_proves_the_field_alive(tmp_path, capsys):
+    payload = deep_season_bootstrap()
+    payload["elements"][0]["cost_change_start"] = 2
+    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
+
+    fetch_inputs(cfg, make_client(pipeline_routes(bootstrap=payload)))
+
+    assert "cost_change_start" not in capsys.readouterr().out
+
+
+def test_an_opening_month_of_unmoved_prices_is_not_an_anomaly(tmp_path, capsys):
+    # One finished gameweek and every price where it started is simply
+    # August: the seed of now_cost minus 0 is exact, and a warning here would
+    # cry wolf on every fresh season.
+    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
+
+    fetch_inputs(cfg, make_client(pipeline_routes()))
+
+    assert "cost_change_start" not in capsys.readouterr().out
+
+
 # --- the seam: fetch, project, solve ---------------------------------------
 #
 # The three stages ``run_pipeline`` is made of, called on their own. What the
@@ -2313,6 +2372,52 @@ def test_a_reminder_that_never_buzzed_is_not_marked_done(
     assert (cfg.state_dir / "reports" / "gw2-reminder.md").read_text(
         encoding="utf-8"
     ) == alert
+
+
+def test_a_reminders_failed_buzz_does_not_swallow_the_reconciliation_note(
+    monkeypatch, tmp_path
+):
+    # The £1.4m audit board from the ledger section, met by a reminder whose
+    # phone is down. The ledger's observation joins the deliver-first dance:
+    # persisted before the send, the failed buzz would have left the GW2
+    # snapshot written, the retrying tick would have found the gameweek
+    # already reconciled and predicted nothing, and the one line saying the
+    # bank was adrift would only ever have been in the alert nobody got.
+    def explode(*args):
+        raise httpx.ConnectError("the phone is down")
+
+    monkeypatch.setattr(orchestrator, "send_report", explode)
+    cfg = Config(
+        team_id=TEAM_ID,
+        telegram_token=TOKEN,
+        telegram_chat_id="42",
+        state_dir=tmp_path / "state",
+    )
+    store = Store(cfg.state_dir / "aigaffer.db")
+    held = [p["element"] for p in PICKS_15_JSON["picks"]]
+    previous = [pid if pid != 16 else 17 for pid in held]
+    for pid in previous:
+        store.record_purchase(pid, buy_price=90 if pid == 17 else 50, gw_seen=1)
+    store.record_squad(1, bank=0, player_ids=previous)
+    client = make_client(unplayed_routes(midweek_bootstrap(), (1, 90)))
+
+    report = run_pipeline(cfg, client, store, "reminder")
+
+    assert "the bank is £1.4m below what the purchase ledger predicted" in report
+    assert store.squad_record(2) is None, "nothing persisted before the buzz"
+    assert 16 not in store.purchases() and store.purchases()[17] == 90
+
+    # The next tick: the phone answers, the retried alert carries the same
+    # note, and only then does the observation land — the snapshot, Quill's
+    # sighting and Reyes's departure.
+    sent = []
+    monkeypatch.setattr(orchestrator, "send_report", lambda *args: sent.append(args))
+    alert = run_pipeline(cfg, client, store, "reminder")
+
+    assert sent == [(TOKEN, "42", alert)]
+    assert "the bank is £1.4m below what the purchase ledger predicted" in alert
+    assert store.squad_record(2) is not None
+    assert 16 in store.purchases() and 17 not in store.purchases()
 
 
 # --- whose history to fetch ------------------------------------------------

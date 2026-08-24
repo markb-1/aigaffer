@@ -2034,3 +2034,60 @@ def test_the_free_hit_budget_is_the_bank_plus_what_the_squad_sells_for():
     assert at_market is not None
     assert at_market[1][0] == pytest.approx(99.2, abs=1e-4)
     assert priced is None
+
+
+def test_a_riser_held_two_weeks_still_sells_at_the_ledger_price_in_week_three():
+    # The invariant behind the cash carry: a starting-squad member's proceeds
+    # are the LEDGER's selling price whichever week of the window his sale
+    # finally lands — today that is structural, ``proceeds`` being built once
+    # per player with no week index, and this board is the pin that keeps a
+    # future per-week price model from quietly re-crediting a late sale at
+    # now_cost. Player 8 lists at 120 and truly sells for 100; he is a real
+    # starter in the window's first two gameweeks (6.0 each) and dead in the
+    # third, while 17 (115) is worth 12.0 exactly then — so the one plan worth
+    # making holds 8 through weeks one and two and swaps him for 17 at the
+    # last. At market pricing the week-3 sale banks 120 >= 115 and the swap
+    # happens; at the ledger's 100 it cannot, and no other sale can bridge the
+    # 15 short — a second midfielder sold leaves no midfielder to buy back —
+    # so the truly-priced window keeps its squad and promises nothing.
+    rows = [
+        (1, GK, 50, {5: 5.0, 6: 5.0, 7: 5.0}),
+        (2, GK, 50, {5: 0.5, 6: 0.5, 7: 0.5}),
+        (3, DEF, 50, {5: 4.2, 6: 4.2, 7: 4.2}),
+        (4, DEF, 50, {5: 4.1, 6: 4.1, 7: 4.1}),
+        (5, DEF, 50, {5: 4.0, 6: 4.0, 7: 4.0}),
+        (6, DEF, 50, {5: 0.5, 6: 0.5, 7: 0.5}),
+        (7, DEF, 50, {5: 0.5, 6: 0.5, 7: 0.5}),
+        (8, MID, 120, {5: 6.0, 6: 6.0, 7: 0.0}),
+        (9, MID, 40, {5: 6.0, 6: 6.0, 7: 6.0}),
+        (10, MID, 40, {5: 5.0, 6: 5.0, 7: 5.0}),
+        (11, MID, 40, {5: 3.5, 6: 3.5, 7: 3.5}),
+        (12, MID, 40, {5: 3.0, 6: 3.0, 7: 3.0}),
+        (13, FWD, 50, {5: 3.9, 6: 3.9, 7: 3.9}),
+        (14, FWD, 50, {5: 3.8, 6: 3.8, 7: 3.8}),
+        (15, FWD, 50, {5: 3.7, 6: 3.7, 7: 3.7}),
+        (17, MID, 115, {5: 0.0, 6: 0.0, 7: 12.0}),
+    ]
+    players, projections = _build(rows)
+    true_sales = {pid: players[pid].now_cost for pid in SQUAD}
+    true_sales[8] = 100
+
+    at_market, market_path = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[5, 6, 7],
+        decay=DECAY,
+    )
+    plan, path = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[5, 6, 7],
+        decay=DECAY, selling_prices=true_sales,
+    )
+
+    # The market-priced window makes the week-3 swap on money that only
+    # exists if the held riser is credited at his listed price.
+    assert market_path.moves == [
+        PlannedMove(event=7, transfers_in=[17], transfers_out=[8], hits=0)
+    ]
+    # The truly-priced one still sells him for 100 in week 3 — 15 short of 17
+    # — so nothing moves in any week and 17 is never promised.
+    assert plan.transfers_in == []
+    assert path.moves == []
+    assert 17 not in set(plan.squad)

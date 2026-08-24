@@ -32,8 +32,10 @@ CREATE TABLE IF NOT EXISTS runs (
 # ``gw_seen`` is the gameweek the ledger first saw the player, which is the
 # honesty label on his ``buy_price``: a row seeded from ``cost_change_start``
 # on the ledger's first run is exact for a squad held since GW1, and a row
-# written at first sighting is the price on the day the run noticed him, which
-# can trail the owner's click by up to £0.1m if the price moved in between.
+# written at first sighting is the price on the day the run noticed him — the
+# first run after the next deadline, since the picks lag to the last one —
+# which trails the owner's click by however many £0.1m daily moves happened
+# in between. Reconciliation (:mod:`aigaffer.ledger`) is what catches that.
 PURCHASES_SCHEMA = """
 CREATE TABLE IF NOT EXISTS purchases (
     player_id INTEGER PRIMARY KEY,

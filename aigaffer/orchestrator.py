@@ -58,6 +58,7 @@ import httpx
 
 from aigaffer.config import (
     DEADLINE_ANCHOR_HOURS,
+    EARLY_SEASON_GWS,
     REMINDER_ANCHOR_HOURS,
     WINDOW_HOURS,
     Config,
@@ -135,6 +136,19 @@ NOT_CONFIGURED = "telegram not configured: the report was kept but not sent"
 HISTORY_FILTER_EMPTIED = (
     "aigaffer: history filter removed every played round ({players} players had"
     " rows); projections fall back to season priors"
+)
+
+# And when the price-move column reads as never having moved. The ledger's
+# seed is ``now_cost - cost_change_start``, and the model defaults the field
+# to 0 so hand-built fixtures need not mention it — which means a live payload
+# that dropped or renamed the column would not fail parsing but quietly seed
+# every player at today's price instead of the season opener's. Weeks into a
+# season not one of six hundred prices standing still is not a market, it is
+# a missing field, and the line below is the one place that says so.
+COST_CHANGES_MISSING = (
+    "aigaffer: cost_change_start is 0 on every element this deep into the"
+    " season — the field looks absent from the payload, and the purchase"
+    " ledger's seeds may be degraded to now_cost"
 )
 
 # What the report says when a manager was asked for and never reached at all.
@@ -500,13 +514,21 @@ def _run_reminder(
 
     The purchase ledger is maintained here too — the picks were fetched
     anyway, and a transfer made between the deadline run and this one should
-    be sighted three hours out, not a week later. Its writes ride ``save``
-    directly rather than the deliver-first dance: the ledger records what the
-    API published, not what this alert did, so a buzz that failed is no
-    reason to un-know a price.
+    be sighted three hours out, not a week later. Its writes join the
+    deliver-first dance above rather than riding ``save`` directly: the
+    observation is computed in memory for the message — the solve needs the
+    selling prices and the alert may need the reconciliation note — and
+    persisted only after the buzz went. Persisted first, a failed send would
+    leave the gameweek's snapshot written, the retrying tick would find it
+    and reconcile nothing, and the discrepancy line would only ever have been
+    in the buzz nobody got. The trade is the dance's usual one: a send that
+    lands and a save that then dies re-observes on the next tick, which
+    re-learns the same prices from the same picks.
     """
     inputs = fetch_inputs(cfg, client)
-    ledger = observe(store, inputs.squad, inputs.players, inputs.chips_used, save)
+    ledger = observe(
+        store, inputs.squad, inputs.players, inputs.chips_used, persist=False
+    )
     _, projections = build_projections(inputs, cfg)
     solved = solve(inputs, projections, cfg, ledger.selling_prices)
     event = inputs.event
@@ -546,6 +568,11 @@ def _run_reminder(
     if send and not _deliver(cfg, report):
         return report
     if save:
+        # The ledger's writes, now that the buzz went: the same observation
+        # again, persisted this time. Written any earlier, the snapshot would
+        # have marked the gameweek reconciled and a retried send would carry
+        # no note (see the docstring).
+        observe(store, inputs.squad, inputs.players, inputs.chips_used)
         # Not _write_report: the history file goes, the root verdict stays.
         path = cfg.state_dir / "reports" / f"gw{event.id}-{REMINDER_MODE}.md"
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -690,6 +717,7 @@ def fetch_inputs(cfg: Config, client: FplClient) -> PipelineInputs:
     event = bootstrap.next_event()
     if event is None:
         raise PipelineError("the API has no gameweek ahead")
+    _warn_if_cost_changes_missing(bootstrap)
 
     players = {player.id: player for player in bootstrap.elements}
     squad = _current_squad(client, cfg.team_id, bootstrap)
@@ -1119,6 +1147,26 @@ def _warn_if_emptied(
     with_rows = sum(1 for history in fetched.values() if history)
     if with_rows and not any(histories.values()):
         print(HISTORY_FILTER_EMPTIED.format(players=with_rows))
+
+
+def _warn_if_cost_changes_missing(bootstrap: Bootstrap) -> None:
+    """Say so, once, if no price on the board claims to have moved all season.
+
+    In August that is simply true — prices have not moved yet, and the ledger's
+    seed of ``now_cost - 0`` is exact. Weeks in, it is the signature of a
+    payload regression: the model defaults ``cost_change_start`` to 0, so a
+    dropped or renamed column parses cleanly and degrades the seed to today's
+    price without a word. "Weeks in" is the same
+    :data:`~aigaffer.config.EARLY_SEASON_GWS` the briefing's early-season
+    warning stands down by, because the two are one judgement about when a
+    season's evidence should exist — read from config, not from the manager
+    package, whose broken install must only ever cost the manager.
+    """
+    played = sum(1 for event in bootstrap.events if event.finished)
+    if played < EARLY_SEASON_GWS:
+        return
+    if all(player.cost_change_start == 0 for player in bootstrap.elements):
+        print(COST_CHANGES_MISSING)
 
 
 def history_pool(players: dict[int, Player], held: list[int]) -> list[int]:

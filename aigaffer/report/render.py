@@ -427,17 +427,18 @@ def _sale_tag(
     it mattered. A player the ledger has no price for is a player whose sale
     raises the listed price as far as anyone can say, which is the same
     silence.
+
+    The tag is :func:`_named`'s own, with the sale spliced in before the
+    closing paren rather than formatted a second time, so the two lines can
+    never drift apart about what a parenthesis holds.
     """
     if pid not in players:
         return f"player {pid}"
-    player = players[pid]
     sells = (selling_prices or {}).get(pid)
-    if sells is None or sells == player.now_cost:
+    if sells is None or sells == players[pid].now_cost:
         return _named(pid, players, clubs)
-    return (
-        f"{player.web_name} ({POSITIONS[player.element_type]}"
-        f" {clubs[player.team]} {price(player.now_cost)}, sells {price(sells)})"
-    )
+    named = _named(pid, players, clubs)
+    return f"{named[:-1]}, sells {price(sells)})"
 
 
 def _spoken(chip: str) -> str:

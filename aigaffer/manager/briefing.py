@@ -40,6 +40,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import TYPE_CHECKING
 
+from aigaffer.config import EARLY_SEASON_GWS
 from aigaffer.data.models import Event, Player
 from aigaffer.manager.tools import played_chips
 from aigaffer.model.xp import PlayerProjection
@@ -149,12 +150,14 @@ PLANNED_GUARD = (
 # but about a single field being unable to swamp the document it sits in.
 MAX_FIELD = 60
 
-# Below this many finished gameweeks the season is "early". The per-90 rates
-# the projections rest on are then one or two matches of evidence, and even
-# shrunk toward their positional priors (see :mod:`aigaffer.model.xp`) they are
-# the shakiest they will be all year. The manager is warned once, and told to
-# lean on his own team news rather than the numbers.
-EARLY_SEASON_GWS = 5
+# Below EARLY_SEASON_GWS finished gameweeks the season is "early". The per-90
+# rates the projections rest on are then one or two matches of evidence, and
+# even shrunk toward their positional priors (see :mod:`aigaffer.model.xp`)
+# they are the shakiest they will be all year. The manager is warned once, and
+# told to lean on his own team news rather than the numbers. The threshold
+# itself lives in :mod:`aigaffer.config` — the fetch's missing-field tripwire
+# reads the same judgement, and must not need this package to do it — and is
+# re-exported here because this is where its warning lives.
 
 # The warning itself. A constant with one integer filled in, so the line is
 # deterministic and carries nothing off the wire that could forge the document

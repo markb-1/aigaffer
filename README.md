@@ -110,10 +110,17 @@ gameweek minutes this season and one row per past season), and the entry's
 own picks, transfers and chip history. No paid data, no odds feeds, no
 scraped team news.
 
-Three blind spots are structural rather than accidental. The API does not
-expose purchase prices, so selling price is taken as current price. The
-public picks endpoint lags to the last deadline, so a transfer you make
-mid-gameweek is invisible until the next deadline passes. And nothing in the
+Three blind spots are structural rather than accidental. The API never says
+what you paid for anyone — and purchase price is the number selling actually
+turns on, since FPL pays a riser's owner only half the rise — so the bot
+keeps a purchase ledger of its own, reconstructed by observation: seeded
+from how far each price has moved since the season opened, maintained by
+watching the picks for every arrival and departure, and audited once a
+gameweek against the bank the game publishes, with one line in the report
+when the two disagree. The public picks endpoint lags to the last deadline,
+so a transfer you make mid-gameweek is invisible until the next deadline
+passes — which is also the ledger's error bar, since a buy it first sights
+then is recorded at that day's price, not your click's. And nothing in the
 payload knows about this afternoon's press conference — which is the half of
 the job the model cannot do, and the reason there is a manager at all.
 
@@ -386,6 +393,20 @@ Beyond the secrets, `Config.from_env()` also reads `AIGAFFER_STATE_DIR`
 (state directory, default `state`) and `AIGAFFER_MANAGER_MODEL` (which model
 the manager is, default `claude-opus-5`).
 
+The state the workflow commits back is the bot's memory, and not all of it
+is regenerable. The SQLite DB in `state/` holds the run history beside two
+tables the purchase ledger lives in: `purchases`, what was paid for each
+player held — reconstructed by observation, because the API never says — and
+`squads`, one snapshot per gameweek of the bank and fifteen the picks
+endpoint published, which the ledger's selling estimates are audited
+against. Wipe `state/` mid-season and the next run reseeds every squad
+member at his season-opening price — right for anyone held since GW1, wrong
+for every player bought since, and wrong until he is sold. A fork adopting
+the bot mid-season starts in the same place: the seed assumes the squad it
+finds was held from the start, so recent buys carry season-opening prices
+until the reconciliation line in the report has had a gameweek or two to say
+how far adrift that left the estimates.
+
 ### Kill switches
 
 Three repository variables — **Settings → Secrets and variables → Actions →
@@ -486,9 +507,17 @@ deliberately do not — is under Honest limitations below.
 
 These are deliberate. Do not "fix" them without revisiting the design:
 
-1. **Selling price = current price.** The public API does not expose your
-   purchase prices, so profit-sharing on sales is ignored and the bank figure
-   after a sale can be slightly off.
+1. **Selling prices are reconstructed, not read.** The public API still does
+   not expose your purchase prices; the purchase ledger rebuilds them by
+   observation, and the reconstruction has a known error bar. The seed —
+   today's price minus its movement since the season opened — is exact only
+   for a squad held since GW1. A player bought later is first sighted at his
+   price on the run after the next deadline reveals him in the picks, which
+   can trail what you actually clicked by however many £0.1m daily moves
+   happened in between. The bank-reconciliation line in the report is the
+   drift detector for exactly that: its first appearance after a week of
+   manual transfers is the system working, not a bug, and the game's own
+   published bank stays authoritative everywhere either way.
 2. **Pre-deadline transfers by the user are invisible.** The public picks
    endpoint lags to the last deadline, so any transfer you make during the
    current gameweek is not reflected until the next deadline passes.

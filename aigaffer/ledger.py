@@ -22,8 +22,11 @@ against every run's picks:
   reconciliation exists to surface exactly that kind of drift.
 * **A first sighting.** A player in the squad the ledger has never seen came
   in by a transfer between runs, and is recorded at his ``now_cost`` on the
-  day the run noticed him. Worst case that trails the owner's click by one
-  £0.1m price move; reconciliation surfaces it.
+  day the run noticed him. The picks endpoint lags to the last deadline, so a
+  buy clicked early in a gameweek is only sighted after the next deadline —
+  and by then his price has had however many £0.1m daily moves the market
+  made in between, every one of them drift between the recorded price and the
+  owner's click. Reconciliation is what catches it.
 * **A departure.** A ledger row for a player no longer held is deleted: his
   sale is settled and the proceeds are already in the published bank.
 
