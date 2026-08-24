@@ -413,3 +413,63 @@ def test_candidate_pool_is_capped_per_position():
     pool = candidate_pool(players, xp, [1])
 
     assert pool == [1] + list(range(21, 61))
+
+
+# --- what a sale actually raises -------------------------------------------
+#
+# The budget used to price every sale at now_cost, which overestimates what a
+# riser raises: FPL pays purchase plus half the rise, rounded down. The
+# optimizer takes the true figures as ``selling_prices`` — buys stay at
+# now_cost, holding a player costs nothing, and a plan the real money cannot
+# fund is not offered.
+
+
+def test_a_sale_is_priced_at_its_selling_price_not_the_market():
+    # 12 rose since we bought him: he lists at 60 and sells for 55, so at bank
+    # 0 the like-for-like swap 12 -> 16 (60) no longer adds up — 60 to spend
+    # against 55 raised. The best swap the true money funds is selling 10
+    # (70, sells at 70): XI 322 - 32 + 50 = 340, bench 31 as before, 343.1.
+    players, xp = universe(16)
+
+    at_market = optimize(players, xp, CURRENT, 0, 1, forced_transfers=1)
+    plan = optimize(
+        players, xp, CURRENT, 0, 1, forced_transfers=1, selling_prices={12: 55}
+    )
+
+    assert at_market.transfers_out == [12]  # the plan the app would refuse
+    assert plan.transfers_in == [16]
+    assert plan.transfers_out == [10]
+    assert plan.xp_total == pytest.approx(343.1)
+
+
+def test_a_plan_the_true_selling_prices_cannot_fund_is_not_offered():
+    # Every squad member has fallen to a selling price of 40 and 16 costs 60:
+    # no single sale funds him, so the forced one-transfer board that was
+    # feasible at market prices is answered honestly — with nothing.
+    players, xp = universe(16)
+    fallen = {pid: 40 for pid in CURRENT}
+
+    assert optimize(players, xp, CURRENT, 0, 1, forced_transfers=1) is not None
+    assert (
+        optimize(
+            players, xp, CURRENT, 0, 1, forced_transfers=1, selling_prices=fallen
+        )
+        is None
+    )
+
+
+def test_holding_risers_costs_nothing_even_at_a_paper_loss():
+    # Every man would sell below his listed price, and the plan sells nobody.
+    # Money only moves when a player does — a formulation that charged the
+    # squad its own paper losses would make rolling the transfer infeasible,
+    # which is the regression this pins out.
+    players, xp = universe()
+    haircut = {pid: PLAYERS[pid].now_cost - 5 for pid in CURRENT}
+
+    plan = optimize(
+        players, xp, CURRENT, 0, 1, forced_transfers=0, selling_prices=haircut
+    )
+
+    assert plan is not None
+    assert plan.squad == CURRENT
+    assert plan.xp_total == pytest.approx(CURRENT_XP)

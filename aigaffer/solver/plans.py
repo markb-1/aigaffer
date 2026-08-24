@@ -63,6 +63,7 @@ def generate_plans(
     decay: float = 0.85,
     planner: str = "multi",
     available_chips: frozenset[str] = frozenset(),
+    selling_prices: dict[int, int] | None = None,
 ) -> list[Plan]:
     """Candidate plans, best objective first.
 
@@ -80,6 +81,13 @@ def generate_plans(
     every windowed solve; empty, which is the default, builds the pre-chip
     model to the byte and leaves the single-week fallback untouched (it never
     saw a chip in the first place).
+
+    ``selling_prices`` is the purchase ledger's answer for the squad we hold —
+    what each sale would actually raise, against the ``now_cost`` every buy
+    still pays — and like the chips it is derived in one place and only
+    carried here: the same dict rides to every windowed solve, to the hoisted
+    free-hit pricing, and to every single-week fallback solve, so no engine
+    can be selling at money another engine was refused.
 
     A transfer count the budget or the pool cannot support comes back from
     the optimizer as None and is simply left out — infeasible is an answer,
@@ -100,7 +108,8 @@ def generate_plans(
         # falls through to the single-week solver, reached here without the work.
         freehit_prices = (
             _free_hit_prices(
-                players, xp, current_squad, bank, projections_events, SWEEP_TIME_LIMIT
+                players, xp, current_squad, bank, projections_events,
+                SWEEP_TIME_LIMIT, selling_prices=selling_prices,
             )
             if FREE_HIT in available_chips
             else None
@@ -123,6 +132,7 @@ def generate_plans(
                     time_limit=SWEEP_TIME_LIMIT,
                     available_chips=available_chips,
                     freehit_prices=freehit_prices,
+                    selling_prices=selling_prices,
                 )
                 # The path comes back beside the plan and is already on it, so
                 # the second half of the pair is nothing the shortlist carries.
@@ -134,7 +144,8 @@ def generate_plans(
 
     return _shortlist(
         optimize(
-            players, xp, current_squad, bank, free_transfers, forced_transfers=count
+            players, xp, current_squad, bank, free_transfers,
+            forced_transfers=count, selling_prices=selling_prices,
         )
         for count in transfer_counts(free_transfers)
     )

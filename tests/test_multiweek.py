@@ -1934,3 +1934,103 @@ def test_generate_plans_hoists_the_free_hit_without_changing_the_shortlist():
     assert [p.squad for p in hoisted] == [p.squad for p in inline]
     assert [p.path.week1_chip for p in hoisted] == [p.path.week1_chip for p in inline]
     assert hoisted[0].path.week1_chip == FREE_HIT
+
+
+# --------------------------------------------------------------------------
+# What a sale actually raises, over the window
+# --------------------------------------------------------------------------
+#
+# The cash carry priced every sale at now_cost, which overestimates what a
+# riser raises: FPL pays purchase plus half the rise, rounded down. The window
+# takes the true figures as ``selling_prices`` for the squad it starts with;
+# a player bought inside the window later sells at his now_cost, which under
+# frozen prices IS his buy price — exact, and now deliberate rather than
+# accidental.
+
+
+def test_week_one_sales_raise_selling_money_not_market_money():
+    # The week_one_proceeds board, except that 8 was bought cheap and rose: he
+    # lists at 120 and truly sells for 100. At market pricing the plan banks
+    # 120 - 45 = 75 in GW5 and buys 17 (115) in GW6 with 12's 40 on top; with
+    # the true 100 the bank holds 55, 55 + 40 = 95 falls short of 115, and no
+    # other sale can bridge it — so 17 is never signed and the window says so
+    # instead of promising money the app will not pay out.
+    rows = [
+        (1, GK, 50, {5: 5.0, 6: 5.0}),
+        (2, GK, 50, {5: 0.5, 6: 0.5}),
+        (3, DEF, 50, {5: 4.2, 6: 4.2}),
+        (4, DEF, 50, {5: 4.1, 6: 4.1}),
+        (5, DEF, 50, {5: 4.0, 6: 4.0}),
+        (6, DEF, 50, {5: 0.5, 6: 0.5}),
+        (7, DEF, 50, {5: 0.5, 6: 0.5}),
+        (8, MID, 120, {5: 0.0, 6: 0.0}),
+        (9, MID, 40, {5: 6.0, 6: 6.0}),
+        (10, MID, 40, {5: 5.0, 6: 5.0}),
+        (11, MID, 40, {5: 3.5, 6: 3.5}),
+        (12, MID, 40, {5: 3.0, 6: 3.0}),
+        (13, FWD, 50, {5: 3.9, 6: 3.9}),
+        (14, FWD, 50, {5: 3.8, 6: 3.8}),
+        (15, FWD, 50, {5: 3.7, 6: 3.7}),
+        (16, MID, 45, {5: 6.5, 6: 6.5}),
+        (17, MID, 115, {5: 0.0, 6: 12.0}),
+    ]
+    players, projections = _build(rows)
+    true_sales = {pid: players[pid].now_cost for pid in SQUAD}
+    true_sales[8] = 100
+
+    at_market, market_path = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[5, 6],
+        decay=DECAY,
+    )
+    plan, path = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[5, 6],
+        decay=DECAY, selling_prices=true_sales,
+    )
+
+    # The market-priced plan reaches 17 on money that does not exist.
+    assert market_path.moves == [
+        PlannedMove(event=6, transfers_in=[17], transfers_out=[12], hits=0)
+    ]
+    # The truly-priced one still sheds the dead 120 for 16, and stops there.
+    assert plan.transfers_in == [16]
+    assert plan.transfers_out == [8]
+    assert path.moves == []
+    assert 17 not in set(plan.squad)
+
+
+def test_selling_prices_left_out_are_the_market_prices_to_the_point():
+    # The fallback guarantee: no ledger handed in, or one that says every
+    # price is where it was, is the pre-ledger model exactly.
+    players, projections = spine([5, 6, 7])
+    at_par = {pid: players[pid].now_cost for pid in SQUAD}
+
+    default = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[5, 6, 7],
+        decay=DECAY,
+    )
+    par = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[5, 6, 7],
+        decay=DECAY, selling_prices=at_par,
+    )
+
+    assert par[0].squad == default[0].squad
+    assert par[0].objective == default[0].objective
+
+
+def test_the_free_hit_budget_is_the_bank_plus_what_the_squad_sells_for():
+    # Everyone on the board costs 50, so any fifteen costs 750 — exactly what
+    # the squad raises at market prices, and 75 more than the 675 it raises
+    # once every man truly sells at 45. The free-hit week the market budget
+    # can field, the true budget cannot, and the pricing helper says None
+    # rather than pricing a team the app would refuse to build.
+    players, projections = spine_with_heroes([5], spike_event=5, hero_value=8.0)
+    fallen = {pid: 45 for pid in SQUAD}
+
+    at_market = _free_hit_prices(players, projections, SQUAD, 0, [5], None)
+    priced = _free_hit_prices(
+        players, projections, SQUAD, 0, [5], None, selling_prices=fallen
+    )
+
+    assert at_market is not None
+    assert at_market[1][0] == pytest.approx(99.2, abs=1e-4)
+    assert priced is None

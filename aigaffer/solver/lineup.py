@@ -165,18 +165,33 @@ def chip_evs(
     xp: dict[int, PlayerProjection],
     bank: int,
     next_event: int,
+    selling_prices: dict[int, int] | None = None,
 ) -> ChipEvs:
     """What each chip would add to ``current_plan``, next gameweek.
 
     A rebuild the solver cannot answer — no legal squad within the budget —
     is worth 0.0 rather than the difference against nothing, which would read
     as a chip that loses us the season.
+
+    ``selling_prices`` is the purchase ledger's answer for the squad the
+    chips would be played against, and it goes to both rebuild boards: a
+    wildcard and a free hit spend the bank plus what the fifteen actually
+    sell for, not their listed value, and a chip priced on paper money would
+    flatter itself by exactly the profit the game keeps.
     """
     fielded = sum(gw_xp.get(pid, 0.0) for pid in lineup.xi)
     free_hit = optimize(
-        players, _single_gw(xp, next_event), current_plan.squad, bank, CHIP_TRANSFERS
+        players,
+        _single_gw(xp, next_event),
+        current_plan.squad,
+        bank,
+        CHIP_TRANSFERS,
+        selling_prices=selling_prices,
     )
-    wildcard = optimize(players, xp, current_plan.squad, bank, CHIP_TRANSFERS)
+    wildcard = optimize(
+        players, xp, current_plan.squad, bank, CHIP_TRANSFERS,
+        selling_prices=selling_prices,
+    )
 
     return ChipEvs(
         bench_boost=sum(gw_xp.get(pid, 0.0) for pid in lineup.bench),

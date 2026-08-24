@@ -149,10 +149,18 @@ next, and a path printed under "the road ahead" saying so is noise wearing the
 clothes of advice. So every buy in the window is charged
 :data:`CHURN_EPSILON`; see there for why it can never change a decision.
 
-Two approximations from the single-week model are inherited unchanged and are
-worse here than there, because they are compounded over the window: selling
-price is the current price, and prices do not move. Both are documented
-simplifications, not oversights.
+One approximation from the single-week model is inherited unchanged and is
+worse here than there, because it is compounded over the window: prices do
+not move. Selling prices are real where the caller has them: the squad the
+window starts with sells at the purchase ledger's figures
+(``selling_prices``), and a player bought inside the window later sells at
+his ``now_cost`` — which, under frozen prices, is exactly what he was bought
+for, so pricing his resale at ``now_cost`` is the game's own rule and not an
+accident. The one residual bias is a starting-squad player sold and later
+re-bought inside the window: his second sale is still credited at the
+ledger's price when the game would pay his (never lower) re-purchase price
+back, so the window can only under-count that corner, never promise money it
+does not have.
 """
 
 from dataclasses import dataclass
@@ -359,6 +367,7 @@ def optimize_path(
     time_limit: int | None = None,
     available_chips: frozenset[str] = frozenset(),
     freehit_prices: dict[int, tuple[float, list[int], list[int]]] | None = None,
+    selling_prices: dict[int, int] | None = None,
 ) -> tuple[Plan, PlannedPath] | None:
     """The best sequence of squads over ``events``, or None.
 
@@ -413,6 +422,14 @@ def optimize_path(
     when :data:`FREE_HIT` is in ``available_chips``, and is the week-index →
     ``(value, fifteen, eleven)`` mapping :func:`_free_hit_prices` returns.
 
+    ``selling_prices`` is what each of ``current_squad``'s sales would
+    actually raise, from the purchase ledger; a squad member absent from it
+    sells at his ``now_cost``, the pre-ledger behaviour. It prices the sale
+    side of the cash carry and the free-hit budget, and nothing else: buys
+    are always at ``now_cost``, and so are the later resales of players
+    bought inside the window — see the module docstring for why that is the
+    game's rule under frozen prices rather than a leftover.
+
     None means no answer, not an error: an infeasible board, a
     ``forced_first_transfers`` the pool or the budget cannot support, or a
     solve that ran out of ``time_limit`` seconds — a minute by default — with
@@ -432,6 +449,16 @@ def optimize_path(
         (p, w): _projected(projections, p, events[w - 1]) for p in pool for w in weeks
     }
     owned = {p: 1 if p in current else 0 for p in pool}
+    # What a sale of each man credits the bank. The starting squad sells at the
+    # ledger's prices; everyone else can only be in the squad because the
+    # window bought him at now_cost, which is what his later sale pays back.
+    sale = selling_prices or {}
+    proceeds = {
+        p: sale.get(p, players[p].now_cost)
+        if p in current
+        else players[p].now_cost
+        for p in pool
+    }
 
     by_position = _grouped(pool, lambda p: players[p].element_type)
     by_club = _grouped(pool, lambda p: players[p].team)
@@ -456,7 +483,8 @@ def optimize_path(
         # is a free-hit week the budget cannot field, which is no window at all.
         if freehit_prices is None:
             freehit_prices = _free_hit_prices(
-                players, projections, current_squad, bank, events, time_limit
+                players, projections, current_squad, bank, events, time_limit,
+                selling_prices=selling_prices,
             )
         if freehit_prices is None:
             return None
@@ -651,7 +679,7 @@ def optimize_path(
             problem += sell[w][p] <= held[p]
 
         problem += cash[w] == (bank if w == 1 else cash[w - 1]) + pulp.lpSum(
-            players[p].now_cost * (sell[w][p] - buy[w][p]) for p in pool
+            proceeds[p] * sell[w][p] - players[p].now_cost * buy[w][p] for p in pool
         )
 
         # The hit pin, wildcarded. On an ordinary gameweek both rows below read
@@ -900,6 +928,7 @@ def _free_hit_prices(
     bank: int,
     events: list[int],
     time_limit: int | None,
+    selling_prices: dict[int, int] | None = None,
 ) -> dict[int, tuple[float, list[int], list[int]]] | None:
     """Every window gameweek's free-hit price — value, fifteen and eleven.
 
@@ -928,7 +957,11 @@ def _free_hit_prices(
     current = {pid for pid in current_squad if pid in players}
     by_position = _grouped(pool, lambda p: players[p].element_type)
     by_club = _grouped(pool, lambda p: players[p].team)
-    budget = bank + sum(players[p].now_cost for p in current)
+    # The budget a free hit really grants: the bank plus what the squad would
+    # actually sell for — the ledger's prices where the caller has them, the
+    # listed price where it does not. A riser's paper value is not money.
+    sale = selling_prices or {}
+    budget = bank + sum(sale.get(p, players[p].now_cost) for p in current)
     # One command wrapper for the lot: it keeps no per-problem state, so pricing
     # every week through the same object is the same solve run several times.
     solver = _solver(time_limit)

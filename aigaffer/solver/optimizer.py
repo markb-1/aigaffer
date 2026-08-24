@@ -11,9 +11,13 @@ Two decisions are deliberately blunt:
 * Bench players earn ``BENCH_WEIGHT`` of their projection. They only score
   when someone ahead of them fails to play, but a squad that values them at
   nothing drifts towards eleven stars and four unplayable cast-offs.
-* Selling price is taken as the current price. Phase 1 does not track what we
-  paid, so a player who has risen is valued a shade high — an approximation,
-  not an oversight.
+* Selling price is whatever the caller has observed. ``selling_prices``
+  carries the purchase ledger's answer (:mod:`aigaffer.ledger`) for the
+  players we hold — FPL pays purchase plus half a rise, rounded down, never
+  the listed price — and a player it does not cover falls back to
+  ``now_cost``, which is Phase 1's approximation and is still exact for a
+  price that has not risen. Buys are always at ``now_cost``: that is what
+  the market charges.
 
 Left to itself the model will make at most ``MAX_TRANSFERS`` moves and pay for
 at most ``MAX_HITS`` of them. Past three moves a manager is wildcarding rather
@@ -137,6 +141,7 @@ def optimize(
     bank: int,
     free_transfers: int,
     forced_transfers: int | None = None,
+    selling_prices: dict[int, int] | None = None,
 ) -> Plan | None:
     """Best squad and XI reachable from ``current_squad``, or None.
 
@@ -144,11 +149,29 @@ def optimize(
     exists — usually a forced transfer count the budget, the pool or
     :data:`MAX_HITS` cannot support — which is an answer, not an error: the
     caller asks for several transfer counts and keeps the ones that came back.
+
+    ``selling_prices`` is what each squad member's sale would actually raise,
+    from the purchase ledger; a squad member absent from it — a caller that
+    has no ledger, a row maintenance somehow never wrote — sells at his
+    ``now_cost``, which is the pre-ledger behaviour and never worse than a
+    guess. The game's money rule is ``spent on buys <= bank + raised by
+    sales``, and it is written below as one row by valuing every squad slot
+    at what its player is worth *to us*: a bought player at the ``now_cost``
+    the market charges, a kept player at his selling price — which appears on
+    both sides of the inequality and cancels, so holding a riser at a paper
+    loss costs nothing, exactly as it does in the app.
     """
     pool = candidate_pool(players, xp, current_squad)
     current = {pid for pid in current_squad if pid in players}
     points = {pid: projected_points(xp, pid) for pid in pool}
-    budget = bank + sum(players[pid].now_cost for pid in current)
+    sale = selling_prices or {}
+    value = {
+        pid: sale.get(pid, players[pid].now_cost)
+        if pid in current
+        else players[pid].now_cost
+        for pid in pool
+    }
+    budget = bank + sum(value[pid] for pid in current)
 
     problem = pulp.LpProblem("aigaffer_transfers", pulp.LpMaximize)
     squad = problem.add_variable_dicts("squad", pool, cat=pulp.LpBinary)
@@ -170,7 +193,7 @@ def optimize(
         problem += pulp.lpSum(squad[p] for p in by_position[position]) == quota
     for club_mates in by_club.values():
         problem += pulp.lpSum(squad[p] for p in club_mates) <= MAX_PER_CLUB
-    problem += pulp.lpSum(players[p].now_cost * squad[p] for p in pool) <= budget
+    problem += pulp.lpSum(value[p] * squad[p] for p in pool) <= budget
 
     problem += pulp.lpSum(starting.values()) == XI_SIZE
     for p in pool:

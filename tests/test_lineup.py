@@ -116,7 +116,8 @@ def stub_optimize(
     calls: list[dict] = []
 
     def fake_optimize(
-        players, xp, current_squad, bank, free_transfers, forced_transfers=None
+        players, xp, current_squad, bank, free_transfers, forced_transfers=None,
+        selling_prices=None,
     ):
         calls.append(
             {
@@ -126,6 +127,7 @@ def stub_optimize(
                 "bank": bank,
                 "free_transfers": free_transfers,
                 "forced_transfers": forced_transfers,
+                "selling_prices": selling_prices,
             }
         )
         return wildcard if xp is XP else free_hit
@@ -345,6 +347,23 @@ def test_both_chips_rebuild_the_squad_with_fifteen_free_transfers(monkeypatch):
     assert all(call["bank"] == 25 for call in calls)
     assert all(call["free_transfers"] == 15 for call in calls)
     assert all(call["forced_transfers"] is None for call in calls)
+
+
+def test_both_rebuild_boards_sell_at_the_ledgers_prices(monkeypatch):
+    # A wildcard and a free hit spend the bank plus what the fifteen actually
+    # sell for, so the ledger's dict reaches both boards untouched — priced on
+    # listed values instead, either chip would flatter itself by exactly the
+    # profit the game keeps on a riser.
+    sales = {pid: 45 for pid in SQUAD}
+    calls = stub_optimize(monkeypatch, canned(90.0), canned(100.0))
+
+    chip_evs(
+        CURRENT_PLAN, LINEUP, GW_XP, PLAYERS, XP, bank=25, next_event=NEXT_EVENT,
+        selling_prices=sales,
+    )
+
+    assert len(calls) == 2
+    assert all(call["selling_prices"] is sales for call in calls)
 
 
 def test_a_chip_the_solver_cannot_answer_is_worth_nothing(monkeypatch):

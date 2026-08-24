@@ -48,7 +48,8 @@ def stub_optimize(monkeypatch, answers: dict[int, Plan | None]) -> list[dict]:
     calls: list[dict] = []
 
     def fake_optimize(
-        players, xp, current_squad, bank, free_transfers, forced_transfers=None
+        players, xp, current_squad, bank, free_transfers, forced_transfers=None,
+        selling_prices=None,
     ):
         calls.append(
             {
@@ -58,6 +59,7 @@ def stub_optimize(monkeypatch, answers: dict[int, Plan | None]) -> list[dict]:
                 "bank": bank,
                 "free_transfers": free_transfers,
                 "forced_transfers": forced_transfers,
+                "selling_prices": selling_prices,
             }
         )
         return answers[forced_transfers]
@@ -108,6 +110,7 @@ def stub_optimize_path(monkeypatch, answers: dict[int, Plan | None]) -> list[dic
         time_limit=None,
         available_chips=frozenset(),
         freehit_prices=None,
+        selling_prices=None,
     ):
         calls.append(
             {
@@ -122,6 +125,7 @@ def stub_optimize_path(monkeypatch, answers: dict[int, Plan | None]) -> list[dic
                 "time_limit": time_limit,
                 "available_chips": available_chips,
                 "freehit_prices": freehit_prices,
+                "selling_prices": selling_prices,
             }
         )
         plan = answers[forced_first_transfers]
@@ -141,7 +145,9 @@ def stub_free_hit_prices(monkeypatch, value) -> list[dict]:
     """
     calls: list[dict] = []
 
-    def fake_free_hit_prices(players, xp, current_squad, bank, events, time_limit):
+    def fake_free_hit_prices(
+        players, xp, current_squad, bank, events, time_limit, selling_prices=None
+    ):
         calls.append(
             {
                 "players": players,
@@ -150,6 +156,7 @@ def stub_free_hit_prices(monkeypatch, value) -> list[dict]:
                 "bank": bank,
                 "events": events,
                 "time_limit": time_limit,
+                "selling_prices": selling_prices,
             }
         )
         return value
@@ -278,6 +285,33 @@ def test_the_available_chips_ride_through_to_every_windowed_solve(monkeypatch):
     )
 
     assert [call["available_chips"] for call in calls] == [chips] * 4
+
+
+def test_the_selling_prices_ride_through_to_every_solve(monkeypatch):
+    # The ledger's prices are derived in one place and only carried here: the
+    # same dict reaches every windowed solve, the hoisted free-hit pricing,
+    # and — asked separately below — the single-week fallback, so no engine is
+    # ever spending money another engine was refused.
+    sales = {1: 45, 2: 51}
+    windowed = stub_optimize_path(monkeypatch, windows(range(4)))
+    priced = stub_free_hit_prices(monkeypatch, {1: (0.0, [], [])})
+
+    generate_plans(
+        PLAYERS, XP, SQUAD, bank=0, free_transfers=1,
+        projections_events=EVENTS, available_chips=frozenset({"free_hit"}),
+        selling_prices=sales,
+    )
+
+    assert [call["selling_prices"] for call in priced] == [sales]
+    assert [call["selling_prices"] for call in windowed] == [sales] * 4
+
+    single = stub_optimize(monkeypatch, {n: canned(n, 100.0 + n) for n in range(4)})
+    generate_plans(
+        PLAYERS, XP, SQUAD, bank=0, free_transfers=1, planner="single",
+        selling_prices=sales,
+    )
+
+    assert [call["selling_prices"] for call in single] == [sales] * 4
 
 
 def test_the_free_hit_price_is_computed_once_and_rides_the_whole_sweep(monkeypatch):
