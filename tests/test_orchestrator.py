@@ -1847,12 +1847,15 @@ def test_the_report_the_gaffer_wrote_is_the_one_that_is_sent(monkeypatch, tmp_pa
 # --- the reminder ----------------------------------------------------------
 #
 # Three hours out the schedule runs the solver again — never the manager — and
-# sends a short alert: the action block, and whether it still matches the plan
-# the full report decided a day before. The stored side of that comparison is
-# the decision record the deadline run already keeps in the store; the fresh
-# side is computed here. The diff between them is machine-readable and decided
-# in one place, so the record and the message cannot disagree about whether
-# the plan moved.
+# sends a short alert: the operative plan, and whether the news has moved
+# under it. Whether to shout is diffed like against like — the solver's own
+# pre-manager plan, which the deadline record keeps under ``solver_actions``,
+# against the fresh solver-only solve — because diffing the gaffer's verdict
+# against a fresh solver would shout on every week he overrode the solver,
+# which is settled at T-24h and is not news. What the alert shows is still
+# the gaffer's verdict. The diff is machine-readable and decided in one
+# place, so the record and the message cannot disagree about whether the
+# news moved.
 
 NAMES = {element["id"]: element["web_name"] for element in PIPELINE_ELEMENTS_JSON}
 
@@ -1875,10 +1878,24 @@ def test_identical_actions_have_no_diff():
     assert diff_actions(plan_shape(), plan_shape()) == {}
 
 
-def test_a_changed_transfer_is_an_add_and_a_drop():
+def test_a_changed_buy_is_a_buy_change_and_only_a_buy_change():
+    # The sale is the same player either way; only the signing moved. Read as
+    # positional pairs this was two dropped and two added moves, each naming
+    # a sale that never changed.
     diff = diff_actions(plan_shape(), plan_shape(transfers=[[7, 19]]))
 
-    assert diff == {"transfers_added": [[7, 19]], "transfers_dropped": [[7, 18]]}
+    assert diff == {"buys_added": [19], "buys_dropped": [18]}
+
+
+def test_a_replaced_sale_never_implicates_the_unchanged_moves():
+    # The reviewer's example: two sorted lists zipped into pairs re-pair
+    # everything after the change, so one replaced sale (9 for 4) used to
+    # read as two swaps dropped and two added. As sets it is exactly what
+    # happened: one sale in, one sale out, the buys untouched.
+    stored = plan_shape(transfers=[[5, 18], [9, 20]])
+    fresh = plan_shape(transfers=[[4, 18], [5, 20]])
+
+    assert diff_actions(stored, fresh) == {"sells_added": [4], "sells_dropped": [9]}
 
 
 def test_a_moved_armband_and_a_changed_chip_are_each_named():
@@ -1922,8 +1939,11 @@ def test_a_stored_decision_becomes_the_actions_the_diff_reads():
 
 def test_the_full_report_records_the_actions_for_the_reminder(tmp_path):
     # The persistence half of the round trip: the deadline run's decision
-    # record, already in the store, carries everything the reminder diffs —
-    # the swaps, the armbands, the chip and now the formation.
+    # record, already in the store, carries everything the reminder reads —
+    # the verdict's swaps, armbands, chip and formation, and the solver's own
+    # pre-manager plan whole under ``solver_actions``, which is the side the
+    # reminder actually diffs. On a week with no manager the two describe the
+    # same plan, and that is the invariant pinned here.
     cfg = Config(team_id=TEAM_ID, state_dir=tmp_path)
     store = Store(tmp_path / "aigaffer.db")
 
@@ -1939,6 +1959,7 @@ def test_the_full_report_records_the_actions_for_the_reminder(tmp_path):
     assert stored["captain"] == record["captain"] == FERRER
     assert stored["chip"] == "none"
     assert stored["formation"] == record["formation"]
+    assert record["solver_actions"] == stored, "no manager: his verdict is the solver's"
 
 
 def test_a_plan_that_held_reads_as_a_calm_reminder(tmp_path):
@@ -1957,10 +1978,39 @@ def test_a_plan_that_held_reads_as_a_calm_reminder(tmp_path):
     assert "## Candidate plans" not in alert and "## Watchlist" not in alert
 
 
-def test_a_plan_that_moved_is_shouted_about(tmp_path):
-    # The stored verdict is doctored so the fresh solve disagrees with it on
-    # every axis the diff reads: the warning leads, each change is named, and
-    # both weeks are shown — the gaffer's verdict is never silently replaced.
+def test_the_gaffer_deviating_from_the_solver_is_not_news(monkeypatch, tmp_path):
+    # At T-24h the manager overrode the solver: he rolled the transfer the
+    # solver wanted and moved the armband. The T-3h solve re-derives roughly
+    # the solver's own answer, so a diff of verdict-against-fresh-solver
+    # would shout every week he ever deviates — crying wolf about a
+    # disagreement that was settled a day ago. The news has not moved, so the
+    # reminder is calm, and the plan it shows is his verdict, not the
+    # solver's rediscovered one.
+    _, store, gaffer = gaffer_run(monkeypatch, tmp_path, mode="deadline", send=False)
+    his = gaffer.decisions[0]
+    assert gaffer.consults[0].solve0.choice.transfers_in, "the solver would have moved"
+
+    alert = run_pipeline(
+        gaffer_cfg(tmp_path),
+        make_client(pipeline_routes()),
+        store,
+        "reminder",
+        send=False,
+    )
+
+    assert render.REMINDER_UNCHANGED in alert
+    assert "⚠️" not in alert
+    assert "No transfers — roll." in alert, "his roll, not the solver's swap"
+    assert f"CAPTAIN {NAMES[his.captain]}" in alert
+    assert store.decision(2, "reminder")["changes"] == {}
+
+
+def test_the_news_moving_the_solver_is_shouted_about(tmp_path):
+    # The record's ``solver_actions`` — the solver's own day-old plan — is
+    # doctored so the fresh solve disagrees with it on every axis the diff
+    # reads: the warning leads and each change is named. The gaffer's fields
+    # are left alone, so the verdict block shows his stored plan, labelled as
+    # the operative one, beside the fresh solve — shown, never replaced.
     cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
     store = Store(cfg.state_dir / "aigaffer.db")
     client = make_client(pipeline_routes())
@@ -1968,21 +2018,23 @@ def test_a_plan_that_moved_is_shouted_about(tmp_path):
     record = store.decision(2, "deadline")
     doctored = dict(
         record,
-        transfers_in=[],
-        transfers_out=[],
-        captain=record["vice"],
-        vice=record["captain"],
-        chip="bench_boost",
+        solver_actions=dict(
+            record["solver_actions"],
+            transfers=[],
+            captain=record["vice"],
+            vice=record["captain"],
+            chip="bench_boost",
+        ),
     )
-    store.save_run(2, "deadline", "the doctored verdict", doctored)
+    store.save_run(2, "deadline", "the doctored yardstick", doctored)
 
     alert = run_pipeline(cfg, client, store, "reminder", send=False)
 
-    assert render.PLAN_CHANGED in alert
+    assert render.NEWS_MOVED in alert
     assert alert.index("⚠️") < alert.index("⏰"), "the warning leads"
     out, bought = record["transfers_out"][0], record["transfers_in"][0]
-    assert f"- Transfer added: SELL {NAMES[out]}" in alert
-    assert f"→ BUY {NAMES[bought]}" in alert
+    assert f"- Now selling: {NAMES[out]}" in alert
+    assert f"- Now buying: {NAMES[bought]}" in alert
     assert (
         f"- Captain moved from {NAMES[record['vice']]}"
         f" to {NAMES[record['captain']]}" in alert
@@ -1990,10 +2042,44 @@ def test_a_plan_that_moved_is_shouted_about(tmp_path):
     assert "- Chip changed from bench boost to none" in alert
     assert render.GAFFER_VERDICT in alert and render.FRESH_SOLVE in alert
     assert alert.index(render.GAFFER_VERDICT) < alert.index(render.FRESH_SOLVE)
+    # The verdict block still carries the gaffer's own stored moves.
+    verdict = alert[alert.index(render.GAFFER_VERDICT):alert.index(render.FRESH_SOLVE)]
+    assert f"SELL {NAMES[out]}" in verdict
+    assert render.HUMAN_JUDGES in alert
     # And the record of the reminder keeps the same diff, machine-readably.
     changes = store.decision(2, "reminder")["changes"]
+    assert changes["sells_added"] == [out] and changes["buys_added"] == [bought]
     assert changes["captain"] == [record["vice"], record["captain"]]
     assert changes["chip"] == ["bench_boost", "none"]
+
+
+def test_a_record_from_before_solver_actions_were_kept_stays_calm(tmp_path):
+    # A deadline record written before this branch has no ``solver_actions``:
+    # there is no solver-then to hold the fresh solve against, and unknowable
+    # is not changed — the same rule the diff applies to a record from before
+    # formations were kept. The verdict here is doctored to disagree with the
+    # fresh solve on every axis, which is exactly the shape an old record of
+    # a manager-overridden week has, and it must not shout.
+    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
+    store = Store(cfg.state_dir / "aigaffer.db")
+    client = make_client(pipeline_routes())
+    run_pipeline(cfg, client, store, "deadline", send=False)
+    record = store.decision(2, "deadline")
+    legacy = dict(
+        record,
+        transfers_in=[],
+        transfers_out=[],
+        captain=record["vice"],
+        vice=record["captain"],
+    )
+    del legacy["solver_actions"]
+    store.save_run(2, "deadline", "a verdict from before this branch", legacy)
+
+    alert = run_pipeline(cfg, client, store, "reminder", send=False)
+
+    assert render.REMINDER_UNCHANGED in alert
+    assert "⚠️" not in alert
+    assert store.decision(2, "reminder")["full_report_solver_plan"] is None
 
 
 def test_a_reminder_with_no_full_report_behind_it_says_so(tmp_path):
@@ -2069,6 +2155,49 @@ def test_the_reminder_goes_to_telegram_and_only_telegram(monkeypatch, tmp_path):
 
     assert sent == [(TOKEN, "42", alert)]
     assert list(tmp_path.glob("GW*.md")) == []
+
+
+def test_a_reminder_that_never_buzzed_is_not_marked_done(
+    monkeypatch, capsys, tmp_path
+):
+    # The reminder's entire value is the buzz, so it delivers before it saves
+    # — the reverse of the full report, whose diary copy is worth keeping on
+    # its own. A send that fails leaves nothing behind, not the store row and
+    # not the history file, so the next tick inside the window tries again;
+    # the risk taken in exchange is one duplicate buzz if a send lands and
+    # the save then dies, which is the cheaper failure.
+    def explode(*args):
+        raise httpx.ConnectError(f"connecting to /bot{TOKEN}/sendMessage failed")
+
+    monkeypatch.setattr(orchestrator, "send_report", explode)
+    cfg = Config(
+        team_id=TEAM_ID,
+        telegram_token=TOKEN,
+        telegram_chat_id="42",
+        state_dir=tmp_path / "state",
+    )
+    store = Store(cfg.state_dir / "aigaffer.db")
+    client = make_client(pipeline_routes())
+
+    run_pipeline(cfg, client, store, "reminder")
+
+    printed = capsys.readouterr().out
+    assert printed.strip() == "telegram send failed: ConnectError"
+    assert TOKEN not in printed
+    assert store.has_run(2, "reminder") is False, "the next tick retries"
+    assert not (cfg.state_dir / "reports" / "gw2-reminder.md").exists()
+
+    # The next tick: the phone is reachable again, and the retry completes
+    # the reminder exactly once.
+    sent = []
+    monkeypatch.setattr(orchestrator, "send_report", lambda *args: sent.append(args))
+    alert = run_pipeline(cfg, client, store, "reminder")
+
+    assert sent == [(TOKEN, "42", alert)]
+    assert store.has_run(2, "reminder") is True
+    assert (cfg.state_dir / "reports" / "gw2-reminder.md").read_text(
+        encoding="utf-8"
+    ) == alert
 
 
 # --- whose history to fetch ------------------------------------------------
@@ -2239,6 +2368,28 @@ def test_auto_runs_the_reminder_in_the_final_hours(monkeypatch, store):
     assert cli.main(["auto"]) == 0
     assert store.has_run(2, "reminder") is True
     assert store.has_run(2, "deadline") is False
+
+
+def test_a_deadline_tick_that_died_is_retried_by_the_next(monkeypatch, capsys, store):
+    # The insurance the 1.5-hour window is designed around: three ticks land
+    # inside it, so a run that dies on the first must leave has_run false —
+    # nothing half-saved — for the second to try again, and the second must
+    # not then produce a duplicate of anything.
+    serve(
+        monkeypatch,
+        pipeline_routes(bootstrap=bootstrap_due_in(23)),
+        statuses={"/api/fixtures/": 500},
+    )
+
+    assert cli.main(["auto"]) == 1
+    assert store.has_run(2, "deadline") is False
+    assert "the deadline run failed" in capsys.readouterr().out
+
+    serve(monkeypatch, pipeline_routes(bootstrap=bootstrap_due_in(23)))
+
+    assert cli.main(["auto"]) == 0
+    assert store.has_run(2, "deadline") is True
+    assert len(store.last_runs()) == 1, "one record: the tick that succeeded"
 
 
 def test_a_reminder_already_sent_is_not_sent_twice(monkeypatch, capsys, store):

@@ -386,13 +386,18 @@ each deadline produce something:
 | 22.5–24 hours out | `deadline` | the full verdict, with an evening left to act on it |
 | 1.5–3 hours out | `reminder` | a short alert: the moves, and whether the plan survived the team news |
 
-The reminder is the solver alone — the manager is never woken for it — and it
-diffs its fresh solve against the plan the full report recorded. If they
-agree it is one calm block; if they differ it leads with a ⚠️ section naming
-each change and shows both plans, the gaffer's verdict first, because the
-fresh solve is information and not an overruling. It goes to Telegram and
-`state/reports/` only, never to the root `GW{n}.md`, which stays the
-polished verdict.
+The reminder is the solver alone — the manager is never woken for it — and
+its ⚠️ means the *news* moved, not that the manager isn't a solver: it diffs
+its fresh solve against the solver's own pre-manager plan, which the full
+report records alongside the verdict, so a week where the gaffer overrode the
+solver stays calm unless the team news actually changed the solver's answer.
+Calm is one block: the gaffer's verdict, the operative plan. Moved news leads
+with a ⚠️ section naming each change — sells and buys as separate lines, the
+way the app takes them — and shows both plans, the gaffer's verdict first,
+because the fresh solve is information and not an overruling. It goes to
+Telegram and `state/reports/` only, never to the root `GW{n}.md`, which stays
+the polished verdict — and unlike the full report it delivers before it
+saves, so a failed buzz is retried by the next tick rather than marked done.
 
 Each gameweek gets one of each: the SQLite store remembers, so a second tick
 inside a window is a no-op. A failed run says so on stdout and sends one line

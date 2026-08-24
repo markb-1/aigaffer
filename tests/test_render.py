@@ -49,8 +49,8 @@ from aigaffer.report.render import (
     FRESH_SOLVE,
     GAFFER_VERDICT,
     HUMAN_JUDGES,
+    NEWS_MOVED,
     NO_FULL_REPORT,
-    PLAN_CHANGED,
     REMINDER_UNCHANGED,
     render_reminder,
     render_report,
@@ -1015,10 +1015,12 @@ def test_the_watchlist_is_the_five_best_players_the_plan_leaves_behind():
 #
 # The short alert three hours out. It is rendered from actions dicts — the
 # machine shape the orchestrator persists for the full report and computes
-# fresh for the reminder — and from the diff between them, which the
-# orchestrator also computes. What is tested here is the saying, not the
-# deciding: the block reads like the "Do this" checklist, the warning leads
-# when there is one, and the message never grows the full report's sections.
+# fresh for the reminder — and from ``changes``, which the orchestrator
+# computes between the solver's stored pre-manager plan and the fresh solve
+# (never between the two dicts on show: the gaffer overriding the solver is
+# settled, not news). What is tested here is the saying, not the deciding:
+# the calm block shows the gaffer's verdict, the warning leads when there is
+# one, and the message never grows the full report's sections.
 
 
 def actions(**overrides) -> dict:
@@ -1057,36 +1059,44 @@ def test_the_reminder_is_the_checklist_and_nothing_else():
         assert f"## {heading}" not in alert
 
 
-def test_a_plan_that_held_is_a_calm_reminder():
-    alert = reminder(stored=actions())
+def test_a_calm_reminder_shows_the_gaffers_verdict():
+    # The stored verdict rolls with Moss's armband; the fresh solve wants the
+    # Gale-for-Reid swap and Hume. Empty changes means the news never moved,
+    # so the one block shown is the verdict — the operative plan — and the
+    # fresh solve, which only disagrees because the gaffer overrode it a day
+    # ago, is not put back on the table.
+    alert = reminder(stored=actions(transfers=[], captain=13, vice=8))
 
     assert REMINDER_UNCHANGED in alert
     assert "⚠️" not in alert
     assert alert.count("⏰") == 1, "one block; nothing to compare side by side"
+    assert "No transfers — roll." in alert
+    assert "CAPTAIN Moss · VICE Hume" in alert
+    assert "BUY Reid" not in alert, "the fresh solve is not shown on a calm week"
 
 
 def test_a_changed_plan_leads_with_the_warning_and_shows_both():
     stored = actions(transfers=[[6, 16]], captain=13, chip="bench_boost")
     changes = {
-        "transfers_added": [[7, 18]],
-        "transfers_dropped": [[6, 16]],
+        "sells_added": [7],
+        "sells_dropped": [6],
+        "buys_added": [18],
+        "buys_dropped": [16],
         "captain": [13, 8],
         "chip": ["bench_boost", "none"],
     }
 
     alert = reminder(stored=stored, changes=changes)
 
-    assert PLAN_CHANGED in alert
+    assert NEWS_MOVED in alert
     # The warning leads: it comes before either action block.
     assert alert.index("⚠️") < alert.index("⏰")
-    assert (
-        "- Transfer added: SELL Gale (DEF CRV £4.0m) → BUY Reid (FWD CRV £9.5m)"
-        in alert
-    )
-    assert (
-        "- Transfer dropped: SELL Fenn (DEF BRW £4.5m) → BUY Pike (MID ASH £8.0m)"
-        in alert
-    )
+    # Sells and buys change on their own lines — the app takes two lists, and
+    # a paired line would claim to know which sale funds which signing.
+    assert "- Now selling: Gale (DEF CRV £4.0m)" in alert
+    assert "- No longer selling: Fenn (DEF BRW £4.5m)" in alert
+    assert "- Now buying: Reid (FWD CRV £9.5m)" in alert
+    assert "- No longer buying: Pike (MID ASH £8.0m)" in alert
     assert "- Captain moved from Moss to Hume" in alert
     assert "- Chip changed from bench boost to none" in alert
     # Both weeks are on show, labelled, the gaffer's first — and the message

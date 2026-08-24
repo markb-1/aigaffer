@@ -134,9 +134,13 @@ ADVISORY = "Advisory — re-planned every run; only this week's moves are ever m
 # The reminder's four fixed sentences. The calm one closes the ordinary
 # reminder; the loud one opens the rare one, and it is deliberately the only
 # line in either document that shouts — a warning that appears every week is a
-# warning nobody reads by October.
-REMINDER_UNCHANGED = "Unchanged since the full report — the plan above stands."
-PLAN_CHANGED = "⚠️ THE PLAN HAS CHANGED since the full report"
+# warning nobody reads by October. Loud means the *news* moved: the shout is
+# earned by the solver disagreeing with its own day-old answer, never by the
+# gaffer having disagreed with the solver, which was settled at T-24h.
+REMINDER_UNCHANGED = (
+    "The news has not moved since the full report — the plan above stands."
+)
+NEWS_MOVED = "⚠️ THE NEWS HAS MOVED since the full report"
 NO_FULL_REPORT = (
     "There was no full report to compare against — the day-before run never"
     " happened. This is the solver's fresh answer, unreviewed."
@@ -151,8 +155,9 @@ HUMAN_JUDGES = (
 )
 
 # The two blocks a changed reminder shows side by side, in this order: the
-# decision that was actually made, then the news that questions it.
-GAFFER_VERDICT = "## The gaffer's verdict (the full report)"
+# decision that was actually made — the operative plan — then the news that
+# questions it.
+GAFFER_VERDICT = "## The gaffer's verdict (the operative plan)"
 FRESH_SOLVE = "## The solver's fresh answer"
 
 
@@ -243,22 +248,28 @@ def render_reminder(
     """The short alert, three hours out. Pure; no I/O.
 
     Not a report: the reminder exists so that the phone buzzes once with the
-    moves to make and whether they are still the moves the full report made a
-    day ago. It is built from **actions dicts** — ``transfers`` as
-    ``[out, in]`` pairs, ``captain``, ``vice``, ``chip``, ``formation`` — the
-    machine shape the orchestrator persists for the full report and computes
-    fresh here, and from ``changes``, the diff the orchestrator made between
-    the two (:func:`aigaffer.orchestrator.diff_actions`). The renderer decides
-    nothing about whether the plan moved; it only says so.
+    operative plan and whether the news has moved under it. It is built from
+    **actions dicts** — ``transfers`` as ``[out, in]`` pairs, ``captain``,
+    ``vice``, ``chip``, ``formation``: ``stored`` is the gaffer's verdict
+    read back from the deadline record, ``fresh`` is this run's solver-only
+    solve — and from ``changes``, the diff the orchestrator made between the
+    *solver's* stored pre-manager plan and that fresh solve
+    (:func:`aigaffer.orchestrator.diff_actions`). The renderer decides
+    nothing about whether the news moved; it only says so — which is why
+    ``changes`` is never derived from the two dicts on show: the verdict and
+    the fresh solve may differ simply because the gaffer overrode the solver
+    a day ago, and that is a settled decision, not news.
 
     Three shapes. ``stored`` is None when the full report never ran, and the
     fresh block goes out with one line admitting there was nothing to check
     it against. An empty ``changes`` over a stored plan is the ordinary
-    reminder: the block and a calm sentence. A non-empty ``changes`` leads
-    with the one loud line either document is allowed, lists what moved, and
-    then shows both weeks labelled — the gaffer's verdict first, because it is
-    the decision that was actually made, and the fresh solve second, because
-    it is information and not an overruling. The reader judges.
+    reminder: the gaffer's verdict — the operative plan, the one a person
+    enters, however far it sits from what a solver alone would do — and a
+    calm sentence. A non-empty ``changes`` leads with the one loud line
+    either document is allowed, lists what the news moved, and then shows
+    both weeks labelled — the gaffer's verdict first, because it is the
+    decision that was actually made, and the fresh solve second, because it
+    is information and not an overruling. The reader judges.
 
     The stored plan is read back from the diary and rendered against today's
     bootstrap, so a player the API has since dropped or renumbered prints as
@@ -272,7 +283,7 @@ def render_reminder(
         sections += [_actions_block("## Do this", event, fresh, players, clubs)]
         sections += [NO_FULL_REPORT]
     elif not changes:
-        sections += [_actions_block("## Do this", event, fresh, players, clubs)]
+        sections += [_actions_block("## Do this", event, stored, players, clubs)]
         sections += [REMINDER_UNCHANGED]
     else:
         sections += [_changed(changes, players, clubs)]
@@ -283,17 +294,24 @@ def render_reminder(
 
 
 def _changed(changes: dict, players: dict[int, Player], clubs: dict[int, str]) -> str:
-    """What moved between the verdict and the fresh solve, a line each.
+    """What the news moved between yesterday's solve and today's, a line each.
 
     The order is the order the moves are entered in: transfers, then the
-    chip, then the armbands, then the shape. ``added`` is what the fresh
-    solve wants and the verdict did not; ``dropped`` the other way about.
+    chip, then the armbands, then the shape. Sells and buys are named on
+    separate lines — two lists is how the FPL app takes them, and a paired
+    line here would claim to know which sale funds which signing, which
+    nothing does. ``Now`` is what the fresh solve wants and yesterday's did
+    not; ``No longer`` the other way about.
     """
-    lines = [PLAN_CHANGED, ""]
-    for out, bought in changes.get("transfers_added", []):
-        lines.append(f"- Transfer added: {_swap(out, bought, players, clubs)}")
-    for out, bought in changes.get("transfers_dropped", []):
-        lines.append(f"- Transfer dropped: {_swap(out, bought, players, clubs)}")
+    lines = [NEWS_MOVED, ""]
+    for key, label in (
+        ("sells_added", "Now selling"),
+        ("sells_dropped", "No longer selling"),
+        ("buys_added", "Now buying"),
+        ("buys_dropped", "No longer buying"),
+    ):
+        for pid in changes.get(key, []):
+            lines.append(f"- {label}: {_tagged(pid, players, clubs)}")
     if "chip" in changes:
         before, after = changes["chip"]
         lines.append(

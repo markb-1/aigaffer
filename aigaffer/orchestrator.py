@@ -359,6 +359,21 @@ def run_pipeline(
     if gaffer is None and cfg.manager_enabled and not solved.draft_mode:
         report += f"\n{MANAGER_UNAVAILABLE}\n"
 
+    # The solver's own answer, before the manager touched it, read the same
+    # way the reminder will read its own solve at T-3h: the week-1 chip off
+    # the path, and on a free-hit week the eleven that chip fields. The
+    # reminder re-runs the solver and only the solver, so the one comparison
+    # that can honestly mean "the news moved" is solver-then against
+    # solver-now; diffed against the gaffer's verdict instead, every week he
+    # overrode the solver would shout at T-3h about a disagreement that was
+    # settled at T-24h. His verdict stays the operative plan everywhere it is
+    # shown — this is only the yardstick the reminder measures the news with.
+    solver_chip = played_chip(solved.choice, None)
+    solver_lineup = _fielded_lineup(
+        solver_chip, solved.choice, solved.lineup, inputs.players, projections,
+        event.id,
+    )
+
     decision = {
         "mode": mode,
         "event": event.id,
@@ -382,6 +397,9 @@ def run_pipeline(
         "chip_evs": asdict(solved.chips),
         "chip_baseline": _baseline_label(solved),
         "engine": _engine(choice),
+        "solver_actions": plan_actions(
+            solved.choice, solver_lineup, solver_chip, inputs.players
+        ),
     }
     # The rest of the window, when there was one: ids and gameweeks, which is
     # what a later run can compare its own plan against. Names would be the
@@ -412,32 +430,55 @@ def run_pipeline(
 def _run_reminder(
     cfg: Config, client: FplClient, store: Store, send: bool, save: bool
 ) -> str:
-    """Three hours out: solve again, diff against the verdict, buzz once.
+    """Three hours out: solve again, diff against yesterday's solve, buzz once.
 
     The full report was decided a day ago, with the manager in the loop; what
     is left to learn between then and the deadline is the team news, and what
     is left to do about it is small. So this run is the solver alone — the
     manager is structurally never consulted here, key or no key, because
     three hours is no time for a twenty-minute conversation and the verdict
-    is already his — and its whole output is a short alert: the action block,
-    and whether it still matches what the full report decided.
+    is already his — and its whole output is a short alert: the operative
+    plan, and whether the news has moved under it.
 
-    The stored side of that comparison is the deadline run's decision record,
-    read back from the store (:meth:`~aigaffer.store.Store.decision`); the
-    fresh side is this run's own solve, reduced to the same actions shape by
-    :func:`plan_actions`. When the two agree the alert is one calm block.
-    When they differ the alert leads with what moved and shows both weeks,
-    labelled — the reminder never enters anything and never pretends the
-    fresh solve overrules the gaffer. When there is no record at all — the
-    T-24h tick was dropped wholesale — the fresh block goes out with a line
-    saying there was nothing to check it against.
+    Whether to shout is decided like against like. The deadline run's
+    decision record, read back from the store
+    (:meth:`~aigaffer.store.Store.decision`), keeps two plans: the gaffer's
+    verdict — the operative one, the plan a person enters — and
+    ``solver_actions``, the solver's own pre-manager answer. The fresh side
+    here is a solver-only solve reduced to the same shape by
+    :func:`plan_actions`, so the only pair whose difference can honestly mean
+    "the news moved" is solver-then against solver-now
+    (:func:`diff_actions`). Diffed against the verdict instead, every week
+    the gaffer overrode the solver — his own captain, adjusted minutes, a
+    chip — would shout at T-3h about a disagreement that was settled at
+    T-24h, and a warning that cries wolf weekly is unread by October. What
+    the alert *shows* keeps its authority unchanged: the gaffer's stored
+    verdict, labelled as the operative plan, with the fresh solve beside it
+    as information — the reminder never enters anything and never pretends
+    the solver overrules him.
 
-    Delivery is Telegram and the diary only. The alert is written to
-    ``state/reports/gw{n}-reminder.md`` and recorded in the store like any
-    run — which is what keeps a 30-minute schedule from sending it three
-    times — but it never touches the root ``GW{n}.md``: that file is the
-    polished verdict, and a checklist overwriting it would demote the one
-    document the homepage shows.
+    A record from before ``solver_actions`` was kept has no solver-then to
+    compare, and unknowable is not changed — the same rule the diff applies
+    to a record from before formations were kept — so the alert stays calm
+    over the verdict. When there is no record at all — the T-24h tick was
+    dropped wholesale — the fresh block goes out with a line saying there
+    was nothing to check it against.
+
+    Delivery comes before the save, which is the reverse of the full report,
+    and on purpose: the reminder's whole value is the buzz. Saved first, a
+    failed send would mark the reminder done and no tick would retry it;
+    sent first, a send that lands and a save that then fails risks one
+    duplicate buzz on the next tick, which is the cheaper failure by a
+    distance. So nothing — not the history file, not the store row — is kept
+    until the message went or there was nowhere to send it. The full report
+    keeps save-first: its diary copy has value of its own, and a duplicate
+    full report is expensive.
+
+    The alert is written to ``state/reports/gw{n}-reminder.md`` and recorded
+    in the store like any run — which is what keeps a 30-minute schedule
+    from sending it three times — but it never touches the root ``GW{n}.md``:
+    that file is the polished verdict, and a checklist overwriting it would
+    demote the one document the homepage shows.
 
     A draft week is the one shape this alert serves badly — fifteen buys are
     not swaps, and the block would say "roll" about a squad that does not
@@ -457,8 +498,12 @@ def _run_reminder(
         chip, solved.choice, solved.lineup, inputs.players, projections, event.id
     )
     fresh = plan_actions(solved.choice, lineup, chip, inputs.players)
-    stored = _stored_actions(store.decision(event.id, DEADLINE_MODE))
-    changes = {} if stored is None else diff_actions(stored, fresh)
+    record = store.decision(event.id, DEADLINE_MODE)
+    stored = _stored_actions(record)
+    # Solver-then, when the record is new enough to carry it. None is a
+    # legacy record, and unknowable is not changed.
+    solver_then = None if record is None else record.get("solver_actions")
+    changes = {} if solver_then is None else diff_actions(solver_then, fresh)
 
     report = render_reminder(event, fresh, stored, changes, inputs.bootstrap)
     decision = {
@@ -466,16 +511,21 @@ def _run_reminder(
         "event": event.id,
         "actions": fresh,
         "full_report_plan": stored,
+        "full_report_solver_plan": solver_then,
         "changes": changes,
     }
+    # Deliver before saving — see the docstring: a buzz that failed must
+    # leave has_run false so the next tick retries, and the history file
+    # goes with the store row so nothing on disk claims a reminder happened
+    # that nobody felt.
+    if send and not _deliver(cfg, report):
+        return report
     if save:
         # Not _write_report: the history file goes, the root verdict stays.
         path = cfg.state_dir / "reports" / f"gw{event.id}-{REMINDER_MODE}.md"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(report, encoding="utf-8")
         store.save_run(event.id, REMINDER_MODE, report, decision)
-    if send:
-        _deliver(cfg, report)
     return report
 
 
@@ -485,10 +535,15 @@ def plan_actions(
     """A decided week reduced to the actions a person enters.
 
     The shape both sides of the reminder's comparison speak: ``transfers`` as
-    ``[out, in]`` pairs the way the app takes them, the armbands, the chip
-    (``"none"`` for most weeks) and the formation. Ids and one string, no
-    names — names are the renderer's job and would age worse than ids do.
-    This is also the shape the reminder's own decision record keeps.
+    ``[out, in]`` pairs for the checklist to print as swap lines, the
+    armbands, the chip (``"none"`` for most weeks) and the formation. The
+    pairing is presentational — both id lists arrive sorted, so which sale
+    lines up with which signing means nothing, and the FPL app takes sells
+    and buys as two separate lists anyway; :func:`diff_actions` reads them as
+    two sets for exactly that reason. Ids and one string, no names — names
+    are the renderer's job and would age worse than ids do. This is also the
+    shape the deadline record keeps under ``solver_actions`` and the
+    reminder's own decision record keeps under ``actions``.
     """
     return {
         "transfers": [
@@ -512,6 +567,15 @@ def _stored_actions(record: dict | None) -> dict | None:
     day ago, and a field this branch added (``formation``) is missing from
     every record before it. :func:`diff_actions` treats a missing field as
     unknowable rather than changed.
+
+    ``chip`` is the one field a missing value maps to ``"none"`` for instead
+    of to unknowable, and the asymmetry is deliberate. A chip-less record
+    predates this branch by whole phases — written before the pipeline
+    recorded chips at all, which is also before it could play one — so
+    "none" is that record's truth, not a guess. A wrong "none" could only
+    ever shout on a chip week against a record that cannot exist in
+    practice, where a missing formation or solver plan belongs to weeks that
+    really were played and decided; those are unknowable, this is known.
     """
     if record is None:
         return None
@@ -530,13 +594,23 @@ def _stored_actions(record: dict | None) -> dict | None:
 
 
 def diff_actions(stored: dict, fresh: dict) -> dict:
-    """What moved between the verdict and the fresh solve, machine-readably.
+    """What moved between yesterday's solve and today's, machine-readably.
 
     Empty when they agree, which is the fact the reminder's tone hangs off.
-    Transfers are compared as unordered pairs — the same swaps in another
-    order are the same plan — and come back split into ``transfers_added``
-    (the fresh solve wants it, the verdict did not) and ``transfers_dropped``
-    (the other way about), each sorted so the record is stable. The scalar
+    The reminder hands this the solver's stored pre-manager plan and its own
+    fresh solve, so a non-empty diff means the news moved the solver off its
+    own day-old answer — never that the gaffer and the solver disagree,
+    which was settled at T-24h and is not news.
+
+    Sells and buys are compared as two independent sets, never as pairs: the
+    ``[out, in]`` pairing in the actions dict is presentational (both lists
+    arrive sorted, so the pairs say nothing about which sale funds which
+    signing), and read as pairs a plan that swapped one sale would come back
+    as two dropped and two added moves naming a sale that never changed.
+    The keys are ``sells_added``/``sells_dropped`` and
+    ``buys_added``/``buys_dropped`` — added is what the fresh solve wants
+    and the stored one did not, dropped the other way about — each a sorted
+    list of player ids, which is also how the FPL app takes them. The scalar
     fields — ``captain``, ``vice``, ``chip``, ``formation`` — come back as
     ``[before, after]`` pairs, and a field that is None on either side is
     skipped: an old record that never kept the formation is a record with
@@ -546,12 +620,13 @@ def diff_actions(stored: dict, fresh: dict) -> dict:
     read this dict, so they cannot disagree about whether the plan moved.
     """
     diff: dict = {}
-    kept = {tuple(pair) for pair in stored["transfers"]}
-    now = {tuple(pair) for pair in fresh["transfers"]}
-    if added := sorted(now - kept):
-        diff["transfers_added"] = [list(pair) for pair in added]
-    if dropped := sorted(kept - now):
-        diff["transfers_dropped"] = [list(pair) for pair in dropped]
+    for side, place in (("sells", 0), ("buys", 1)):
+        then = {pair[place] for pair in stored["transfers"]}
+        now = {pair[place] for pair in fresh["transfers"]}
+        if added := sorted(now - then):
+            diff[f"{side}_added"] = added
+        if dropped := sorted(then - now):
+            diff[f"{side}_dropped"] = dropped
     for field_name in ("captain", "vice", "chip", "formation"):
         before, after = stored.get(field_name), fresh.get(field_name)
         if before is not None and after is not None and before != after:
@@ -860,7 +935,7 @@ def _consult(
     return decision
 
 
-def _within(hours: float, window: tuple[int, int]) -> bool:
+def _within(hours: float, window: tuple[float, float]) -> bool:
     """Is ``hours`` inside ``window``, open at the near end and closed at the
     far one? A deadline that has just gone is not a deadline to report on."""
     low, high = window
@@ -1216,7 +1291,7 @@ def _write_report(cfg: Config, event_id: int, mode: str, report: str) -> None:
     (cfg.state_dir.parent / f"GW{event_id}.md").write_text(report, encoding="utf-8")
 
 
-def _deliver(cfg: Config, report: str) -> None:
+def _deliver(cfg: Config, report: str) -> bool:
     """Send the report on, if there is anywhere to send it.
 
     Half-configured — a token in the secrets and no chat id, or the other way
@@ -1227,11 +1302,20 @@ def _deliver(cfg: Config, report: str) -> None:
     this can raise — which makes the exception text unprintable in a log
     anyone can read. The class name says what went wrong without saying it
     with the token attached, and the run survives either way.
+
+    Returns whether the report is as delivered as it will ever be: True when
+    the message went, and True too when there was nowhere to send it — an
+    unconfigured phone stays unconfigured on the next tick, so waiting for
+    one would be waiting forever — False only when a configured send failed
+    and a retry might land. The full report ignores the answer, its save
+    having deliberately come first; the reminder's save hangs off it.
     """
     if not (cfg.telegram_token and cfg.telegram_chat_id):
         print(NOT_CONFIGURED)
-        return
+        return True
     try:
         send_report(cfg.telegram_token, cfg.telegram_chat_id, report)
     except Exception as error:  # any failure, and none of them worth the run
         print(f"telegram send failed: {type(error).__name__}")
+        return False
+    return True
