@@ -2,6 +2,23 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+# Where in the week each report is aimed, in hours before the deadline. The
+# full report lands a day out — late enough that the week has taken shape,
+# early enough that there is a whole evening to read it, argue with it and act
+# on it — and the reminder lands three hours out, after the press conferences,
+# to say whether anything moved. Constants rather than environment variables,
+# like ``horizon`` and ``decay``: an anchor is part of the design, and nothing
+# should be able to shift a report by six hours from a shell.
+DEADLINE_ANCHOR_HOURS = 24.0
+REMINDER_ANCHOR_HOURS = 3.0
+
+# How wide each report's window is. The schedule ticks every half hour and
+# GitHub drops scheduled runs under load, so a window has to hold more than
+# one tick: ninety minutes holds three, and two of them can vanish before the
+# report does. Wider would start the report early enough to blur what the
+# anchor means; narrower would hang the week on a single tick again.
+WINDOW_HOURS = 1.5
+
 
 @dataclass
 class Config:

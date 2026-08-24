@@ -85,12 +85,14 @@ DEADLINE = datetime(2025, 8, 22, 17, 30, tzinfo=UTC)
 @pytest.mark.parametrize(
     ("hours_to_go", "mode"),
     [
-        (0.5, "deadline"),
-        (2, "deadline"),
-        (3, "deadline"),
-        (3.5, None),
+        (0.5, None),
         (6, None),
         (20, None),
+        (22.5, None),
+        (23, "deadline"),
+        (23.9, "deadline"),
+        (24, "deadline"),
+        (25, None),
         (36, None),
         (36.5, "scout"),
         (48, "scout"),
@@ -1976,8 +1978,8 @@ def test_auto_runs_the_scout_two_days_out(monkeypatch, store):
     assert store.has_run(2, "scout") is True
 
 
-def test_auto_runs_the_deadline_check_on_the_day(monkeypatch, store):
-    serve(monkeypatch, pipeline_routes(bootstrap=bootstrap_due_in(2)))
+def test_auto_runs_the_full_report_the_day_before(monkeypatch, store):
+    serve(monkeypatch, pipeline_routes(bootstrap=bootstrap_due_in(23)))
 
     assert cli.main(["auto"]) == 0
     assert store.has_run(2, "deadline") is True
@@ -2083,7 +2085,7 @@ def test_a_failed_run_tells_the_phone_that_expects_the_report(
     posted = telegram(monkeypatch)
     serve(
         monkeypatch,
-        pipeline_routes(bootstrap=bootstrap_due_in(2)),
+        pipeline_routes(bootstrap=bootstrap_due_in(23)),
         statuses={"/api/fixtures/": 500},
     )
 

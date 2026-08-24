@@ -6,10 +6,11 @@ by design — the decisions are all made elsewhere — but there are three
 judgements it has to make on its own:
 
 * **When to run.** A report is only worth reading at two moments: two days
-  out, when there is still time to plan, and on the day, when the team news
-  is in. :func:`decide_mode` turns the hours to the deadline into one of
-  those or into nothing at all, so the cron job can fire every three hours
-  and stand down quietly most of the time.
+  out, when there is still time to plan, and a day out, when the week has
+  taken shape and there is still an evening to act. :func:`decide_mode`
+  turns the hours to the deadline into one of those or into nothing at all,
+  so the cron job can fire as often as it likes and stand down quietly most
+  of the time.
 * **Whose history to fetch.** A season of history is one request per player,
   and six hundred requests is not a polite thing to do to a public API every
   three hours. Only the squad and the players who could plausibly replace
@@ -53,7 +54,7 @@ from typing import TYPE_CHECKING
 
 import httpx
 
-from aigaffer.config import Config
+from aigaffer.config import DEADLINE_ANCHOR_HOURS, WINDOW_HOURS, Config
 from aigaffer.data.fpl_api import FplClient
 from aigaffer.data.free_transfers import compute_free_transfers
 from aigaffer.data.models import (
@@ -97,11 +98,14 @@ if TYPE_CHECKING:  # imported inside _consult and nowhere else at module scope
     from aigaffer.manager.agent import ManagerDecision
 
 DEADLINE_MODE, SCOUT_MODE = "deadline", "scout"
-# Three hours, not six: the press conferences that decide the team news land
-# the day before or the morning of, and a report written before them is a
-# report written without the one thing the deadline run is for. One
-# correctly-timed tick beats two early ones.
-DEADLINE_WINDOW = (0, 3)
+# The windows hang off the anchors in :mod:`aigaffer.config`, ending at the
+# anchor and opening ``WINDOW_HOURS`` before it, so the first tick to land
+# inside one runs as close to the anchor as the schedule managed and a dropped
+# tick costs half an hour of drift rather than the report. The full report
+# used to run in the last three hours before the deadline; it lives at the
+# T-24h anchor now, where there is an evening to read it, and the last hours
+# belong to the reminder that checks it against the morning's team news.
+DEADLINE_WINDOW = (DEADLINE_ANCHOR_HOURS - WINDOW_HOURS, DEADLINE_ANCHOR_HOURS)
 SCOUT_WINDOW = (36, 60)
 
 NOT_CONFIGURED = "telegram not configured: the report was kept but not sent"
@@ -236,11 +240,11 @@ class SolveResult:
 def decide_mode(now: datetime, deadline: datetime) -> str | None:
     """Which report ``now`` calls for, or None for none at all.
 
-    The last three hours before a deadline are the deadline report — late
-    enough that the press conferences have happened and the team news is in
-    — and a window a day and a half to two and a half days out is the scout
-    report. Between and either side of them there is nothing worth saying,
-    which is most of the week. Both datetimes must be timezone-aware.
+    The ninety minutes up to a day before the deadline are the full deadline
+    report — the week has taken shape and there is an evening left to act on
+    it — and a window a day and a half to two and a half days out is the
+    scout report. Between and either side of them there is nothing worth
+    saying, which is most of the week. Both datetimes must be timezone-aware.
     """
     hours = (deadline - now).total_seconds() / 3600
     if _within(hours, DEADLINE_WINDOW):
