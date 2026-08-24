@@ -73,6 +73,7 @@ from aigaffer.data.models import (
     Player,
     Squad,
 )
+from aigaffer.ledger import Observation, observe
 from aigaffer.model.minutes import expected_minutes, season_prior
 from aigaffer.model.xp import PlayerProjection, project_all, projected_events
 from aigaffer.report.render import (
@@ -305,14 +306,22 @@ def run_pipeline(
     The reminder is the exception to almost all of that, and it branches off
     at the top: no manager, no root file, a short alert instead of a report —
     see :func:`_run_reminder`, which owns what it does keep of the flow.
+
+    Between the fetch and the projections the purchase ledger is brought up
+    to date (:func:`aigaffer.ledger.observe`): the picks are already in hand,
+    and what comes back — the true selling price of every man we hold — is
+    threaded through the solve, the manager's re-solves and the report's SELL
+    tags. ``save`` gates the ledger's writes exactly as it gates the report's:
+    a dry run prices its sales in memory and persists none of it.
     """
     if mode == REMINDER_MODE:
         return _run_reminder(cfg, client, store, send=send, save=save)
 
     inputs = fetch_inputs(cfg, client)
+    ledger = observe(store, inputs.squad, inputs.players, inputs.chips_used, save)
     xmins, projections = build_projections(inputs, cfg)
-    solved = solve(inputs, projections, cfg)
-    gaffer = _consult(cfg, inputs, solved, projections, xmins)
+    solved = solve(inputs, projections, cfg, ledger.selling_prices)
+    gaffer = _consult(cfg, inputs, solved, projections, xmins, ledger.selling_prices)
 
     # From here down the week is his, if there was a him: the plan he chose and
     # the eleven that goes with it, in every place the solver's own would have
@@ -349,6 +358,9 @@ def run_pipeline(
         # The bank the action block names when the week rolls. None on a draft,
         # which has no action block to read it.
         free_transfers=inputs.free_transfers,
+        # What each sale actually raises, for the SELL tags that differ from
+        # the listed price.
+        selling_prices=ledger.selling_prices,
     )
     # Asked for, and not there at all. Not the same as the kill switch, no key
     # or a draft — those are choices, and the invariant is that they render
@@ -358,6 +370,7 @@ def run_pipeline(
     # in the diary both carry it.
     if gaffer is None and cfg.manager_enabled and not solved.draft_mode:
         report += f"\n{MANAGER_UNAVAILABLE}\n"
+    report += _audit_line(ledger)
 
     # The solver's own answer, before the manager touched it, read the same
     # way the reminder will read its own solve at T-3h: the week-1 chip off
@@ -484,10 +497,18 @@ def _run_reminder(
     not swaps, and the block would say "roll" about a squad that does not
     exist — but a draft is entered off the full report, and the reminder's
     armbands and deadline line still hold.
+
+    The purchase ledger is maintained here too — the picks were fetched
+    anyway, and a transfer made between the deadline run and this one should
+    be sighted three hours out, not a week later. Its writes ride ``save``
+    directly rather than the deliver-first dance: the ledger records what the
+    API published, not what this alert did, so a buzz that failed is no
+    reason to un-know a price.
     """
     inputs = fetch_inputs(cfg, client)
+    ledger = observe(store, inputs.squad, inputs.players, inputs.chips_used, save)
     _, projections = build_projections(inputs, cfg)
-    solved = solve(inputs, projections, cfg)
+    solved = solve(inputs, projections, cfg, ledger.selling_prices)
     event = inputs.event
 
     # The same reading of the solve the full report would make without a
@@ -505,7 +526,11 @@ def _run_reminder(
     solver_then = None if record is None else record.get("solver_actions")
     changes = {} if solver_then is None else diff_actions(solver_then, fresh)
 
-    report = render_reminder(event, fresh, stored, changes, inputs.bootstrap)
+    report = render_reminder(
+        event, fresh, stored, changes, inputs.bootstrap,
+        selling_prices=ledger.selling_prices,
+    )
+    report += _audit_line(ledger)
     decision = {
         "mode": REMINDER_MODE,
         "event": event.id,
@@ -527,6 +552,18 @@ def _run_reminder(
         path.write_text(report, encoding="utf-8")
         store.save_run(event.id, REMINDER_MODE, report, decision)
     return report
+
+
+def _audit_line(ledger: Observation) -> str:
+    """The reconciliation note as the report carries it, or nothing.
+
+    One line, appended after everything else the same way the
+    manager-unavailable notice is: the ledger fires it at most once per
+    gameweek (see :func:`aigaffer.ledger.observe`), and whichever run is
+    first past the roll — scout, deadline or reminder — is the report that
+    says it.
+    """
+    return f"\n{ledger.note}\n" if ledger.note else ""
 
 
 def plan_actions(
@@ -736,6 +773,7 @@ def solve(
     inputs: PipelineInputs,
     projections: dict[int, PlayerProjection],
     cfg: Config,
+    selling_prices: dict[int, int] | None = None,
 ) -> SolveResult:
     """The shortlist, the plan to recommend, the eleven and the chip panel.
 
@@ -751,6 +789,12 @@ def solve(
     projection is not: which planner to ask, and what a gameweek further out is
     worth against this one. It is also where the chip switch is read: whether
     the window may schedule a chip at all, and which are still in hand.
+
+    ``selling_prices`` is the purchase ledger's answer for the squad we hold
+    (:func:`aigaffer.ledger.observe`) and goes wherever a sale is priced: the
+    shortlist's engines and the chip panel's rebuild boards. None — what a
+    caller without a ledger passes, tests included — sells everyone at his
+    listed price, which is the pre-ledger behaviour to the byte.
     """
     available_chips = _available_chips(cfg, inputs)
     plans, choice = _plans(
@@ -760,6 +804,7 @@ def solve(
         inputs.free_transfers,
         cfg,
         available_chips,
+        selling_prices,
     )
     positions = {pid: player.element_type for pid, player in inputs.players.items()}
     gw_xp = {
@@ -785,6 +830,7 @@ def solve(
             projections,
             inputs.squad.bank,
             inputs.event.id,
+            selling_prices=selling_prices,
         )
 
     return SolveResult(
@@ -802,6 +848,7 @@ def _consult(
     solved: SolveResult,
     projections: dict[int, PlayerProjection],
     xmins: dict[int, float],
+    selling_prices: dict[int, int] | None = None,
 ) -> "ManagerDecision | None":
     """Put the week to the manager, and come back with the week to enter.
 
@@ -867,9 +914,11 @@ def _consult(
     ) -> tuple[SolveResult, dict[int, PlayerProjection]]:
         """His minutes, projected and solved again — the whole point of the
         seam. The projections that come back are the ones the solve was run
-        on, because the eleven he ends up with is picked from them."""
+        on, because the eleven he ends up with is picked from them. The
+        ledger's selling prices ride along: a re-solve on fresh minutes is
+        still spending the same money."""
         _, adjusted = build_projections(inputs, cfg, overrides)
-        return solve(inputs, adjusted, cfg), adjusted
+        return solve(inputs, adjusted, cfg, selling_prices), adjusted
 
     try:
         # The second group: what asking him needs, imported where it is used,
@@ -1171,6 +1220,7 @@ def _plans(
     free_transfers: int | None,
     cfg: Config,
     available_chips: frozenset[str] = frozenset(),
+    selling_prices: dict[int, int] | None = None,
 ) -> tuple[list[Plan], Plan]:
     """The shortlist, and the plan to recommend from it.
 
@@ -1179,7 +1229,8 @@ def _plans(
     recommendation. A draft is also the one week the window is never asked
     about — fifteen signings will not fit under a gameweek's transfer ceiling
     — which is why the drafting branch below does not pass one, and is also
-    the one week ``available_chips`` is always empty for.
+    the one week ``available_chips`` is always empty for, and the one week
+    ``selling_prices`` has nobody to price: a draft only buys.
     """
     if squad is None:
         draft = optimize(
@@ -1204,6 +1255,7 @@ def _plans(
         decay=cfg.decay,
         planner=cfg.planner,
         available_chips=available_chips,
+        selling_prices=selling_prices,
     )
     if not plans:
         raise PipelineError("no legal squad is reachable from the current one")

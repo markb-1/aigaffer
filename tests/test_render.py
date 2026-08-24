@@ -250,6 +250,7 @@ def report(
     plans: list[Plan] | None = None,
     lineup: Lineup = LINEUP,
     free_transfers: int | None = 1,
+    selling_prices: dict[int, int] | None = None,
 ) -> str:
     """The report as Task 12 will ask for it.
 
@@ -273,6 +274,7 @@ def report(
         view,
         engine_expected=engine_expected,
         free_transfers=free_transfers,
+        selling_prices=selling_prices,
     )
 
 
@@ -472,6 +474,36 @@ def test_each_transfer_is_its_own_sell_then_buy_line():
         "SELL Fenn (DEF BRW £4.5m) → BUY Pike (MID ASH £8.0m)",
         "SELL Gale (DEF CRV £4.0m) → BUY Reid (FWD CRV £9.5m)",
     ]
+
+
+def test_a_sale_that_raises_less_than_the_listed_price_says_so():
+    # Gale lists at £4.0m and the ledger says his sale raises £3.6m: the
+    # number the owner sees in the app when he confirms, printed inside the
+    # SELL tag so the checklist and the phone agree to the pound.
+    block = section(report(selling_prices={7: 36}), "Do this")
+
+    assert (
+        "SELL Gale (DEF CRV £4.0m, sells £3.6m) → BUY Reid (FWD CRV £9.5m)"
+        in block
+    )
+
+
+def test_a_sale_at_the_listed_price_keeps_the_plain_tag():
+    # Selling at the listed price is the ordinary case and not worth a word:
+    # a tag that always said "sells" would bury the week it mattered.
+    block = section(report(selling_prices={7: 40}), "Do this")
+
+    assert "SELL Gale (DEF CRV £4.0m) → BUY Reid (FWD CRV £9.5m)" in block
+
+
+def test_a_buy_never_grows_a_sells_tag():
+    # Reid is bought, and buys pay the listed price by definition — a selling
+    # price for him in the dict (he could be a squad man on another plan's
+    # board) must not leak into the BUY side of the line.
+    block = section(report(selling_prices={7: 40, 18: 80}), "Do this")
+
+    assert "BUY Reid (FWD CRV £9.5m)" in str(block)
+    assert "Reid (FWD CRV £9.5m, sells" not in str(block)
 
 
 def test_a_week_that_rolls_says_so_and_banks_its_free_transfer():
@@ -1043,8 +1075,12 @@ def reminder(
     fresh: dict | None = None,
     stored: dict | None = None,
     changes: dict | None = None,
+    selling_prices: dict[int, int] | None = None,
 ) -> str:
-    return render_reminder(EVENT, fresh or actions(), stored, changes or {}, BOOTSTRAP)
+    return render_reminder(
+        EVENT, fresh or actions(), stored, changes or {}, BOOTSTRAP,
+        selling_prices=selling_prices,
+    )
 
 
 def test_the_reminder_is_the_checklist_and_nothing_else():
@@ -1111,6 +1147,16 @@ def test_a_changed_plan_leads_with_the_warning_and_shows_both():
     assert "CAPTAIN Hume" in alert[fresh:]
     assert HUMAN_JUDGES in alert
     assert REMINDER_UNCHANGED not in alert
+
+
+def test_the_reminders_sell_lines_carry_the_selling_price_too():
+    # Both documents share the vocabulary: a sale that raises less than the
+    # listed price says so in the reminder's swap lines exactly as it does in
+    # the full report's, whichever block — verdict or fresh — prints it.
+    alert = reminder(stored=actions(), selling_prices={7: 36})
+
+    assert "SELL Gale (DEF CRV £4.0m, sells £3.6m) → BUY Reid (FWD CRV £9.5m)" in alert
+    assert "SELL Gale (DEF CRV £4.0m) →" not in alert
 
 
 def test_a_reminder_with_no_full_report_behind_it_says_so():

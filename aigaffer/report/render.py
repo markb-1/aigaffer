@@ -174,6 +174,7 @@ def render_report(
     *,
     engine_expected: bool = False,
     free_transfers: int | None = None,
+    selling_prices: dict[int, int] | None = None,
 ) -> str:
     """The whole report as one markdown string. Pure; no I/O.
 
@@ -200,6 +201,13 @@ def render_report(
     two together are the only way to tell a fallback from a run that asked for
     the single-week solver on purpose. The renderer decides nothing: the caller
     knows what it configured, and this knows what came back.
+
+    ``selling_prices`` is the purchase ledger's answer for the squad we hold,
+    and it is read in one place: the action block's SELL tags, which append
+    what the sale actually raises when that is not the listed price — the
+    number the owner sees in the app when he confirms. Omitted, or agreeing
+    with ``now_cost`` everywhere, the report is byte for byte the one this
+    wrote before there was a ledger at all.
     """
     players = {player.id: player for player in bootstrap.elements}
     clubs = {team.id: team.short_name for team in bootstrap.teams}
@@ -218,7 +226,7 @@ def render_report(
             else [
                 _do_this(
                     event, choice, lineup, players, clubs, chip, free_hit,
-                    free_transfers,
+                    free_transfers, selling_prices,
                 )
             ]
         ),
@@ -244,6 +252,8 @@ def render_reminder(
     stored: dict | None,
     changes: dict,
     bootstrap: Bootstrap,
+    *,
+    selling_prices: dict[int, int] | None = None,
 ) -> str:
     """The short alert, three hours out. Pure; no I/O.
 
@@ -274,21 +284,28 @@ def render_reminder(
     The stored plan is read back from the diary and rendered against today's
     bootstrap, so a player the API has since dropped or renumbered prints as
     ``player {id}`` rather than costing the alert.
+
+    ``selling_prices`` is this run's ledger reading, and both blocks read it —
+    the stored verdict included, because a selling price is a fact about the
+    player today, not about the run that planned the sale.
     """
     players = {player.id: player for player in bootstrap.elements}
     clubs = {team.id: team.short_name for team in bootstrap.teams}
 
+    def block(heading: str, actions: dict) -> str:
+        return _actions_block(heading, event, actions, players, clubs, selling_prices)
+
     sections = [_header("reminder", event)]
     if stored is None:
-        sections += [_actions_block("## Do this", event, fresh, players, clubs)]
+        sections += [block("## Do this", fresh)]
         sections += [NO_FULL_REPORT]
     elif not changes:
-        sections += [_actions_block("## Do this", event, stored, players, clubs)]
+        sections += [block("## Do this", stored)]
         sections += [REMINDER_UNCHANGED]
     else:
         sections += [_changed(changes, players, clubs)]
-        sections += [_actions_block(GAFFER_VERDICT, event, stored, players, clubs)]
-        sections += [_actions_block(FRESH_SOLVE, event, fresh, players, clubs)]
+        sections += [block(GAFFER_VERDICT, stored)]
+        sections += [block(FRESH_SOLVE, fresh)]
         sections += [HUMAN_JUDGES]
     return "\n\n".join(sections) + "\n"
 
@@ -336,6 +353,7 @@ def _actions_block(
     actions: dict,
     players: dict[int, Player],
     clubs: dict[int, str],
+    selling_prices: dict[int, int] | None = None,
 ) -> str:
     """One plan as the ⏰ checklist, under ``heading``.
 
@@ -350,7 +368,8 @@ def _actions_block(
     if not actions["transfers"]:
         lines.append("No transfers — roll.")
     lines += [
-        _swap(out, bought, players, clubs) for out, bought in actions["transfers"]
+        _swap(out, bought, players, clubs, selling_prices)
+        for out, bought in actions["transfers"]
     ]
     if actions["chip"] != NO_CHIP:
         lines.append(f"PLAY {chip_label(actions['chip'])}")
@@ -364,12 +383,19 @@ def _actions_block(
 
 
 def _swap(
-    out: int, bought: int, players: dict[int, Player], clubs: dict[int, str]
+    out: int,
+    bought: int,
+    players: dict[int, Player],
+    clubs: dict[int, str],
+    selling_prices: dict[int, int] | None = None,
 ) -> str:
     """``SELL Gale (DEF CRV £4.0m) → BUY Reid (FWD CRV £9.5m)`` — one move,
-    sell first, the way the app takes it and the way the report says it."""
+    sell first, the way the app takes it and the way the report says it. The
+    SELL side alone reads the ledger: a sale that raises less than the listed
+    price says so inside its tag, and a buy pays the listed price always."""
     return (
-        f"SELL {_tagged(out, players, clubs)} → BUY {_tagged(bought, players, clubs)}"
+        f"SELL {_sale_tag(out, players, clubs, selling_prices)}"
+        f" → BUY {_tagged(bought, players, clubs)}"
     )
 
 
@@ -383,6 +409,35 @@ def _tagged(pid: int, players: dict[int, Player], clubs: dict[int, str]) -> str:
     if pid in players:
         return _named(pid, players, clubs)
     return f"player {pid}"
+
+
+def _sale_tag(
+    pid: int,
+    players: dict[int, Player],
+    clubs: dict[int, str],
+    selling_prices: dict[int, int] | None,
+) -> str:
+    """The SELL side's parenthesis: :func:`_tagged`, plus what the sale
+    actually raises when that is not the listed price.
+
+    ``SELL Gale (DEF CRV £4.0m, sells £3.6m)`` — the second figure is the one
+    the app shows the owner when he confirms, so the checklist and the phone
+    agree to the pound. Selling at the listed price is the ordinary case and
+    prints nothing extra: a tag that always said "sells" would bury the week
+    it mattered. A player the ledger has no price for is a player whose sale
+    raises the listed price as far as anyone can say, which is the same
+    silence.
+    """
+    if pid not in players:
+        return f"player {pid}"
+    player = players[pid]
+    sells = (selling_prices or {}).get(pid)
+    if sells is None or sells == player.now_cost:
+        return _named(pid, players, clubs)
+    return (
+        f"{player.web_name} ({POSITIONS[player.element_type]}"
+        f" {clubs[player.team]} {price(player.now_cost)}, sells {price(sells)})"
+    )
 
 
 def _spoken(chip: str) -> str:
@@ -470,6 +525,7 @@ def _do_this(
     chip: str,
     free_hit: bool,
     free_transfers: int | None,
+    selling_prices: dict[int, int] | None = None,
 ) -> str:
     """The week's moves as a checklist, first and imperative.
 
@@ -504,7 +560,7 @@ def _do_this(
         )
         return "\n".join(lines)
 
-    lines += _moves(choice, players, clubs, free_transfers)
+    lines += _moves(choice, players, clubs, free_transfers, selling_prices)
     if chip != NO_CHIP:
         lines.append(f"PLAY {chip_label(chip)}")
     lines.append(
@@ -526,6 +582,7 @@ def _moves(
     players: dict[int, Player],
     clubs: dict[int, str],
     free_transfers: int | None,
+    selling_prices: dict[int, int] | None = None,
 ) -> list[str]:
     """The transfers a swap to a line, or the one line that makes none.
 
@@ -533,14 +590,17 @@ def _moves(
     make without holding two of them in his head. A week that rolls says how
     many free transfers it is banking, because that count is the whole of the
     non-move and is the one number he checks it against; a run that was handed
-    no count drops it rather than inventing one.
+    no count drops it rather than inventing one. The SELL tag carries the
+    ledger's selling price when it differs from the listed one — see
+    :func:`_sale_tag`.
     """
     if not choice.transfers_in and not choice.transfers_out:
         if free_transfers is None:
             return ["No transfers — roll."]
         return [f"No transfers — roll (bank {plural(free_transfers, 'free transfer')})."]
     return [
-        f"SELL {_named(out, players, clubs)} → BUY {_named(bought, players, clubs)}"
+        f"SELL {_sale_tag(out, players, clubs, selling_prices)}"
+        f" → BUY {_named(bought, players, clubs)}"
         for out, bought in zip(choice.transfers_out, choice.transfers_in)
     ]
 

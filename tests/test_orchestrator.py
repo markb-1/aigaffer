@@ -236,6 +236,7 @@ def test_the_window_the_projections_cover_is_the_window_the_planner_plans(
     assert len(covered) == seam.cfg.horizon and covered[0] == seam.inputs.event.id
     # The wildcard is spent in this universe's history, so the window is handed
     # the other three — derived in one place and threaded through the sweep.
+    # A solve asked without a ledger reading passes that absence through too.
     assert asked == [
         {
             "projections_events": covered,
@@ -244,6 +245,7 @@ def test_the_window_the_projections_cover_is_the_window_the_planner_plans(
             "available_chips": frozenset(
                 {"bench_boost", "triple_captain", "free_hit"}
             ),
+            "selling_prices": None,
         }
     ]
 
@@ -575,6 +577,119 @@ def test_a_dry_run_leaves_nothing_behind(tmp_path):
     assert store.last_runs() == []
     assert not (tmp_path / "state" / "reports").exists()
     assert list(tmp_path.glob("GW*.md")) == []
+    # The ledger too: a dry run prices its sales in memory and writes nothing.
+    assert store.purchases() == {}
+    assert store.squad_record(1) is None
+
+
+# --- the purchase ledger in the run ----------------------------------------
+#
+# The ledger's own rules are tested in tests/test_ledger.py; what is pinned
+# here is the wiring — every run with a squad maintains it, the selling prices
+# it computes are the ones the solver is handed, and the reconciliation line
+# reaches the report a person actually reads.
+
+
+def test_the_first_run_seeds_the_ledger_and_hands_the_solver_true_prices(
+    tmp_path, monkeypatch
+):
+    # Ferrer has risen £0.6m since the season opened, so the seed says he was
+    # bought at 119 and the selling rule pays 122 of his listed 125 — and that
+    # 122, not the 125, is what reaches the solver's sale side. Everyone else
+    # never moved and sells at par.
+    payload = copy.deepcopy(PIPELINE_BOOTSTRAP_JSON)
+    next(e for e in payload["elements"] if e["id"] == FERRER)["cost_change_start"] = 6
+    asked: list[dict] = []
+    real = orchestrator.generate_plans
+
+    def spy(*args, **kwargs):
+        asked.append(kwargs)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(orchestrator, "generate_plans", spy)
+    store = Store(tmp_path / "aigaffer.db")
+    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
+
+    run_pipeline(
+        cfg, make_client(pipeline_routes(bootstrap=payload)), store, "scout",
+        send=False,
+    )
+
+    held = set(PICKS_15_JSON["picks"][index]["element"] for index in range(15))
+    assert store.purchases()[FERRER] == 119
+    assert store.purchases()[1] == 55  # unmoved, seeded at his listed price
+    assert set(store.purchases()) == held
+    assert store.squad_record(1) == {
+        "gw": 1, "bank": 28, "player_ids": [p["element"] for p in PICKS_15_JSON["picks"]],
+    }
+    prices = asked[0]["selling_prices"]
+    assert prices[FERRER] == 122
+    assert prices[1] == 55
+    assert set(prices) == held
+
+
+def test_the_reminder_maintains_the_ledger_too(tmp_path):
+    # The reminder fetched the same picks the full report would, so the ledger
+    # is kept current on every mode — a transfer made between the deadline run
+    # and the reminder is sighted three hours out, not a week later.
+    store = Store(tmp_path / "aigaffer.db")
+    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
+
+    run_pipeline(cfg, make_client(pipeline_routes()), store, "reminder", send=False)
+
+    held = {p["element"] for p in PICKS_15_JSON["picks"]}
+    assert set(store.purchases()) == held
+
+
+def test_a_draft_week_has_no_ledger_to_keep(tmp_path):
+    # No squad yet: nothing to seed and nothing to snapshot. The ledger's
+    # first run is the first run that actually holds fifteen players.
+    routes = pipeline_routes()
+    del routes[PICKS_PATH]
+    store = Store(tmp_path / "aigaffer.db")
+    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
+
+    run_pipeline(cfg, make_client(routes), store, "scout", send=False)
+
+    assert store.purchases() == {}
+    assert store.squad_record(1) is None
+
+
+def test_a_bank_the_ledger_did_not_predict_earns_one_line_in_the_report(tmp_path):
+    # The picks have rolled to GW2 and the diff against the remembered GW1 is
+    # one swap: Reyes (17) out, Quill (16) in. The ledger bought Reyes at 90
+    # and he lists at 95, so his sale should have raised 92; Quill cost 50.
+    # From a previous bank of 0 that predicts 42, and the game published 28 —
+    # £1.4m adrift, which is exactly what the report has to say, once.
+    store = Store(tmp_path / "aigaffer.db")
+    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
+    held = [p["element"] for p in PICKS_15_JSON["picks"]]
+    previous = [pid if pid != 16 else 17 for pid in held]
+    for pid in previous:
+        store.record_purchase(pid, buy_price=90 if pid == 17 else 50, gw_seen=1)
+    store.record_squad(1, bank=0, player_ids=previous)
+    routes = unplayed_routes(midweek_bootstrap(), (1, 90))
+
+    report = run_pipeline(cfg, make_client(routes), store, "scout", send=False)
+
+    assert "the bank is £1.4m below what the purchase ledger predicted" in report
+    assert report.count("purchase ledger") == 1
+
+
+def test_a_bank_the_ledger_predicted_exactly_earns_no_line(tmp_path):
+    # Same rolled gameweek, no transfers made, previous bank equal to the
+    # published one: the audit passes and the report says nothing about it.
+    store = Store(tmp_path / "aigaffer.db")
+    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
+    held = [p["element"] for p in PICKS_15_JSON["picks"]]
+    for pid in held:
+        store.record_purchase(pid, buy_price=50, gw_seen=1)
+    store.record_squad(1, bank=28, player_ids=held)
+    routes = unplayed_routes(midweek_bootstrap(), (1, 90))
+
+    report = run_pipeline(cfg, make_client(routes), store, "scout", send=False)
+
+    assert "purchase ledger" not in report
 
 
 # --- the seam: fetch, project, solve ---------------------------------------
