@@ -20,7 +20,7 @@ import httpx
 from aigaffer.data.models import Bootstrap, Fixture, GwHistory, PastSeason, Squad
 
 BASE_URL = "https://fantasy.premierleague.com/api"
-USER_AGENT = "aigaffer/0.1 (github.com/markbradley/aigaffer)"
+USER_AGENT = "aigaffer/0.1 (github.com/markb-1/aigaffer)"
 TIMEOUT = 30.0
 
 # One entry per wait, so the number of tries is one more than the number of
