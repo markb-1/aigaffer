@@ -129,8 +129,8 @@ class ManagerDecision:
 
     ``source`` is ``"manager"`` or ``"solver-fallback: <reason>"``, and it is
     printed in the report, because "the solver picked this" and "the manager
-    picked this" are different claims and Mark is entitled to know which he is
-    reading.
+    picked this" are different claims and the owner is entitled to know which
+    he is reading.
 
     ``projections`` is what the decision was costed on — the ones in force
     when he finalized, which are the re-solve's if he re-solved. The report is

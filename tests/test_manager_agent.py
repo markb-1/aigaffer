@@ -212,7 +212,7 @@ CACHED_BRIEFING = [
     {"type": "text", "text": BRIEFING, "cache_control": {"type": "ephemeral"}}
 ]
 # A rationale as the report prints it: long enough to clear the floor the
-# validator sets, because the field is the whole of what Mark reads. It says
+# validator sets, because the field is the whole of what the owner reads. It says
 # the three things the prompt asks for — what was done, what was learned and
 # what it changed, and why this plan — because a fixture that would be refused
 # live is a fixture that proves nothing.

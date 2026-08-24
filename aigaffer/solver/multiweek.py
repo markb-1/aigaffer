@@ -332,7 +332,7 @@ class PlannedPath:
     and eleven a free hit fields THIS week, when ``week1_chip`` is
     :data:`FREE_HIT` — and None otherwise. The plan's own ``squad``/``xi`` are
     the STANDING team, which is what reverts and what next week owns; on a free-
-    hit week that standing team is not the one Mark takes to the deadline, so
+    hit week that standing team is not the one the owner takes to the deadline:
     the eleven he actually fields is surfaced here for the report to show. It is
     priced by :func:`_best_one_week_squad`, the same one-week squad the free-hit
     value was measured on, so the number in the panel and the team on the sheet

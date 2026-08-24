@@ -1685,7 +1685,7 @@ def test_free_hit_fields_a_temp_squad_that_reverts():
 
     # The temporary team it fields is surfaced for the report — the heroes, not
     # the standing squad — and it is a legal fifteen with a legal eleven inside
-    # it. This is the eleven Mark takes to the deadline, and the plan's own
+    # it. This is the eleven the owner takes to the deadline, and the plan's own
     # squad/xi are the standing team that reverts.
     heroes = {pid for pid, _ in FIFTEEN_HEROES}
     assert set(path.week1_freehit_squad) == heroes

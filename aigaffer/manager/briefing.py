@@ -1,4 +1,4 @@
-"""The week's position, written for the manager rather than for Mark.
+"""The week's position, written for the manager rather than for the owner.
 
 The report (:mod:`aigaffer.report.render`) is read on a phone by someone who
 already knows his own squad. This is read by a model that knows nothing at
@@ -97,11 +97,12 @@ PLAYED_GUARD = (
     " whatever it is priced at above. Finalize with chip 'none' instead."
 )
 
-# What the panel is measuring, and which of it he may actually play. The
-# wildcard is priced over the horizon and the other three over one gameweek, so
-# the four numbers are not comparable and the line above them says so; and two
-# of the four are refused by finalize_decision, so the panel says that too
-# rather than leaving him to meet the rule as an error.
+# What the panel is measuring. The wildcard is priced over the horizon and the
+# other three over one gameweek, so the four numbers are not comparable and
+# the line above them says so. All four chips are the manager's to finalize —
+# the solver plans chip weeks now — and the only chip finalize_decision
+# refuses is one the season's history says is already spent, which the guards
+# below the panel spell out.
 CHIP_UNITS = (
     "Points each chip would add next gameweek — except the wildcard, which is a"
     " horizon number: the decayed total of the best squad fifteen free"
@@ -513,9 +514,10 @@ def _chip_panel(
     manager is asked to argue from these numbers, and an argument from the
     wrong units is one the code cannot catch.
 
-    Two of the four are also not his to finalize, and the panel says so where
-    he looks them up: the validator refuses a wildcard or a free hit, and a
-    rule he meets first as an error is a turn spent learning it.
+    All four are his to finalize now that the solver plans chip weeks, and
+    the panel says so where he looks the numbers up: the guard beneath it
+    tells him to play the chip the plan in hand was built for, because a rule
+    he meets first as an error is a turn spent learning it.
 
     A chip already spent is priced anyway and then marked. The number is worth
     reading — it says what this week would have been worth with it — but the

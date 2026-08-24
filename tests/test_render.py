@@ -521,7 +521,8 @@ def test_a_draft_has_no_action_block():
 
 def test_the_block_follows_the_gaffers_own_plan():
     # He re-solved on his own minutes and finalized a plan the shortlist never
-    # had. The checklist tells Mark to make that move, not the solver's original.
+    # had. The checklist tells the owner to make that move, not the solver's
+    # original.
     fresh = replace(
         ONE,
         squad=[pid for pid in SQUAD if pid != 6] + [17],
@@ -744,8 +745,8 @@ def test_a_plan_that_plans_no_chip_notes_nothing():
 # --- a free hit fields a temporary team (the critical T3 carry) -------------
 #
 # On a free-hit week the plan's own squad is the STANDING team, which reverts;
-# the eleven Mark fields is the temporary one the solver priced, surfaced on the
-# path. The report fields that eleven — in the team sheet and the checklist,
+# the eleven the owner fields is the temporary one the solver priced, surfaced
+# on the path. The report fields that eleven — in the team sheet and checklist,
 # clearly labelled — not the standing squad.
 
 FREE_HIT_SQUAD = [20, 3, 4, 5, 17, 21, 8, 9, 10, 11, 16, 13, 14, 18, 2]
@@ -989,7 +990,8 @@ def test_a_gaffer_who_could_not_be_reached_says_so_in_the_report():
 
 def test_a_chip_is_printed_with_the_argument_for_it():
     # A chip is a season's worth of points and the one decision the bot cannot
-    # make on Mark's behalf, so the case for it goes in the report or nowhere.
+    # make on the owner's behalf, so the case for it goes in the report or
+    # nowhere.
     played = report(view=gaffer(chip="bench_boost", justification=GOOD_CHIP))
 
     assert f"Playing the bench boost. {GOOD_CHIP}" in played
