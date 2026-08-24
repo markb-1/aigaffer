@@ -20,6 +20,17 @@ class Player(BaseModel):
     :func:`aigaffer.model.xp._per_90`) and a column that arrived already
     divided has escaped it. The API serves the expected-goals family as
     strings; pydantic coerces them.
+
+    ``cost_change_start`` is how far ``now_cost`` has moved since the season
+    opened, in the same tenths — positive for a riser, negative for a faller.
+    Verified against the live bootstrap on 2026-08-24: an integer on every
+    element, alongside ``cost_change_event`` and the ``*_fall`` variants this
+    model does not need. It exists for one reader, the purchase ledger's seed
+    (:mod:`aigaffer.ledger`): ``now_cost - cost_change_start`` is what a
+    player cost when the season opened, which is what a squad held since GW1
+    paid for him. The default of 0 says the price has not moved, which is
+    true of a test fixture that never mentions prices moving and lets every
+    hand-built payload predate the field without lying about it.
     """
 
     id: int
@@ -27,6 +38,7 @@ class Player(BaseModel):
     team: int
     element_type: int
     now_cost: int
+    cost_change_start: int = 0
     status: str
     chance_of_playing_next_round: int | None = None
     minutes: int
