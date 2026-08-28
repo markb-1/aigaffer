@@ -965,6 +965,21 @@ def test_the_system_prompt_says_nothing_that_changes_between_runs():
     assert "finalize_decision" in SYSTEM_PROMPT
 
 
+def test_the_prompt_orders_the_research_plan_first():
+    # GW2 live: the gaffer spent all eight searches on round-ups and a player
+    # it decided not to buy, and finalized with its own transfer target
+    # unverified. The priority has to be in the prompt — the briefing's list
+    # is flat and the model cannot know it from the tool schema.
+    assert "the players the plan you are minded to finalize" in SYSTEM_PROMPT
+
+
+def test_the_prompt_says_the_search_allowance_is_per_turn():
+    # max_uses is per request, but the model can only discover the cap by
+    # hitting it — and what it concluded live was that research was over.
+    assert "per turn, not for the whole job" in SYSTEM_PROMPT
+    assert "never a reason to finalize unverified" in SYSTEM_PROMPT
+
+
 def test_the_tools_are_the_four_the_plan_names():
     names = [tool.get("name") for tool in TOOLS]
 

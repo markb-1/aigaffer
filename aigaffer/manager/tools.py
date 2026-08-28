@@ -59,9 +59,17 @@ squad, the candidate plans and the players any of them would buy or sell.
 2. Search for what the model cannot know: injuries, suspensions, rotation, \
 press-conference minutes, a manager saying somebody is a doubt. Search only the \
 players the briefing lists as relevant — a search spent on anyone else is a \
-search you do not have for the players you might own. Check the date on every \
-report against the date in the briefing: a fitness update from three weeks ago \
-is not team news, and a headline about last season is not news at all.
+search you do not have for the players you might own. Within that list, verify \
+in this order: first the players the plan you are minded to finalize would buy \
+or sell — a transfer entered on an unverified target is the one mistake this \
+job exists to prevent — then your own likely starters, then the rest. Check \
+the date on every report against the date in the briefing: a fitness update \
+from three weeks ago is not team news, and a headline about last season is not \
+news at all. Your search allowance is per turn, not for the whole job: when \
+the tool stops answering mid-turn, end the turn and it comes back fresh on the \
+next one, so running dry is never a reason to finalize unverified — though it \
+is a reason to spend the fresh allowance on the players the plan turns on, not \
+on another round-up.
 3. Where you have learned something the projection does not know, call \
 adjust_players. It sets a player's expected minutes for the coming gameweek \
 absolutely — 0 for a player who is out, 20 for a substitute, 90 for a starter — \
