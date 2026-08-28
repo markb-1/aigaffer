@@ -16,9 +16,11 @@ which is why these runs hand a canned decision back and then ask what the
 report, the store and the phone did with it.
 """
 
+import argparse
 import copy
 import json
 import sys
+from types import SimpleNamespace
 from collections import Counter
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -88,19 +90,25 @@ DEADLINE = datetime(2025, 8, 22, 17, 30, tzinfo=UTC)
 @pytest.mark.parametrize(
     ("hours_to_go", "mode"),
     [
-        (0.5, None),
-        (1.5, None),
+        # The windows are contiguous: each stays open until the next report's
+        # territory, so a tick that lands late — GitHub dropped nine hours of
+        # cron once — still calls for the report instead of standing down.
+        # has_run in __main__ is what keeps a late-open window from sending
+        # the same report twice.
+        (0.5, "reminder"),
+        (1.5, "reminder"),
         (2, "reminder"),
         (3, "reminder"),
-        (3.5, None),
-        (6, None),
-        (20, None),
-        (22.5, None),
+        (3.5, "deadline"),
+        (6, "deadline"),
+        (17.6, "deadline"),
+        (20, "deadline"),
+        (22.5, "deadline"),
         (23, "deadline"),
         (23.9, "deadline"),
         (24, "deadline"),
-        (25, None),
-        (36, None),
+        (25, "scout"),
+        (36, "scout"),
         (36.5, "scout"),
         (48, "scout"),
         (60, "scout"),
@@ -130,6 +138,60 @@ def test_overlapping_windows_prefer_the_report_nearest_the_deadline(monkeypatch)
     assert decide_mode(DEADLINE - timedelta(hours=20), DEADLINE) == "reminder"
     assert decide_mode(DEADLINE - timedelta(hours=50), DEADLINE) == "deadline"
     assert decide_mode(DEADLINE - timedelta(hours=90), DEADLINE) == "scout"
+
+
+# --- the missed full report, caught up at the reminder ----------------------
+
+
+def _auto_args():
+    return argparse.Namespace(command="auto", force=False)
+
+
+def _client_hours_out(hours, gw=2):
+    event = SimpleNamespace(
+        id=gw, deadline_time=datetime.now(UTC) + timedelta(hours=hours)
+    )
+    bootstrap = SimpleNamespace(next_event=lambda: event)
+    return SimpleNamespace(bootstrap=lambda: bootstrap)
+
+
+def test_a_missing_full_report_outranks_the_reminder(tmp_path):
+    # Every tick before this one was dropped, so there is no full report to
+    # remind anyone of. The reminder's hour runs the report it would have
+    # been checking instead; the reminder gets a later tick.
+    store = Store(tmp_path / "state.db")
+    assert cli._mode(_auto_args(), _client_hours_out(2), store) == ("deadline", 2)
+
+
+def test_the_reminder_runs_once_the_full_report_exists(tmp_path):
+    store = Store(tmp_path / "state.db")
+    store.save_run(2, "deadline", "md", {})
+    assert cli._mode(_auto_args(), _client_hours_out(2), store) == ("reminder", 2)
+
+
+def test_a_week_fully_reported_stands_down(tmp_path):
+    store = Store(tmp_path / "state.db")
+    store.save_run(2, "deadline", "md", {})
+    store.save_run(2, "reminder", "md", {})
+    assert cli._mode(_auto_args(), _client_hours_out(2), store) == (None, 2)
+
+
+def test_auto_force_overrules_the_store_not_the_clock(tmp_path):
+    # --force skips the dedupe; the promotion still consults the store, so
+    # with the full report on record the reminder hour stays the reminder's.
+    args = argparse.Namespace(command="auto", force=True)
+    store = Store(tmp_path / "state.db")
+    store.save_run(2, "deadline", "md", {})
+    store.save_run(2, "reminder", "md", {})
+    assert cli._mode(args, _client_hours_out(2), store) == ("reminder", 2)
+
+
+def test_a_reminder_asked_for_by_name_is_not_promoted(tmp_path):
+    # Promotion is auto's business: a person naming the reminder on the
+    # command line gets the reminder, missing full report or not.
+    args = argparse.Namespace(command="reminder", force=False)
+    store = Store(tmp_path / "state.db")
+    assert cli._mode(args, _client_hours_out(2), store) == ("reminder", 2)
 
 
 # --- the pipeline ----------------------------------------------------------
@@ -2583,18 +2645,21 @@ def test_auto_runs_the_full_report_the_day_before(monkeypatch, store):
 
 
 def test_auto_runs_the_reminder_in_the_final_hours(monkeypatch, store):
-    serve(monkeypatch, pipeline_routes(bootstrap=bootstrap_due_in(2)))
+    # The full report went out the day before, as it should have; the final
+    # hours then belong to the reminder. Without that first run the same tick
+    # would catch the full report up instead — pinned at the _mode tests.
+    serve(monkeypatch, pipeline_routes(bootstrap=bootstrap_due_in(23)))
+    assert cli.main(["auto"]) == 0
 
+    serve(monkeypatch, pipeline_routes(bootstrap=bootstrap_due_in(2)))
     assert cli.main(["auto"]) == 0
     assert store.has_run(2, "reminder") is True
-    assert store.has_run(2, "deadline") is False
 
 
 def test_a_deadline_tick_that_died_is_retried_by_the_next(monkeypatch, capsys, store):
-    # The insurance the 1.5-hour window is designed around: three ticks land
-    # inside it, so a run that dies on the first must leave has_run false —
-    # nothing half-saved — for the second to try again, and the second must
-    # not then produce a duplicate of anything.
+    # The insurance the late-open window is designed around: a run that dies
+    # must leave has_run false — nothing half-saved — for the next tick to
+    # try again, and the retry must not then produce a duplicate of anything.
     serve(
         monkeypatch,
         pipeline_routes(bootstrap=bootstrap_due_in(23)),
@@ -2613,13 +2678,14 @@ def test_a_deadline_tick_that_died_is_retried_by_the_next(monkeypatch, capsys, s
 
 
 def test_a_reminder_already_sent_is_not_sent_twice(monkeypatch, capsys, store):
-    # The 30-minute schedule puts three ticks inside the reminder window; the
-    # store is what keeps the second and third quiet.
-    store.save_run(2, "reminder", "the reminder from half an hour ago", {})
+    # The windows stay open until the deadline, so it is the store and only
+    # the store that keeps every later tick in the reminder's hours quiet.
+    store.save_run(2, "deadline", "the full report from the day before", {})
+    store.save_run(2, "reminder", "the reminder from an hour ago", {})
     serve(monkeypatch, pipeline_routes(bootstrap=bootstrap_due_in(2)))
 
     assert cli.main(["auto"]) == 0
-    assert len(store.last_runs()) == 1
+    assert len(store.last_runs()) == 2, "the two seeded runs and nothing new"
     assert capsys.readouterr().out == ""
 
 

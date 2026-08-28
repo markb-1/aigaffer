@@ -60,7 +60,7 @@ from aigaffer.config import (
     DEADLINE_ANCHOR_HOURS,
     EARLY_SEASON_GWS,
     REMINDER_ANCHOR_HOURS,
-    WINDOW_HOURS,
+    SCOUT_HORIZON_HOURS,
     Config,
 )
 from aigaffer.data.fpl_api import FplClient
@@ -113,16 +113,18 @@ if TYPE_CHECKING:  # imported inside _consult and nowhere else at module scope
     from aigaffer.manager.agent import ManagerDecision
 
 DEADLINE_MODE, SCOUT_MODE, REMINDER_MODE = "deadline", "scout", "reminder"
-# The windows hang off the anchors in :mod:`aigaffer.config`, ending at the
-# anchor and opening ``WINDOW_HOURS`` before it, so the first tick to land
-# inside one runs as close to the anchor as the schedule managed and a dropped
-# tick costs half an hour of drift rather than the report. The full report
-# used to run in the last three hours before the deadline; it lives at the
-# T-24h anchor now, where there is an evening to read it, and the last hours
-# belong to the reminder that checks it against the morning's team news.
-DEADLINE_WINDOW = (DEADLINE_ANCHOR_HOURS - WINDOW_HOURS, DEADLINE_ANCHOR_HOURS)
-REMINDER_WINDOW = (REMINDER_ANCHOR_HOURS - WINDOW_HOURS, REMINDER_ANCHOR_HOURS)
-SCOUT_WINDOW = (36, 60)
+# The windows hang off the anchors in :mod:`aigaffer.config`, opening at the
+# anchor and staying open until the next report's territory begins, so the
+# first tick to land inside one runs as close to the anchor as the schedule
+# managed — and a late tick, however late, still runs the report rather than
+# standing down. They used to be ninety-minute bands closing at the anchor,
+# until GitHub dropped nine straight hours of cron across one and the week's
+# full report silently never went: a dropped tick now costs lateness, never
+# the report. What keeps a late-open window from sending twice is the store —
+# ``has_run`` in ``__main__`` stands a tick down once its report exists.
+DEADLINE_WINDOW = (REMINDER_ANCHOR_HOURS, DEADLINE_ANCHOR_HOURS)
+REMINDER_WINDOW = (0, REMINDER_ANCHOR_HOURS)
+SCOUT_WINDOW = (DEADLINE_ANCHOR_HOURS, SCOUT_HORIZON_HOURS)
 
 NOT_CONFIGURED = "telegram not configured: the report was kept but not sent"
 
@@ -269,12 +271,15 @@ class SolveResult:
 def decide_mode(now: datetime, deadline: datetime) -> str | None:
     """Which report ``now`` calls for, or None for none at all.
 
-    Three windows, nearest the deadline first. The last hours hold the
-    reminder — the solver checking the full report against the morning's
-    news. The ninety minutes up to a day out are the full deadline report,
-    with an evening left to act on it. A day and a half to two and a half
-    days out is the scout report. Between and either side of them there is
-    nothing worth saying, which is most of the week.
+    Three windows, nearest the deadline first, and contiguous from sixty
+    hours out to the deadline itself. The last three hours hold the reminder
+    — the solver checking the full report against the morning's news. From
+    a day out to those three hours is the full deadline report, aimed at the
+    T-24h anchor and caught up late when the schedule failed it. Beyond a
+    day and up to two and a half days out is the scout report. Past sixty
+    hours there is nothing worth saying yet. This function answers for the
+    clock alone — whether the report it names already ran is the store's
+    question, asked in ``__main__``.
 
     The windows do not overlap as configured, but the constants are
     constants: should widening one ever make a moment ambiguous, the report
@@ -502,7 +507,7 @@ def _run_reminder(
     full report is expensive.
 
     The alert is written to ``state/reports/gw{n}-reminder.md`` and recorded
-    in the store like any run — which is what keeps a 30-minute schedule
+    in the store like any run — which is what keeps an hourly schedule
     from sending it three times — but it never touches the root ``GW{n}.md``:
     that file is the polished verdict, and a checklist overwriting it would
     demote the one document the homepage shows.

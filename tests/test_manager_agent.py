@@ -965,6 +965,21 @@ def test_the_system_prompt_says_nothing_that_changes_between_runs():
     assert "finalize_decision" in SYSTEM_PROMPT
 
 
+def test_the_prompt_orders_the_research_plan_first():
+    # GW2 live: the gaffer spent all eight searches on round-ups and a player
+    # it decided not to buy, and finalized with its own transfer target
+    # unverified. The priority has to be in the prompt — the briefing's list
+    # is flat and the model cannot know it from the tool schema.
+    assert "the players the plan you are minded to finalize" in SYSTEM_PROMPT
+
+
+def test_the_prompt_says_the_search_allowance_is_per_turn():
+    # max_uses is per request, but the model can only discover the cap by
+    # hitting it — and what it concluded live was that research was over.
+    assert "per turn, not for the whole job" in SYSTEM_PROMPT
+    assert "never a reason to finalize unverified" in SYSTEM_PROMPT
+
+
 def test_the_tools_are_the_four_the_plan_names():
     names = [tool.get("name") for tool in TOOLS]
 
@@ -1507,6 +1522,26 @@ def test_a_nudged_conversation_never_ends_on_an_assistant_turn():
 
     for request in client.requests:
         assert request["messages"][-1]["role"] == "user"
+
+
+def test_a_productive_turn_buys_back_the_right_to_pause():
+    # The prompt tells him a turn boundary refreshes the search allowance, so
+    # a bare turn-end is now sometimes the correct move. Forcing on the second
+    # stall of the whole conversation would punish him for following it: the
+    # escalation is for consecutive stalling, and a turn that came back with
+    # real tool calls wipes the slate.
+    client, decision = converse(
+        [
+            reply(text("Out of searches; continuing next turn."), stop="end_turn"),
+            reply(use("adjust_players", adjust())),
+            reply(text("Out again; one more round."), stop="end_turn"),
+            reply(use("finalize_decision", finalize())),
+        ]
+    )
+
+    assert "tool_choice" not in client.requests[1]  # first stall: a word
+    assert "tool_choice" not in client.requests[3]  # a stall after real work: a word again
+    assert decision.source == "manager"
 
 
 def test_a_truncated_turn_is_dropped_and_the_decision_forced():
