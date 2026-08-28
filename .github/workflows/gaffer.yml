@@ -22,6 +22,10 @@ on:
           - scout
           - deadline
           - reminder
+      force:
+        description: "run again even though this week's report exists"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -108,7 +112,11 @@ jobs:
         with: { python-version: "3.12" }
       - run: pip install .
         if: steps.gate.outputs.run == 'true'
-      - run: python -m aigaffer ${{ github.event.inputs.mode || 'auto' }}
+      # A dispatch may ask to run a report the store already has — a re-run
+      # after a fix, with the person clicking the button as the authority the
+      # --force flag was built for. The schedule can never force: its ticks
+      # carry no inputs, so the expression below is empty for them.
+      - run: python -m aigaffer ${{ github.event.inputs.mode || 'auto' }} ${{ github.event.inputs.force == 'true' && '--force' || '' }}
         if: steps.gate.outputs.run == 'true'
         env:
           FPL_TEAM_ID: ${{ secrets.FPL_TEAM_ID }}
