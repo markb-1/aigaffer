@@ -81,7 +81,9 @@ from aigaffer.report.render import (
     NO_CHIP,
     formation,
     played_chip,
+    render_digest,
     render_reminder,
+    render_reminder_digest,
     render_report,
 )
 from aigaffer.report.telegram import send_report
@@ -455,7 +457,25 @@ def run_pipeline(
         _write_report(cfg, event.id, mode, report)
         store.save_run(event.id, mode, report, decision)
     if send:
-        _deliver(cfg, report)
+        # The phone gets the digest — checklist, moves, the gaffer's opening
+        # paragraph, a pointer at the rest. The full report just went to the
+        # diary and the store, which is where the pointer sends the reader.
+        digest = render_digest(
+            _label(mode, drafting=solved.draft_mode),
+            event, choice, lineup, inputs.bootstrap, gaffer,
+            free_transfers=inputs.free_transfers,
+            selling_prices=ledger.selling_prices,
+        )
+        # The two lines the report carries that the renderer cannot know
+        # about ride the digest too, under the same conditions: the accident
+        # notice, because the phone must never read a broken fork as a
+        # confident solver week, and the ledger's discrepancy note, which
+        # fires at most once per gameweek and would otherwise live only in
+        # a diary nobody reads on deadline day.
+        if gaffer is None and cfg.manager_enabled and not solved.draft_mode:
+            digest += f"\n{MANAGER_UNAVAILABLE}\n"
+        digest += _audit_line(ledger)
+        _deliver(cfg, digest)
     return report
 
 
@@ -557,7 +577,15 @@ def _run_reminder(
         event, fresh, stored, changes, inputs.bootstrap,
         selling_prices=ledger.selling_prices,
     )
+    # The buzz is the digest — one checklist, what moved, a pointer — and on
+    # the calm weeks it is the alert itself, byte for byte. The audit line
+    # rides both: the phone is where a bank discrepancy has to be seen.
+    buzz = render_reminder_digest(
+        event, fresh, stored, changes, inputs.bootstrap,
+        selling_prices=ledger.selling_prices,
+    )
     report += _audit_line(ledger)
+    buzz += _audit_line(ledger)
     decision = {
         "mode": REMINDER_MODE,
         "event": event.id,
@@ -570,7 +598,7 @@ def _run_reminder(
     # leave has_run false so the next tick retries, and the history file
     # goes with the store row so nothing on disk claims a reminder happened
     # that nobody felt.
-    if send and not _deliver(cfg, report):
+    if send and not _deliver(cfg, buzz):
         return report
     if save:
         # The ledger's writes, now that the buzz went: the same observation
