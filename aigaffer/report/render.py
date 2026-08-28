@@ -160,6 +160,21 @@ HUMAN_JUDGES = (
 GAFFER_VERDICT = "## The gaffer's verdict (the operative plan)"
 FRESH_SOLVE = "## The solver's fresh answer"
 
+# Where the phone digest sends the reader for everything it left out. The
+# root file is the polished verdict the homepage shows; the reminder's saved
+# alert is the one place the fresh solve still appears in full.
+FULL_REPORT_POINTER = "Full report: GW{gw}.md in the repo."
+FRESH_SOLVE_POINTER = (
+    "The solver's fresh answer is in state/reports/gw{gw}-reminder.md"
+    " in the repo."
+)
+
+# The most of the gaffer's opening the digest will quote. Not a judgement on
+# his prose — the full paragraph is in the report either way — but a phone
+# message has a reader with a deadline, and the cap is what keeps one
+# unusually discursive opening from rebuilding the wall the digest replaced.
+DIGEST_PROSE_CAP = 600
+
 
 def render_report(
     mode: str,
@@ -308,6 +323,113 @@ def render_reminder(
         sections += [block(FRESH_SOLVE, fresh)]
         sections += [HUMAN_JUDGES]
     return "\n\n".join(sections) + "\n"
+
+
+def render_digest(
+    mode: str,
+    event: Event,
+    choice: Plan,
+    lineup: Lineup,
+    bootstrap: Bootstrap,
+    gaffer: "ManagerDecision | None" = None,
+    *,
+    free_transfers: int | None = None,
+    selling_prices: dict[int, int] | None = None,
+) -> str:
+    """The report as the phone gets it. Pure; no I/O.
+
+    The full report is a document — plans, road, chip panel, watchlist — and
+    on a phone it reads as a wall. What a person entering the moves needs is
+    the checklist, the moves priced, the gaffer's opening paragraph, and a
+    pointer at the rest, and that is the whole of this. The full report is
+    unchanged and goes where it always went: the diary and the homepage. The
+    digest is never saved — it is a shorter way of *saying* the decision,
+    not a second record of it.
+    """
+    players = {player.id: player for player in bootstrap.elements}
+    clubs = {team.id: team.short_name for team in bootstrap.teams}
+    chip = played_chip(choice, gaffer)
+    free_hit = _free_hitting(choice, chip)
+
+    sections = [_header(mode, event)]
+    if not _drafting(choice):
+        sections.append(
+            _do_this(
+                event, choice, lineup, players, clubs, chip, free_hit,
+                free_transfers, selling_prices,
+            )
+        )
+    sections.append(_recommendation(choice, players, clubs))
+    if gaffer is not None:
+        sections.append(_gaffer_digest(gaffer))
+    sections.append(FULL_REPORT_POINTER.format(gw=event.id))
+    return "\n\n".join(sections) + "\n"
+
+
+def render_reminder_digest(
+    event: Event,
+    fresh: dict,
+    stored: dict | None,
+    changes: dict,
+    bootstrap: Bootstrap,
+    *,
+    selling_prices: dict[int, int] | None = None,
+) -> str:
+    """The reminder as the phone gets it. Pure; no I/O.
+
+    A calm week's alert — and a week with no full report to check — was
+    already as short as it can honestly be, and the digest is that document
+    byte for byte. The changed week is where the full alert grew two ⏰
+    checklists, and two checklists on one phone screen read as two sets of
+    instructions. So the digest keeps the operative plan as the only
+    checklist, says what the news moved, and points at the saved alert for
+    the solver's fresh answer; the judging reader the full alert addresses
+    can open the repo, and the hurried one is no longer asked to judge.
+    """
+    if stored is None or not changes:
+        return render_reminder(
+            event, fresh, stored, changes, bootstrap,
+            selling_prices=selling_prices,
+        )
+    players = {player.id: player for player in bootstrap.elements}
+    clubs = {team.id: team.short_name for team in bootstrap.teams}
+    sections = [
+        _header("reminder", event),
+        _actions_block("## Do this", event, stored, players, clubs, selling_prices),
+        _changed(changes, players, clubs),
+        FRESH_SOLVE_POINTER.format(gw=event.id),
+    ]
+    return "\n\n".join(sections) + "\n"
+
+
+def _gaffer_digest(gaffer: "ManagerDecision") -> str:
+    """The manager's opening paragraph, and whose decision it is.
+
+    The rationale's convention is three shouted headings, and the first
+    paragraph under the first of them is what he did — the part the person
+    at the phone acts on. Convention is not contract: a rationale in plain
+    prose keeps its first paragraph the same way, and a shouted first line
+    is dropped only when it is a heading and not a sentence.
+    """
+    lines = ["## The Gaffer's view", "", _prose(_opening(gaffer.rationale))]
+    lines += ["", f"{_searches(gaffer.searches)}. {_source(gaffer.source)}"]
+    return "\n".join(lines)
+
+
+def _opening(rationale: str) -> str:
+    """The first paragraph, minus a heading-shaped first line, capped."""
+    lines = str(rationale).strip().splitlines()
+    if lines and lines[0].strip() and lines[0] == lines[0].upper() and "." not in lines[0]:
+        lines = lines[1:]
+    paragraph = []
+    for line in lines:
+        if not line.strip():
+            break
+        paragraph.append(line)
+    text = "\n".join(paragraph).strip()
+    if len(text) > DIGEST_PROSE_CAP:
+        text = text[:DIGEST_PROSE_CAP].rsplit(" ", 1)[0] + " …"
+    return text
 
 
 def _changed(changes: dict, players: dict[int, Player], clubs: dict[int, str]) -> str:

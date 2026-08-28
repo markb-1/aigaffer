@@ -2,15 +2,18 @@ name: gaffer
 
 on:
   schedule:
-    # Hourly, at seven past — off the on-the-hour crush GitHub's scheduler
-    # drops from first. The half-hour tick this replaces was insurance
-    # against dropped runs, and the day GitHub dropped nine straight hours
-    # of them it proved to be no insurance at all: the GW2 deadline report
-    # silently never went. The report windows in Python are late-open now —
-    # any tick that lands before the deadline still sends a missed report,
-    # however late — so tick density buys promptness, not delivery, and one
-    # an hour keeps every report within an hour of its anchor.
-    - cron: "7 * * * *"
+    # Hourly, at thirty-five past: FPL deadlines sit on the half hour almost
+    # without exception, so the windows that hang off them open at :30 and a
+    # tick five minutes later delivers each report about as close to its
+    # anchor as an hourly schedule can (the :07 tick this replaces was 37
+    # minutes late by construction). Off the on-the-hour crush GitHub's
+    # scheduler drops from first, and hourly rather than half-hourly because
+    # density stopped buying delivery when the windows went late-open — any
+    # surviving tick sends a missed report, however late. GitHub's cron is
+    # best-effort and has dropped whole days of ticks; scripts/dispatch-tick.sh
+    # exists to be run from a second scheduler as insurance, and the gate and
+    # the store make the duplicate triggers harmless.
+    - cron: "35 * * * *"
   workflow_dispatch:
     inputs:
       mode:

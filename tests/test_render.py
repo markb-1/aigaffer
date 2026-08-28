@@ -52,7 +52,9 @@ from aigaffer.report.render import (
     NEWS_MOVED,
     NO_FULL_REPORT,
     REMINDER_UNCHANGED,
+    render_digest,
     render_reminder,
+    render_reminder_digest,
     render_report,
 )
 from aigaffer.solver.lineup import ChipEvs, Lineup
@@ -1045,6 +1047,64 @@ def test_the_watchlist_is_the_five_best_players_the_plan_leaves_behind():
     ]
 
 
+# --- the phone digest ------------------------------------------------------
+#
+# What Telegram gets instead of the whole report: the checklist, the
+# recommendation, the gaffer's opening paragraph, and a pointer at the full
+# document. The full report is unchanged — it is the diary and the homepage —
+# and the digest is only ever a shorter way of saying the same decision.
+
+
+def digest(view: ManagerDecision | None = None, mode: str = "deadline") -> str:
+    return render_digest(
+        mode, EVENT, ONE, LINEUP, BOOTSTRAP, view,
+        free_transfers=1,
+    )
+
+
+def test_the_digest_is_the_checklist_the_moves_and_the_view():
+    text = digest(view=gaffer())
+    headings = [line for line in text.splitlines() if line.startswith("#")]
+
+    assert headings == [
+        "# AI Gaffer — GW2 deadline",
+        "## Do this",
+        "## Recommendation",
+        "## The Gaffer's view",
+    ]
+    assert "⏰ Make these by Fri 22 Aug 2025 17:30 UTC — GW2" in text
+    assert "Full report: GW2.md in the repo." in text
+
+
+def test_the_digest_never_carries_the_reports_long_sections():
+    text = digest(view=gaffer())
+    for heading in ("Candidate plans", "Watchlist", "Chip EV", "Starting XI",
+                    "The road ahead"):
+        assert heading not in text
+
+
+def test_the_digest_keeps_the_gaffers_opening_paragraph_only():
+    view = replace(
+        gaffer(),
+        rationale=(
+            "WHAT I DID\nOne transfer, free: Gale out, Reid in.\n\n"
+            "WHAT I LEARNED\nA very long account of every search."
+        ),
+    )
+    text = digest(view=view)
+
+    assert "One transfer, free: Gale out, Reid in." in text
+    assert "WHAT I DID" not in text, "the heading is scaffolding, not prose"
+    assert "WHAT I LEARNED" not in text
+    assert "very long account" not in text
+
+
+def test_a_solver_only_digest_has_no_view_section():
+    text = digest(view=None)
+    assert "The Gaffer's view" not in text
+    assert "## Do this" in text
+
+
 # --- the reminder ----------------------------------------------------------
 #
 # The short alert three hours out. It is rendered from actions dicts — the
@@ -1081,6 +1141,37 @@ def reminder(
         EVENT, fresh or actions(), stored, changes or {}, BOOTSTRAP,
         selling_prices=selling_prices,
     )
+
+
+def reminder_digest(
+    fresh: dict | None = None,
+    stored: dict | None = None,
+    changes: dict | None = None,
+) -> str:
+    return render_reminder_digest(
+        EVENT, fresh or actions(), stored, changes or {}, BOOTSTRAP
+    )
+
+
+def test_a_changed_reminder_digest_keeps_one_checklist():
+    # The phone showed two "Make these" blocks once and it read as two sets
+    # of instructions. The digest keeps the operative plan as the only
+    # checklist, says what moved, and points at the repo for the fresh solve.
+    stored = actions(transfers=[], captain=13, vice=8)
+    text = reminder_digest(stored=stored, changes={"sells_added": [7]})
+
+    assert text.count("⏰") == 1, "one checklist; the fresh solve stays in the repo"
+    assert NEWS_MOVED in text
+    assert FRESH_SOLVE not in text
+    assert HUMAN_JUDGES not in text
+    assert "state/reports/gw2-reminder.md" in text
+
+
+def test_a_calm_reminder_digest_is_the_calm_reminder():
+    # Nothing moved: the alert was already short, and the digest is the same
+    # document, byte for byte. Same when there was no full report to check.
+    assert reminder_digest(stored=actions()) == reminder(stored=actions())
+    assert reminder_digest(stored=None) == reminder(stored=None)
 
 
 def test_the_reminder_is_the_checklist_and_nothing_else():

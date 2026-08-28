@@ -22,11 +22,12 @@ scheduled tick to land inside it; the windows stay open until the next
 report's territory so that a run the scheduler dropped is made up late
 rather than lost. Each is sent once — the store remembers.
 
-Everything goes to Telegram, formatted for a phone. The full reports are also
-kept as a diary in `state/reports/`, and the polished verdict for each
-gameweek is committed by CI to `GW{n}.md` at the repo root — the copy the
-GitHub homepage shows, written by the scout run midweek and overwritten by
-the deadline run.
+Telegram gets a digest, not the document: the ⏰ checklist, the moves priced,
+the gaffer's opening paragraph and a pointer at the rest — a phone message a
+person can act on in one screen. The full reports are kept as a diary in
+`state/reports/`, and the polished verdict for each gameweek is committed by
+CI to `GW{n}.md` at the repo root — the copy the GitHub homepage shows,
+written by the scout run midweek and overwritten by the deadline run.
 
 The reminder is the solver alone — the manager is never woken for it — and
 its ⚠️ means the *news* moved, not that the manager isn't a solver: it diffs
@@ -439,17 +440,26 @@ instead of nothing at all.
 input runs one by name instead of asking the clock (a manual dispatch skips
 the schedule's gate entirely).
 
-The schedule fires hourly (`7 * * * *`) and does nothing at all most of the
-week — a curl-and-jq gate at the top of the workflow checks the next
-deadline and stands the tick down in seconds unless it is within about
-sixty hours (Python stays the authority on the windows; the gate is a
-generous superset that only exists to spare the pip install). Each gameweek
-gets one report of each kind: the SQLite store remembers, so a second tick
-inside a window is a no-op. GitHub drops scheduled runs under load —
-occasionally for hours at a stretch — which is why the windows stay open
-late rather than closing at their anchor: the first tick to survive sends
-whatever the dropped ones owed, and a reminder-hour tick with no full
-report on record runs the full report first. A failed run says so on stdout and sends one line to
+The schedule fires hourly at `35 * * * *` — FPL deadlines sit on the half
+hour, so a :35 tick lands each report about five minutes after its window
+opens — and does nothing at all most of the week: a curl-and-jq gate at the
+top of the workflow checks the next deadline and stands the tick down in
+seconds unless it is within about sixty hours (Python stays the authority
+on the windows; the gate is a generous superset that only exists to spare
+the pip install). Each gameweek gets one report of each kind: the SQLite
+store remembers, so a second tick inside a window is a no-op. GitHub drops
+scheduled runs under load — occasionally for whole days at a stretch —
+which is why the windows stay open late rather than closing at their
+anchor: the first tick to survive sends whatever the dropped ones owed, and
+a reminder-hour tick with no full report on record runs the full report
+first.
+
+Because GitHub's cron is best-effort, `scripts/dispatch-tick.sh` packages a
+tick you can fire from a second scheduler GitHub's load cannot touch — a
+`launchd` job on a Mac, a cron line anywhere, a free ping service. It runs
+the same generous gate locally, dispatches the `auto` mode, and authorizes
+itself from git's stored GitHub credential, so duplicate triggers cost
+seconds and send nothing twice. A failed run says so on stdout and sends one line to
 Telegram — never the exception's own text, which for an `httpx` error
 contains the URL and so the bot token.
 

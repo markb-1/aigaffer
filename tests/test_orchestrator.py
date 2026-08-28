@@ -2076,8 +2076,12 @@ def test_the_report_the_gaffer_wrote_is_the_one_that_is_sent(monkeypatch, tmp_pa
     )
 
     assert len(gaffer.consults) == 1
-    assert sent == [(TOKEN, "42", report)]
     assert "## The Gaffer's view" in report
+    # The digest that went to the phone is built from the same decision: the
+    # gaffer's view rides it, opening paragraph and source line included.
+    [(_, _, message)] = sent
+    assert "## The Gaffer's view" in message
+    assert "Decided by the gaffer." in message
 
 
 # --- the reminder ----------------------------------------------------------
@@ -2536,7 +2540,16 @@ def test_the_report_is_sent_to_telegram(monkeypatch, tmp_path):
         cfg, make_client(pipeline_routes()), Store(tmp_path / "aigaffer.db"), "deadline"
     )
 
-    assert sent == [(TOKEN, "42", report)]
+    # The phone gets the digest — the checklist and the reasoning's opening,
+    # not the whole document; the full report is the file's and the store's.
+    assert len(sent) == 1
+    token, chat, message = sent[0]
+    assert (token, chat) == (TOKEN, "42")
+    assert message != report
+    assert "## Do this" in message
+    assert "Full report: GW2.md in the repo." in message
+    assert "Candidate plans" not in message
+    assert "Watchlist" not in message
 
 
 def test_nothing_is_sent_without_somewhere_to_send_it(monkeypatch, capsys, tmp_path):
