@@ -176,6 +176,16 @@ def test_a_week_fully_reported_stands_down(tmp_path):
     assert cli._mode(_auto_args(), _client_hours_out(2), store) == (None, 2)
 
 
+def test_auto_force_overrules_the_store_not_the_clock(tmp_path):
+    # --force skips the dedupe; the promotion still consults the store, so
+    # with the full report on record the reminder hour stays the reminder's.
+    args = argparse.Namespace(command="auto", force=True)
+    store = Store(tmp_path / "state.db")
+    store.save_run(2, "deadline", "md", {})
+    store.save_run(2, "reminder", "md", {})
+    assert cli._mode(args, _client_hours_out(2), store) == ("reminder", 2)
+
+
 def test_a_reminder_asked_for_by_name_is_not_promoted(tmp_path):
     # Promotion is auto's business: a person naming the reminder on the
     # command line gets the reminder, missing full report or not.

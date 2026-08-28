@@ -12,6 +12,13 @@ from pathlib import Path
 DEADLINE_ANCHOR_HOURS = 24.0
 REMINDER_ANCHOR_HOURS = 3.0
 
+# Where the week's reporting begins: the scout window opens this many hours
+# before the deadline. Beyond it the fixtures are too far off to say anything
+# a person should act on. The workflow's curl-and-jq gate holds a superset of
+# this with slack, so a retune here never needs a matching edit there — but
+# more than two hours of widening does.
+SCOUT_HORIZON_HOURS = 60.0
+
 # Below this many finished gameweeks the season is "early", and two readers
 # hang two different cautions off the one judgement. The briefing warns the
 # manager that the per-90 rates under the projections are one or two matches

@@ -6,8 +6,8 @@ cleanly, which is what it does most of the time. ``scout``, ``deadline`` and
 ``reminder`` run a report by name for someone sitting at a keyboard, and
 unlike ``auto`` they explain themselves when they decide not to.
 
-A gameweek gets one of each report. The store is what remembers that, so a
-schedule that fires every half hour does not send the same thing twice;
+A gameweek gets one of each report. The store is what remembers that, so an
+hourly schedule inside a late-open window does not send the same thing twice;
 ``--force`` is how a person overrules it. ``--dry-run`` prints the report and
 writes nothing anywhere, which is what makes it safe against the live API.
 
@@ -233,8 +233,12 @@ def _mode(
         # but when every tick since T-24h was dropped there is no full report
         # to check, and a solver-only alert is a poor substitute for the one
         # report the week is actually about. So the reminder's hour runs the
-        # missing report instead, and the reminder itself gets a later tick.
-        # Auto's business only: a person naming the reminder gets the reminder.
+        # missing report instead, and the reminder gets a later tick — when
+        # one lands in time; a promotion in the final hour may be the week's
+        # last word, and a manager run started there can even finalize past
+        # the deadline. Late beats never, and that close to it nothing beats
+        # the full verdict. Auto's business only: a person naming the
+        # reminder gets the reminder.
         if mode == REMINDER_MODE and not store.has_run(event.id, DEADLINE_MODE):
             mode = DEADLINE_MODE
 
@@ -246,7 +250,7 @@ def _mode(
 
 def _explain(command: str, reason: str) -> None:
     """Say why nothing happened — unless nothing happening is the normal
-    course of events, which for a job that runs every half hour it is."""
+    course of events, which for a job that runs every hour it is."""
     if command != AUTO:
         print(f"aigaffer: {reason}")
 

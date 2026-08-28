@@ -60,6 +60,7 @@ from aigaffer.config import (
     DEADLINE_ANCHOR_HOURS,
     EARLY_SEASON_GWS,
     REMINDER_ANCHOR_HOURS,
+    SCOUT_HORIZON_HOURS,
     Config,
 )
 from aigaffer.data.fpl_api import FplClient
@@ -123,7 +124,7 @@ DEADLINE_MODE, SCOUT_MODE, REMINDER_MODE = "deadline", "scout", "reminder"
 # ``has_run`` in ``__main__`` stands a tick down once its report exists.
 DEADLINE_WINDOW = (REMINDER_ANCHOR_HOURS, DEADLINE_ANCHOR_HOURS)
 REMINDER_WINDOW = (0, REMINDER_ANCHOR_HOURS)
-SCOUT_WINDOW = (DEADLINE_ANCHOR_HOURS, 60)
+SCOUT_WINDOW = (DEADLINE_ANCHOR_HOURS, SCOUT_HORIZON_HOURS)
 
 NOT_CONFIGURED = "telegram not configured: the report was kept but not sent"
 

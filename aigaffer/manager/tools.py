@@ -66,10 +66,11 @@ job exists to prevent — then your own likely starters, then the rest. Check \
 the date on every report against the date in the briefing: a fitness update \
 from three weeks ago is not team news, and a headline about last season is not \
 news at all. Your search allowance is per turn, not for the whole job: when \
-the tool stops answering mid-turn, end the turn and it comes back fresh on the \
-next one, so running dry is never a reason to finalize unverified — though it \
-is a reason to spend the fresh allowance on the players the plan turns on, not \
-on another round-up.
+the tool stops answering mid-turn, end the turn — carrying any adjust_players \
+calls for what you have already learned, rather than bare prose — and the \
+allowance comes back fresh on the next one, so running dry is never a reason \
+to finalize unverified — though it is a reason to spend the fresh allowance on \
+the players the plan turns on, not on another round-up.
 3. Where you have learned something the projection does not know, call \
 adjust_players. It sets a player's expected minutes for the coming gameweek \
 absolutely — 0 for a player who is out, 20 for a substitute, 90 for a starter — \

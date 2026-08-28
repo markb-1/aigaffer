@@ -346,6 +346,11 @@ class _Conversation:
             if results:
                 self._append(response)
                 self.messages.append({"role": "user", "content": results})
+                # Real work buys back the right to pause: the prompt tells him
+                # a turn boundary refreshes his search allowance, so a bare
+                # turn-end between productive turns is sometimes the correct
+                # move, and only *consecutive* stalling earns the escalation.
+                nudged = False
                 continue
 
             # He talked instead of deciding. Once is worth a word; after that
