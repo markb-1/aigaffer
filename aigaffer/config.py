@@ -12,13 +12,6 @@ from pathlib import Path
 DEADLINE_ANCHOR_HOURS = 24.0
 REMINDER_ANCHOR_HOURS = 3.0
 
-# How wide each report's window is. The schedule ticks every half hour and
-# GitHub drops scheduled runs under load, so a window has to hold more than
-# one tick: ninety minutes holds three, and two of them can vanish before the
-# report does. Wider would start the report early enough to blur what the
-# anchor means; narrower would hang the week on a single tick again.
-WINDOW_HOURS = 1.5
-
 # Below this many finished gameweeks the season is "early", and two readers
 # hang two different cautions off the one judgement. The briefing warns the
 # manager that the per-90 rates under the projections are one or two matches

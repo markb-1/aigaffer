@@ -33,7 +33,13 @@ import httpx
 from aigaffer.backtest import backtest_gw, finished_gameweeks
 from aigaffer.config import Config
 from aigaffer.data.fpl_api import FplClient
-from aigaffer.orchestrator import PipelineError, decide_mode, run_pipeline
+from aigaffer.orchestrator import (
+    DEADLINE_MODE,
+    REMINDER_MODE,
+    PipelineError,
+    decide_mode,
+    run_pipeline,
+)
 from aigaffer.report.telegram import send_report
 from aigaffer.store import Store
 
@@ -223,6 +229,14 @@ def _mode(
         if chosen is None:
             return None, event.id
         mode = chosen
+        # The reminder checks the full report against the morning's news —
+        # but when every tick since T-24h was dropped there is no full report
+        # to check, and a solver-only alert is a poor substitute for the one
+        # report the week is actually about. So the reminder's hour runs the
+        # missing report instead, and the reminder itself gets a later tick.
+        # Auto's business only: a person naming the reminder gets the reminder.
+        if mode == REMINDER_MODE and not store.has_run(event.id, DEADLINE_MODE):
+            mode = DEADLINE_MODE
 
     if store.has_run(event.id, mode) and not args.force:
         _explain(args.command, f"GW{event.id} {mode} has run already — use --force")

@@ -2,14 +2,15 @@ name: gaffer
 
 on:
   schedule:
-    # Every thirty minutes; seven past and thirty-seven past, off the
-    # on-the-hour crush. The report windows are ninety minutes wide, so a
-    # half-hour tick puts three chances inside each one and GitHub can drop
-    # two of them — under load it does drop scheduled runs, and a missed
-    # tick used to cost the week's report outright. Ticking this often is
-    # only affordable because of the gate below: a tick nowhere near a
-    # window costs one curl, not a pip install.
-    - cron: "7,37 * * * *"
+    # Hourly, at seven past — off the on-the-hour crush GitHub's scheduler
+    # drops from first. The half-hour tick this replaces was insurance
+    # against dropped runs, and the day GitHub dropped nine straight hours
+    # of them it proved to be no insurance at all: the GW2 deadline report
+    # silently never went. The report windows in Python are late-open now —
+    # any tick that lands before the deadline still sends a missed report,
+    # however late — so tick density buys promptness, not delivery, and one
+    # an hour keeps every report within an hour of its anchor.
+    - cron: "7 * * * *"
   workflow_dispatch:
     inputs:
       mode:
@@ -44,15 +45,20 @@ jobs:
     timeout-minutes: 30
     steps:
       # The gate, before the checkout and everything else. The schedule ticks
-      # every thirty minutes and Python is the authority on the windows, but
-      # asking Python costs a checkout, a toolchain and a pip install —
-      # minutes of billed runner for the "stand down" answer the tick gets
-      # almost every time. So the first step asks the same question crudely,
-      # with the curl and jq the runner already has: how long to the next
-      # deadline, and is that anywhere near a report window? "Near" is a
-      # generous superset of the Python windows on purpose — the gate exists
-      # to make a no-op tick cost five seconds, never to decide that a report
-      # does not run; every real decision still belongs to decide_mode.
+      # hourly and Python is the authority on the windows, but asking Python
+      # costs a checkout, a toolchain and a pip install — minutes of billed
+      # runner for the "stand down" answer the tick gets most of the week.
+      # So the first step asks the same question crudely, with the curl and
+      # jq the runner already has: is the next deadline anywhere near? The
+      # Python windows are contiguous from sixty hours out to the deadline,
+      # so the gate is one range with slack on both ends — a generous
+      # superset on purpose; the gate exists to make a far-from-deadline
+      # tick cost five seconds, never to decide that a report does not run.
+      # Every real decision still belongs to decide_mode and the store —
+      # which also means the ticks between a sent report and the deadline
+      # pay for a pip install just to stand down in Python. Accepted: the
+      # gate cannot read the store, and a gate clever enough to try is a
+      # gate that can starve the report it exists to protect.
       #
       # A manual dispatch bypasses the gate entirely: a person clicking the
       # button has already decided the run should happen, and the mode input
@@ -83,15 +89,13 @@ jobs:
             || next=""
           if [ -n "$next" ]; then
             secs=$(( next - $(date -u +%s) ))
-            # The supersets, in seconds to the deadline. Python's windows are
-            # reminder 1.5-3h, deadline 22.5-24h, scout 36-60h; each gets
-            # hours of slack on both sides so that clock skew, a slow queue
+            # The superset, in seconds to the deadline. Python's windows run
+            # contiguously from sixty hours out to the deadline itself; two
+            # hours of slack on the far end so that clock skew, a slow queue
             # or a retuned constant in config can never make the gate starve
             # a window it did not know had moved.
             run=false
-            if [ "$secs" -ge 0      ] && [ "$secs" -le 18000  ]; then run=true; fi  # reminder: 0-5h
-            if [ "$secs" -ge 72000  ] && [ "$secs" -le 93600  ]; then run=true; fi  # deadline: 20-26h
-            if [ "$secs" -ge 122400 ] && [ "$secs" -le 223200 ]; then run=true; fi  # scout: 34-62h
+            if [ "$secs" -ge 0 ] && [ "$secs" -le 223200 ]; then run=true; fi  # 0-62h
             echo "next deadline in ${secs}s — run=$run"
           else
             echo "no deadline found (curl or jq came up empty) — failing open"

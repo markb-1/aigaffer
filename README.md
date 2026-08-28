@@ -13,9 +13,14 @@ Three messages per gameweek, each anchored to the deadline:
 
 | Hours before the deadline | Report | What it is for |
 | --- | --- | --- |
-| 36–60 | `scout` | transfer plans while there is still time to think |
-| 22.5–24 | `deadline` | the full verdict, with an evening left to act on it |
-| 1.5–3 | `reminder` | a short alert: the moves, and whether the plan survived the team news |
+| 24–60 | `scout` | transfer plans while there is still time to think — aimed at ~60h out |
+| 3–24 | `deadline` | the full verdict, aimed at T-24h so an evening is left to act on it |
+| 0–3 | `reminder` | a short alert: the moves, and whether the plan survived the team news |
+
+Each report is aimed at the top of its window and sent by the first
+scheduled tick to land inside it; the windows stay open until the next
+report's territory so that a run the scheduler dropped is made up late
+rather than lost. Each is sent once — the store remembers.
 
 Everything goes to Telegram, formatted for a phone. The full reports are also
 kept as a diary in `state/reports/`, and the polished verdict for each
@@ -434,13 +439,17 @@ instead of nothing at all.
 input runs one by name instead of asking the clock (a manual dispatch skips
 the schedule's gate entirely).
 
-The schedule fires every thirty minutes (`7,37 * * * *`) and does nothing at
-all most of the time — a curl-and-jq gate at the top of the workflow checks
-the next deadline and stands the tick down in seconds unless it is near a
-window (Python stays the authority on the windows; the gate is a generous
-superset that only exists to spare the pip install). Each gameweek gets one
-report of each kind: the SQLite store remembers, so a second tick inside a
-window is a no-op. A failed run says so on stdout and sends one line to
+The schedule fires hourly (`7 * * * *`) and does nothing at all most of the
+week — a curl-and-jq gate at the top of the workflow checks the next
+deadline and stands the tick down in seconds unless it is within about
+sixty hours (Python stays the authority on the windows; the gate is a
+generous superset that only exists to spare the pip install). Each gameweek
+gets one report of each kind: the SQLite store remembers, so a second tick
+inside a window is a no-op. GitHub drops scheduled runs under load —
+occasionally for hours at a stretch — which is why the windows stay open
+late rather than closing at their anchor: the first tick to survive sends
+whatever the dropped ones owed, and a reminder-hour tick with no full
+report on record runs the full report first. A failed run says so on stdout and sends one line to
 Telegram — never the exception's own text, which for an `httpx` error
 contains the URL and so the bot token.
 
