@@ -165,8 +165,8 @@ FRESH_SOLVE = "## The solver's fresh answer"
 # alert is the one place the fresh solve still appears in full.
 FULL_REPORT_POINTER = "Full report: GW{gw}.md in the repo."
 FRESH_SOLVE_POINTER = (
-    "The solver's fresh answer is in state/reports/gw{gw}-reminder.md"
-    " in the repo."
+    "The checklist above stays the operative plan. The solver's differing"
+    " fresh answer is in state/reports/gw{gw}-reminder.md in the repo."
 )
 
 # The most of the gaffer's opening the digest will quote. Not a judgement on
@@ -417,10 +417,21 @@ def _gaffer_digest(gaffer: "ManagerDecision") -> str:
 
 
 def _opening(rationale: str) -> str:
-    """The first paragraph, minus a heading-shaped first line, capped."""
+    """The first paragraph, minus a heading-shaped first line, capped.
+
+    The heading may sit flush against its paragraph or a blank line above
+    it — models write both — so the blanks after a dropped heading are
+    skipped before the paragraph is collected. And a rationale that is
+    nothing *but* a shouted line is prose after all: emptied, it would
+    render a view section over nothing, so the original text stands.
+    """
     lines = str(rationale).strip().splitlines()
     if lines and lines[0].strip() and lines[0] == lines[0].upper() and "." not in lines[0]:
-        lines = lines[1:]
+        rest = lines[1:]
+        while rest and not rest[0].strip():
+            rest = rest[1:]
+        if rest:
+            lines = rest
     paragraph = []
     for line in lines:
         if not line.strip():

@@ -19,18 +19,24 @@ REPO="markb-1/aigaffer"
 # dispatch stands the workflow's own gate aside, so an ungated hourly ping
 # would bill a full checkout-and-install all year round. Ping only when the
 # next deadline is within sixty-two hours — the superset of every report
-# window — and fail open like the gate does: if the API or jq comes up
-# empty, one wasted run is cheaper than one starved report.
-next=$(curl -sf --max-time 30 https://fantasy.premierleague.com/api/bootstrap-static/ \
-  | jq -r '[.events[].deadline_time // empty | fromdate? | select(. > now)] | min // empty') \
-  || next=""
-if [ -n "$next" ]; then
+# window. A payload that parses and holds no future deadline is the
+# off-season, a fact, and the tick stands down; only a curl that failed
+# outright fails open, because an unreachable API is not evidence of
+# anything and one wasted run is cheaper than one starved report.
+if payload=$(curl -sf --max-time 30 https://fantasy.premierleague.com/api/bootstrap-static/); then
+  next=$(printf '%s' "$payload" \
+    | jq -r '[.events[].deadline_time // empty | fromdate? | select(. > now)] | min // empty' \
+    2>/dev/null) || next=""
+  [ -n "$next" ] || exit 0
   secs=$(( next - $(date -u +%s) ))
   { [ "$secs" -lt 0 ] || [ "$secs" -gt 223200 ]; } && exit 0
 fi
 
-TOKEN=$(printf 'protocol=https\nhost=github.com\n\n' | git credential fill 2>/dev/null \
-  | awk -F= '/^password=/{print $2}')
+# GIT_TERMINAL_PROMPT=0: with no stored credential this must fail fast, not
+# sit at a username prompt on whatever tty a scheduler happened to allocate.
+TOKEN=$(printf 'protocol=https\nhost=github.com\n\n' \
+  | GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=true git credential fill 2>/dev/null \
+  | sed -n 's/^password=//p')
 [ -n "$TOKEN" ] || exit 0
 
 curl -s -o /dev/null --max-time 30 \

@@ -460,15 +460,22 @@ def run_pipeline(
         # The phone gets the digest — checklist, moves, the gaffer's opening
         # paragraph, a pointer at the rest. The full report just went to the
         # diary and the store, which is where the pointer sends the reader.
-        _deliver(
-            cfg,
-            render_digest(
-                _label(mode, drafting=solved.draft_mode),
-                event, choice, lineup, inputs.bootstrap, gaffer,
-                free_transfers=inputs.free_transfers,
-                selling_prices=ledger.selling_prices,
-            ),
+        digest = render_digest(
+            _label(mode, drafting=solved.draft_mode),
+            event, choice, lineup, inputs.bootstrap, gaffer,
+            free_transfers=inputs.free_transfers,
+            selling_prices=ledger.selling_prices,
         )
+        # The two lines the report carries that the renderer cannot know
+        # about ride the digest too, under the same conditions: the accident
+        # notice, because the phone must never read a broken fork as a
+        # confident solver week, and the ledger's discrepancy note, which
+        # fires at most once per gameweek and would otherwise live only in
+        # a diary nobody reads on deadline day.
+        if gaffer is None and cfg.manager_enabled and not solved.draft_mode:
+            digest += f"\n{MANAGER_UNAVAILABLE}\n"
+        digest += _audit_line(ledger)
+        _deliver(cfg, digest)
     return report
 
 

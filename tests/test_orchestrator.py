@@ -1910,6 +1910,58 @@ def test_a_manager_who_never_loaded_at_all_says_so_in_the_report(
     assert written == report, "the diary and the phone read the same report"
 
 
+def test_the_manager_unavailable_notice_rides_the_digest(monkeypatch, tmp_path):
+    # The digest is the document that actually goes to the phone now, so the
+    # accident has to be said there too — a fork whose install broke must not
+    # read a season of confident solver digests without being told.
+    def never(consult: Consult) -> ManagerDecision:
+        raise AssertionError("the manager was asked with his own module broken")
+
+    stub_gaffer(monkeypatch, never)
+    monkeypatch.setitem(sys.modules, "aigaffer.manager.agent", PoisonedModule())
+    sent = []
+    monkeypatch.setattr(orchestrator, "send_report", lambda *args: sent.append(args))
+    cfg = Config(
+        team_id=TEAM_ID,
+        telegram_token=TOKEN,
+        telegram_chat_id="42",
+        state_dir=tmp_path / "state",
+        anthropic_api_key="sk-test",
+    )
+
+    run_pipeline(
+        cfg, make_client(pipeline_routes()), Store(tmp_path / "aigaffer.db"), "scout"
+    )
+
+    [(_, _, message)] = sent
+    assert orchestrator.MANAGER_UNAVAILABLE in message
+
+
+def test_the_audit_line_rides_the_digest_as_well_as_the_report(
+    monkeypatch, tmp_path
+):
+    # The ledger's discrepancy note fires at most once per gameweek and the
+    # phone is where it has to be seen — a note only the diary carries is a
+    # note nobody reads on deadline day.
+    monkeypatch.setattr(orchestrator, "_audit_line", lambda ledger: "\nAUDIT-MARK\n")
+    sent = []
+    monkeypatch.setattr(orchestrator, "send_report", lambda *args: sent.append(args))
+    cfg = Config(
+        team_id=TEAM_ID,
+        telegram_token=TOKEN,
+        telegram_chat_id="42",
+        state_dir=tmp_path / "state",
+    )
+
+    report = run_pipeline(
+        cfg, make_client(pipeline_routes()), Store(tmp_path / "aigaffer.db"), "deadline"
+    )
+
+    [(_, _, message)] = sent
+    assert "AUDIT-MARK" in report
+    assert "AUDIT-MARK" in message
+
+
 def test_a_manager_who_was_reached_never_gets_the_note(monkeypatch, tmp_path):
     # The Gaffer's view says whose pick it is, in his own section. A second
     # line saying the same thing would be the report explaining itself twice.

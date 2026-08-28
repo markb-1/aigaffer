@@ -458,8 +458,10 @@ Because GitHub's cron is best-effort, `scripts/dispatch-tick.sh` packages a
 tick you can fire from a second scheduler GitHub's load cannot touch — a
 `launchd` job on a Mac, a cron line anywhere, a free ping service. It runs
 the same generous gate locally, dispatches the `auto` mode, and authorizes
-itself from git's stored GitHub credential, so duplicate triggers cost
-seconds and send nothing twice. A failed run says so on stdout and sends one line to
+itself from git's stored GitHub credential. Duplicate triggers send nothing
+twice — the store stands the loser down — though a dispatched duplicate
+bills the checkout and install it took to ask, which is why the script
+gates itself instead of pinging year-round. A failed run says so on stdout and sends one line to
 Telegram — never the exception's own text, which for an `httpx` error
 contains the URL and so the bot token.
 

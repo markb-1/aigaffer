@@ -1105,6 +1105,28 @@ def test_a_solver_only_digest_has_no_view_section():
     assert "## Do this" in text
 
 
+def test_the_opening_survives_a_blank_line_after_the_heading():
+    # Models routinely put a blank line under a shouted heading, and the
+    # convention in the prompt does not forbid it; the digest must not render
+    # a view section over nothing.
+    view = replace(
+        gaffer(),
+        rationale=(
+            "WHAT I DID\n\nOne transfer, free: Gale out, Reid in.\n\n"
+            "WHAT I LEARNED\nA long account."
+        ),
+    )
+    text = digest(view=view)
+
+    assert "One transfer, free: Gale out, Reid in." in text
+    assert "long account" not in text
+
+
+def test_a_rationale_that_is_all_heading_is_kept_rather_than_emptied():
+    view = replace(gaffer(), rationale="ROLL THE TRANSFER")
+    assert "ROLL THE TRANSFER" in digest(view=view)
+
+
 # --- the reminder ----------------------------------------------------------
 #
 # The short alert three hours out. It is rendered from actions dicts — the
@@ -1165,6 +1187,9 @@ def test_a_changed_reminder_digest_keeps_one_checklist():
     assert FRESH_SOLVE not in text
     assert HUMAN_JUDGES not in text
     assert "state/reports/gw2-reminder.md" in text
+    # The ⚠️ lines follow an imperative checklist, so the digest must say in
+    # words which one stands — nothing may read as an amendment.
+    assert "The checklist above stays the operative plan" in text
 
 
 def test_a_calm_reminder_digest_is_the_calm_reminder():
