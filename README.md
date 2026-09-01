@@ -110,13 +110,17 @@ commit history keeps the order they arrived in.
 
 ### What it reads — and what it cannot know
 
-Everything comes from the FPL public API and nothing else: the bootstrap
-(players, prices, season totals of goals, assists, expected goals and
-assists, saves, bonus, defensive actions, minutes, team strengths), the
-fixture list, each shortlisted player's element-summary (his gameweek-by-
-gameweek minutes this season and one row per past season), and the entry's
-own picks, transfers and chip history. No paid data, no odds feeds, no
-scraped team news.
+Everything live comes from the FPL public API: the bootstrap (players,
+prices, season totals of goals, assists, expected goals and assists,
+saves, bonus, defensive actions, minutes, transfer counts), the fixture
+list with results, each shortlisted player's element-summary (his
+gameweek-by-gameweek minutes this season and one row per past season),
+and the entry's own picks, transfers and chip history. Beside it ride two
+small vendored files, distilled once a year from the public
+[vaastav/Fantasy-Premier-League](https://github.com/vaastav/Fantasy-Premier-League)
+dataset: last season's per-player totals (`aigaffer/data/prior_season.csv`)
+and two seasons of match results (`aigaffer/data/results.csv`) — the past
+the API cannot serve. No paid data, no odds feeds, no scraped team news.
 
 Three blind spots are structural rather than accidental. The API never says
 what you paid for anyone — and purchase price is the number selling actually
@@ -134,10 +138,10 @@ the job the model cannot do, and the reason there is a manager at all.
 
 ### The model
 
-Expected points are built fixture by fixture: the opponent's strength sets
-how likely a goal or a clean sheet is, the player's expected minutes set how
-much of it he is around for, and his season so far says what he does with
-the time. A gameweek is the sum over his club's fixtures in it, so a blank
+Expected points are built fixture by fixture: the two teams' fitted
+strengths set how likely a goal or a clean sheet is, the player's expected
+minutes set how much of it he is around for, and his seasons — this one
+and, discounted, the last — say what he does with the time. A gameweek is the sum over his club's fixtures in it, so a blank
 scores nothing and a double scores twice without any special case.
 
 **Expected minutes** are the mean of his last five *played* gameweeks —
@@ -152,16 +156,28 @@ old guess — 75 minutes if he has started this season, 20 if not.
 **Per-90 rates** — goals, assists, saves, bonus, defensive contributions —
 start as season totals divided by season minutes, with two lines of caution.
 A rate is never taken over less than a full match, and no minutes is no rate
-at all. And after the division each rate is shrunk toward a coarse
+at all. A returning player's last season is pooled in first, as discounted
+evidence — a third weight (a quarter for saves, and halved again for a
+summer club move), joined on the player code that survives the id reset —
+so in August an elite forward opens at an elite rate rather than at the
+league average, and the new season's own minutes displace the old one's
+around midwinter. Then the pooled rate is shrunk toward a coarse
 league-average prior for the position, weighted as if the prior were six
-nineties of the player's own play: at the start of a season his rate is
-mostly the prior, and by a couple of seasons it is almost entirely his own.
-That is what keeps one loud opening gameweek from annualising a £4.5m
-defender into an elite striker and handing him the armband.
+nineties of the player's own play, which is what keeps one loud opening
+gameweek from annualising a £4.5m defender into an elite striker — and
+what a newcomer with no season behind him is priced on alone.
 
-**Fixture factors** scale a player's attacking output and his side's
-expected goals conceded by the opponent's strength columns, clamped to
-0.7–1.3 — no fixture is ever so good or so bad that it triples anybody.
+**Fixture factors** come from team strengths fitted on results — a
+time-decayed Poisson with home advantage, refit on every run from the two
+vendored seasons plus whatever the live one has finished, so the ratings
+sharpen weekly for free. A player's attacking factor reads the opponent's
+fitted defence and the venue (his own team's attack stays out — his per-90s
+already embody it), clamped to 0.7–1.3 so no fixture ever triples anybody;
+the goals his side concedes read *both* teams, which is what lets a strong
+defence keep more clean sheets than a weak one against the same opponent.
+FPL's editorial strength columns remain as the fallback: a failed fit says
+so on the log and prices the week exactly as the model did before the fit
+existed.
 
 **The horizon** is six gameweeks, each step discounted by 0.85, because
 points further out are worth less to a decision made today.
@@ -417,7 +433,7 @@ how far adrift that left the estimates.
 
 ### Kill switches
 
-Three repository variables — **Settings → Secrets and variables → Actions →
+Four repository variables — **Settings → Secrets and variables → Actions →
 Variables** — stand parts of the system down without a commit to the
 workflow and without throwing away a secret:
 
@@ -426,6 +442,7 @@ workflow and without throwing away a secret:
 | `AIGAFFER_MANAGER` | `0` | the solver alone, even with a key: byte-identical to the solver-only pipeline |
 | `AIGAFFER_PLANNER` | `single` | the single-week solver answers alone, no window |
 | `AIGAFFER_CHIPS` | `off` | chips advisory only: priced in the panel, planned by nobody |
+| `AIGAFFER_STRENGTH` | `off` | fixtures priced by FPL's strength columns, the fitted team-strength model asked nothing |
 
 Each switch takes exactly one literal value, and everything else — a typo,
 an empty export, a `0` where `off` was meant — leaves the default standing,
@@ -448,9 +465,9 @@ repo cloned, running `python -m aigaffer auto` on an hourly timer at :35
 and pushing the state back (FPL deadlines sit on the half hour, so a :35
 tick lands each report about five minutes after its window opens; the
 store then stands GitHub's :50 tick down, and carries the report if your
-box misses). The Actions workflow does nothing at all most of the week: a
-curl-and-jq gate at the
-top of the workflow checks the next deadline and stands the tick down in
+box misses). The Actions workflow does nothing at all most of the week:
+a curl-and-jq gate at its top checks the next deadline and stands the tick
+down in
 seconds unless it is within about sixty hours (Python stays the authority
 on the windows; the gate is a generous superset that only exists to spare
 the pip install). Each gameweek gets one report of each kind: the SQLite
@@ -468,8 +485,10 @@ the same generous gate locally, dispatches the `auto` mode, and authorizes
 itself from git's stored GitHub credential. Duplicate triggers send nothing
 twice — the store stands the loser down — though a dispatched duplicate
 bills the checkout and install it took to ask, which is why the script
-gates itself instead of pinging year-round. A failed run says so on stdout and sends one line to
-Telegram — never the exception's own text, which for an `httpx` error
+gates itself instead of pinging year-round.
+
+Whoever fires the tick, a failed run says so on stdout and sends one line
+to Telegram — never the exception's own text, which for an `httpx` error
 contains the URL and so the bot token.
 
 **GitHub disables scheduled workflows after 60 days without repository
@@ -602,10 +621,12 @@ top twenty who scored five or more.
 **This is not a true backtest.** Three things here know how the gameweek
 turned out, and all three flatter the model:
 
-1. The season totals the rates are taken from, the prices and the team
-   strengths come from the bootstrap as it stands today, which includes the
-   gameweek being graded and every one since: the model is asked to rank a
-   week it has already seen.
+1. The season totals the rates are taken from and the prices come from the
+   bootstrap as it stands today, which includes the gameweek being graded
+   and every one since: the model is asked to rank a week it has already
+   seen. (The fitted team strengths are the exception — they are rebuilt
+   from results before the graded round, dated at its deadline, and do not
+   leak.)
 2. The shortlist admits only players available *today*, so anyone since injured
    or gone is never graded — the population is the survivors.
 3. The shortlist then cuts by season-to-date total points, today's total,
@@ -667,13 +688,13 @@ Still not shipped, deliberately:
    order the report prints is the solver's — substitute keeper first, then by
    next gameweek's projection — and it is a good default and nobody's judgement
    about which of two fringe players is likelier to have a game at all.
-8. **Price-change pressure in the briefing.** The spec lists it among the
-   manager's inputs and the briefing does not carry it, so a player about to
-   rise or fall reads to him exactly like one who is not, and "buy him this
-   week rather than next" is an argument he cannot make. The bootstrap does
-   publish the transfer counts it would be estimated from; the estimate itself
-   is a model of an algorithm FPL does not document, which is why it is not in
-   here pretending to be a fact.
+8. **A rise-tonight alert between reports.** The briefing now carries a
+   price watch — the market's movers among the relevant players, framed
+   strictly as timing for a transfer already decided — but nothing pings
+   between reports when a planned buy is surging, so a Tuesday-night rise
+   ahead of a Friday deadline is only reported after it happened. FPL's
+   change thresholds are undocumented, and the watch reports volumes rather
+   than pretending to predict them.
 9. **A search budget for the run.** `max_uses: 8` on the web search tool is a
    per-request cap — one assistant turn — not a budget for the conversation, so
    a twelve-turn run could in principle spend eight searches in each of them.
