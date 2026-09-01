@@ -39,12 +39,14 @@ model that has stopped ranking better than chance.
 """
 
 from dataclasses import dataclass
+from datetime import date
 from itertools import groupby
 from math import sqrt
 
 from aigaffer.data.fpl_api import FplClient
 from aigaffer.data.models import Bootstrap, Fixture, GwHistory
 from aigaffer.model.minutes import expected_minutes
+from aigaffer.model.strength import build_team_strengths
 from aigaffer.model.xp import project_all
 from aigaffer.orchestrator import history_pool
 
@@ -90,7 +92,25 @@ def backtest_gw(
         pid: expected_minutes(_before(history, gw), players[pid])
         for pid, history in histories.items()
     }
-    projections = project_all(bootstrap, fixtures, xmins, gw, horizon=1)
+    # The strength fit lives under the same no-peeking rule as the minutes
+    # model: only fixtures from rounds before the one being scored, dated
+    # at that gameweek's own deadline so the decay reads the calendar as
+    # it stood. The fit failing, or a codeless bootstrap, is the editorial
+    # columns — the same net the live run stands on.
+    event = next((e for e in bootstrap.events if e.id == gw), None)
+    as_of = (
+        event.deadline_time.date()
+        if event is not None and event.deadline_time is not None
+        else date.today()
+    )
+    strengths = build_team_strengths(
+        bootstrap,
+        [f for f in fixtures if f.event is not None and f.event < gw],
+        as_of,
+    )
+    projections = project_all(
+        bootstrap, fixtures, xmins, gw, horizon=1, strengths=strengths
+    )
 
     outcomes = [
         PlayerOutcome(pid, projections[pid].per_gw[gw], sum(scores))

@@ -242,3 +242,23 @@ def test_a_season_with_nothing_finished_is_said_so(monkeypatch, capsys):
 
     assert cli.main(["backtest"]) == 1
     assert "no gameweek has finished" in capsys.readouterr().out
+
+
+def test_the_gameweek_being_scored_never_reaches_the_strength_fit(monkeypatch):
+    # The fit gets only fixtures from rounds before the one being scored,
+    # dated at that gameweek's own deadline — the same no-peeking rule the
+    # minutes model lives under, enforced at the seam.
+    from aigaffer import backtest as bt
+
+    seen = {}
+
+    def spy(bootstrap, fixtures, as_of, vendored=None):
+        seen["events"] = {f.event for f in fixtures}
+        seen["as_of"] = as_of
+        return None
+
+    monkeypatch.setattr(bt, "build_team_strengths", spy)
+    run(backtest_routes())
+
+    assert seen, "the backtest asked the fit"
+    assert all(event is not None and event < GW for event in seen["events"])
