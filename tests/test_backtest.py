@@ -248,6 +248,8 @@ def test_the_gameweek_being_scored_never_reaches_the_strength_fit(monkeypatch):
     # The fit gets only fixtures from rounds before the one being scored,
     # dated at that gameweek's own deadline — the same no-peeking rule the
     # minutes model lives under, enforced at the seam.
+    from datetime import date
+
     from aigaffer import backtest as bt
 
     seen = {}
@@ -262,3 +264,6 @@ def test_the_gameweek_being_scored_never_reaches_the_strength_fit(monkeypatch):
 
     assert seen, "the backtest asked the fit"
     assert all(event is not None and event < GW for event in seen["events"])
+    # And dated at the scored gameweek's own deadline, so the decay reads
+    # the calendar as it stood — not as it stands today.
+    assert seen["as_of"] == date(2025, 8, 22)

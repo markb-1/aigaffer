@@ -63,9 +63,12 @@ PSEUDO_MATCHES = 6
 PROMOTED_ATTACK = 0.85
 PROMOTED_DEFENCE = 1.15
 
-# Convergence: iterative scaling on this problem moves in strides, so the
-# cap is generous and the tolerance is stricter than anything downstream
-# can see. Deterministic by construction — fixed sweeps, sorted teams.
+# Convergence: iterative scaling on this problem moves in strides — a
+# dozen sweeps on real data — and is measured across the whole sweep,
+# re-centring included, because the per-step sizes alone lie: with
+# pseudo-matches in the likelihood the re-centring is not quite a no-op,
+# and a fit that watched only its steps would chase the residue forever.
+# Deterministic by construction — fixed sweeps, sorted teams.
 MAX_SWEEPS = 200
 TOLERANCE = 1e-9
 
@@ -112,14 +115,20 @@ class TeamStrengths:
     ``factors`` keeps the exact contract ``fixture_factors`` has always
     served — ``(att_factor, lam)`` — so the projection model consumes a
     fit and the editorial columns through one shape. A code the fit never
-    saw (zero included) gets the neutral answer rather than a crash: the
-    factor of an average fixture, the league-average concession.
+    saw (zero included) gets the neutral answer rather than a crash: a
+    factor of one, and a concession near the league average (a few
+    percent under it — the geometric rather than arithmetic middle of
+    the fitted spread, close enough for a code that should not exist).
     """
 
     mu: float
     home: float
     attack: dict[int, float]
     defence: dict[int, float]
+    # How many sweeps the fit took. Metadata, not model: it exists so a
+    # test can hold the loop to its own convergence claim. Zero on a
+    # hand-built instance, which fitted nothing.
+    sweeps: int = 0
 
     def factors(
         self, team_code: int, opponent_code: int, opponent_at_home: bool
@@ -132,8 +141,10 @@ class TeamStrengths:
         # The player's own attack stays out of his factor — his per-90
         # rates were earned by this team's attack and multiplying it back
         # in would count it twice. What is left is the opponent's fitted
-        # defence and the venue, centred on home/2 so that the average
-        # fixture of a home-and-away season multiplies by one.
+        # defence and the venue, centred on home/2 so that a home-and-away
+        # season multiplies by one on the log scale (the arithmetic mean
+        # sits a fraction over — cosh of half the home boost — which is
+        # noise against everything else in a projection).
         venue = 0.0 if opponent_at_home else self.home
         att_factor = _bounded(exp(def_j + venue - self.home / 2))
         # The concession is the whole point of the fit: both teams in one
@@ -185,8 +196,16 @@ def fit_team_strengths(
     attack = {code: 0.0 for code in teams}
     defence = {code: 0.0 for code in teams}
 
-    for _ in range(MAX_SWEEPS):
-        biggest = 0.0
+    sweeps = 0
+    for sweeps in range(1, MAX_SWEEPS + 1):
+        # Convergence is judged on where the parameters END UP after the
+        # whole sweep, re-centring included — not on the step sizes. The
+        # re-centring keeps every real-match λ fixed, but the pseudo
+        # expectations shift under it (exp(μ + att) picks up the defence
+        # mean and vice versa), so at the fixed point each iterative step
+        # is exactly undone by the projection: nonzero steps, stationary
+        # parameters. Watching the steps alone would burn the cap forever.
+        before = (mu, home, dict(attack), dict(defence))
 
         # μ and home first: scale before shape.
         scored = total_expected = 0.0
@@ -205,13 +224,9 @@ def fit_team_strengths(
                 exp(mu + attack[code]) + exp(mu + defence[code])
             )
         if total_expected > 0 and scored > 0:
-            step = log(scored / total_expected)
-            mu += step
-            biggest = max(biggest, abs(step))
+            mu += log(scored / total_expected)
         if home_expected > 0 and home_scored > 0:
-            step = log(home_scored / home_expected)
-            home += step
-            biggest = max(biggest, abs(step))
+            home += log(home_scored / home_expected)
 
         # Then every attack and defence, by iterative scaling.
         for code in teams:
@@ -233,16 +248,14 @@ def fit_team_strengths(
             c += PSEUDO_MATCHES * against_goals
             ce += PSEUDO_MATCHES * exp(mu + defence[code])
             if e > 0 and s > 0:
-                step = log(s / e)
-                attack[code] += step
-                biggest = max(biggest, abs(step))
+                attack[code] += log(s / e)
             if ce > 0 and c > 0:
-                step = log(c / ce)
-                defence[code] += step
-                biggest = max(biggest, abs(step))
+                defence[code] += log(c / ce)
 
-        # Re-centre so the sums stay zero, folding the means into μ so
-        # that no λ moves an inch in the process.
+        # Re-centre so the sums stay zero, folding the means into μ.
+        # Every real-match λ is invariant under this; the pseudo margins
+        # are not, quite, which is why convergence is measured below on
+        # the sweep's net effect and never on the steps.
         mean_att = sum(attack.values()) / len(teams)
         mean_def = sum(defence.values()) / len(teams)
         for code in teams:
@@ -250,10 +263,19 @@ def fit_team_strengths(
             defence[code] -= mean_def
         mu += mean_att + mean_def
 
-        if biggest < TOLERANCE:
+        b_mu, b_home, b_att, b_def = before
+        moved = max(
+            abs(mu - b_mu),
+            abs(home - b_home),
+            max(abs(attack[c] - b_att[c]) for c in teams),
+            max(abs(defence[c] - b_def[c]) for c in teams),
+        )
+        if moved < TOLERANCE:
             break
 
-    return TeamStrengths(mu=mu, home=home, attack=attack, defence=defence)
+    return TeamStrengths(
+        mu=mu, home=home, attack=attack, defence=defence, sweeps=sweeps
+    )
 
 
 def build_team_strengths(

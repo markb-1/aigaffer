@@ -160,3 +160,44 @@ def test_a_codeless_bootstrap_stands_down_quietly(capsys):
     )
     assert fit is None
     assert capsys.readouterr().out == ""
+
+
+def test_the_fit_converges_before_the_cap():
+    # The loop must actually reach its tolerance, not settle into a
+    # step-and-recentre limit cycle that burns every sweep: the sweep
+    # count rides the result so the claim is checkable.
+    from aigaffer.model.strength import MAX_SWEEPS
+
+    matches = league(
+        (1, 2, 3, 0), (2, 1, 0, 3), (1, 3, 3, 0), (3, 1, 0, 3),
+        (2, 3, 1, 1), (3, 2, 1, 1),
+    )
+    fit = fit_team_strengths(matches, {1, 2, 3}, TODAY)
+    assert 0 < fit.sweeps < MAX_SWEEPS
+
+
+def test_the_attack_factor_reads_the_opponents_defence_and_the_venue():
+    # The half of the contract no test pinned: a leaky opponent lifts a
+    # player's attacking factor above a stingy one, and his own team at
+    # home lifts it above the same fixture away.
+    matches = league(
+        (1, 3, 1, 0), (3, 1, 0, 1),   # team 1 keeps clean sheets
+        (2, 3, 2, 3), (3, 2, 3, 2),   # team 2 leaks
+    )
+    fit = fit_team_strengths(matches, {1, 2, 3}, TODAY)
+    vs_stingy, _ = fit.factors(3, 1, opponent_at_home=False)
+    vs_leaky, _ = fit.factors(3, 2, opponent_at_home=False)
+    assert vs_leaky > vs_stingy
+
+    # The venue pin needs a league where home means something: every side
+    # scores twice at home and once away, and the boost must land on the
+    # attacking side — the player's factor is higher when his team hosts.
+    scores = {}
+    for h in (1, 2, 3):
+        for a in (1, 2, 3):
+            if h != a:
+                scores[(h, a)] = (2, 1)
+    biased = fit_team_strengths(round_robin(scores), {1, 2, 3}, TODAY)
+    at_home, _ = biased.factors(1, 2, opponent_at_home=False)
+    away, _ = biased.factors(1, 2, opponent_at_home=True)
+    assert at_home > away, "the venue boost belongs to the attacking side"

@@ -389,8 +389,12 @@ def project_all(
     """
     teams = {team.id: team for team in bootstrap.teams}
     codes = {team.id: team.code for team in bootstrap.teams}
-    home_averages = league_averages(bootstrap.teams, at_home=True)
-    away_averages = league_averages(bootstrap.teams, at_home=False)
+    # The editorial averages are only priced when the fit is absent — the
+    # one branch that reads them — so a run with strengths never pays for
+    # them. `teams` stays: the legacy branch is the only reader there too.
+    if strengths is None:
+        home_averages = league_averages(bootstrap.teams, at_home=True)
+        away_averages = league_averages(bootstrap.teams, at_home=False)
     schedule = _schedule(fixtures)
     gameweeks = range(start_event, start_event + horizon)
     # The vendored prior season, joined on the permanent code. A hand-built
