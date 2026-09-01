@@ -1435,6 +1435,32 @@ def _write_report(cfg: Config, event_id: int, mode: str, report: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(report, encoding="utf-8")
     (cfg.state_dir.parent / f"GW{event_id}.md").write_text(report, encoding="utf-8")
+    _point_readme(cfg.state_dir.parent, event_id)
+
+
+# GitHub's tab row (README / LICENSE / …) is a fixed set and GW{n}.md can
+# never join it, so the README itself carries one marked line the run
+# rewrites — the verdict, one click from the homepage. The marker is the
+# whole contract: a README without it (a fork that deleted the line, a
+# test that never wrote one) is left byte-for-byte alone.
+LATEST_MARKER = "<!-- latest-verdict -->"
+
+
+def _point_readme(root, event_id: int) -> None:
+    """Rewrite the README's marked line to point at ``GW{event_id}.md``."""
+    readme = root / "README.md"
+    if not readme.exists():
+        return
+    lines = readme.read_text(encoding="utf-8").splitlines(keepends=True)
+    for i, line in enumerate(lines):
+        if LATEST_MARKER in line:
+            ending = "\n" if line.endswith("\n") else ""
+            lines[i] = (
+                f"📋 **Latest verdict: [GW{event_id}](GW{event_id}.md)**"
+                f" {LATEST_MARKER}{ending}"
+            )
+            readme.write_text("".join(lines), encoding="utf-8")
+            return
 
 
 def _deliver(cfg: Config, report: str) -> bool:

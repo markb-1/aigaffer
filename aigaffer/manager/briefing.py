@@ -85,6 +85,13 @@ WATCHLIST_SIZE = 10
 # rather than given thirty lines it would not earn.
 RELEVANT_PER_LINE = 6
 
+# The price watch's bar and its ceiling. Fifty thousand net transfers is
+# where a price move starts becoming plausible within a day or two; ten
+# lines is the most timing information can be worth before it becomes a
+# second research list in a cached prompt.
+NET_TRANSFERS_NOTEWORTHY = 50_000
+PRICE_WATCH_LINES = 10
+
 DATE_FORMAT = "%a %d %b %Y"
 
 PICK_MARKER = "  <- solver pick"
@@ -249,6 +256,11 @@ def build_briefing(
         _watchlist(held, board, event),
         _relevant(solve, board),
     ]
+    # The market on a quiet day — or a payload from before the fields were
+    # read — adds nothing, and the briefing stays byte-for-byte what it was.
+    watch = _price_watch(solve, board)
+    if watch is not None:
+        sections.append(watch)
     return "\n\n".join(sections)
 
 
@@ -603,6 +615,45 @@ def _relevant(solve: "SolveResult", board: _Board) -> str:
         ", ".join(entries[start : start + RELEVANT_PER_LINE])
         for start in range(0, len(entries), RELEVANT_PER_LINE)
     ]
+    return "\n".join(lines)
+
+
+def _price_watch(solve: "SolveResult", board: _Board) -> str | None:
+    """The market's movers among the relevant players, or None on a quiet day.
+
+    Timing information, and only that: FPL prices move overnight on these
+    volumes, so a buy the plan is already sure of may cost a tenth more at
+    the deadline than tonight — worth a sentence in the rationale. It is
+    never an argument for a transfer, and the preamble says so in the
+    manager's hearing. Capped and thresholded because the briefing is a
+    cached prompt and a quiet market should cost it nothing: a payload
+    from before the fields were read produces no section at all.
+    """
+    rows = []
+    for pid in relevant_players(solve):
+        player = board.players[pid]
+        net = player.transfers_in_event - player.transfers_out_event
+        if abs(net) < NET_TRANSFERS_NOTEWORTHY and player.cost_change_event == 0:
+            continue
+        rows.append((abs(net), net, pid, player.cost_change_event))
+    if not rows:
+        return None
+    rows.sort(key=lambda row: (-row[0], row[2]))
+    lines = [
+        "## Price watch",
+        "",
+        "The market, for timing only — prices move nightly on volumes like"
+        " these, so a buy the plan is already sure of may be cheaper tonight"
+        " than at the deadline. Never a reason to make a transfer.",
+        "",
+    ]
+    for _, net, pid, moved in rows[:PRICE_WATCH_LINES]:
+        direction = "in" if net >= 0 else "out"
+        line = f"- {_named(pid, board)}: net {abs(net):,} transfers {direction}"
+        if moved:
+            verb = "rose" if moved > 0 else "fell"
+            line += f"; {verb} £{abs(moved) / 10:.1f}m overnight"
+        lines.append(line)
     return "\n".join(lines)
 
 

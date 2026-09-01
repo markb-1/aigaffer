@@ -7,6 +7,8 @@ result to a Claude agent that reads the week's team news and may overrule it,
 and messages the finished verdict to your phone. It advises and never acts:
 no transfer is ever executed, and the final tap in the app is yours.
 
+📋 **Latest verdict: [GW3](GW3.md)** <!-- latest-verdict -->
+
 ## What arrives, and when
 
 Three messages per gameweek, each anchored to the deadline:

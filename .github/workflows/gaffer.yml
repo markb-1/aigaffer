@@ -169,6 +169,9 @@ jobs:
           if compgen -G "GW*.md" > /dev/null; then
             git add GW*.md
           fi
+          # The README's latest-verdict line moves with the root file. An
+          # unchanged README stages as nothing, so this costs no commit.
+          git add README.md
           if git diff --cached --quiet; then
             echo "state unchanged — nothing to commit"
             exit 0

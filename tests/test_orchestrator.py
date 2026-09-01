@@ -430,6 +430,41 @@ def test_the_root_gw_file_carries_the_report(tmp_path):
     assert (tmp_path / "GW2.md").read_text(encoding="utf-8") == report
 
 
+def test_the_readme_points_at_the_latest_verdict(tmp_path):
+    # GitHub's tab row cannot host GW{n}.md, so the README carries one
+    # marked line the run rewrites: a link to the verdict the homepage
+    # would otherwise bury. Only the marked line moves; without a marker —
+    # or without a README at all — the run touches nothing and says nothing.
+    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
+    readme = tmp_path / "README.md"
+    readme.write_text(
+        "# AI Gaffer\n\nplaceholder <!-- latest-verdict -->\n\nThe pitch.\n",
+        encoding="utf-8",
+    )
+
+    run_pipeline(
+        cfg, make_client(pipeline_routes()), Store(cfg.state_dir / "a.db"), "scout"
+    )
+
+    text = readme.read_text(encoding="utf-8")
+    assert "📋 **Latest verdict: [GW2](GW2.md)** <!-- latest-verdict -->" in text
+    assert "placeholder" not in text
+    assert text.startswith("# AI Gaffer\n"), "the rest of the file is untouched"
+    assert text.endswith("The pitch.\n")
+
+
+def test_a_readme_without_the_marker_is_left_alone(tmp_path):
+    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
+    readme = tmp_path / "README.md"
+    readme.write_text("# Fork without the line\n", encoding="utf-8")
+
+    run_pipeline(
+        cfg, make_client(pipeline_routes()), Store(cfg.state_dir / "a.db"), "scout"
+    )
+
+    assert readme.read_text(encoding="utf-8") == "# Fork without the line\n"
+
+
 def test_the_deadline_run_overwrites_the_scouts_root_file(tmp_path):
     # Latest wins at the root — the midweek scout report stands until the
     # deadline run replaces it with the operative plan — while the per-mode

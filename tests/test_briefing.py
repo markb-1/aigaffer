@@ -957,3 +957,52 @@ def test_the_advisory_is_a_line_not_a_section():
     # a heading nor disturb the seven the briefing reads top to bottom.
     assert headings(briefing()) == HEADINGS
     assert "Early season" not in " ".join(headings(briefing()))
+
+
+# --- the price watch -------------------------------------------------------
+
+
+def moving(pid: int, net: int, moved: int = 0) -> Player:
+    """One relevant player with a market signal behind him."""
+    ins = net if net > 0 else 0
+    outs = -net if net < 0 else 0
+    return PLAYERS[pid].model_copy(
+        update={
+            "transfers_in_event": ins + 25_000,
+            "transfers_out_event": outs + 25_000,
+            "cost_change_event": moved,
+        }
+    )
+
+
+def market_briefing(movers: dict[int, Player]) -> str:
+    players = {**PLAYERS, **movers}
+    return briefing(inputs=replace(pipeline_inputs(), players=players))
+
+
+def test_the_price_watch_names_the_movers_biggest_first():
+    text = market_briefing({
+        3: moving(3, net=310_000),
+        5: moving(5, net=-820_000, moved=-1),
+        8: moving(8, net=95_000, moved=1),
+    })
+    lines = section(text, "Price watch")
+    bullets = [line for line in lines if line.startswith("- ")]
+    assert len(bullets) == 3
+    assert "(id 5)" in bullets[0] and "820,000" in bullets[0]
+    assert "fell £0.1m overnight" in bullets[0]
+    assert "(id 3)" in bullets[1]
+    assert "(id 8)" in bullets[2] and "rose £0.1m overnight" in bullets[2]
+
+
+def test_a_quiet_market_has_no_price_watch():
+    # Every fixture-built payload predates the market fields; the briefing
+    # they produce must not change by a byte.
+    assert "Price watch" not in briefing()
+
+
+def test_the_price_watch_is_capped():
+    movers = {pid: moving(pid, net=60_000 + pid) for pid in list(PLAYERS)[:15]}
+    text = market_briefing(movers)
+    bullets = [b for b in section(text, "Price watch") if b.startswith("- ")]
+    assert len(bullets) == 10
