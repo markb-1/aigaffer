@@ -13,10 +13,14 @@ import math
 import pytest
 
 from aigaffer.data.models import Bootstrap, Fixture, Player, Team
+from aigaffer.model.priors import SeasonPrior, prior_rates
 from aigaffer.model.xp import (
     ASSIST_PTS,
+    CLUB_CHANGE_FACTOR,
     CS_PTS,
     DEFCON90_PRIOR,
+    PRIOR_SEASON_DISCOUNT,
+    SAVES_PRIOR_DISCOUNT,
     GOAL_PTS,
     LEAGUE_AVG_GOALS,
     SAVES90_PRIOR,
@@ -686,14 +690,6 @@ def test_a_fixture_is_scored_against_the_right_opponent_and_venue():
 
 # --- the prior season, pooled -----------------------------------------
 
-
-from aigaffer.model.priors import SeasonPrior, prior_rates
-from aigaffer.model.xp import (
-    CLUB_CHANGE_FACTOR,
-    PRIOR_SEASON_DISCOUNT,
-    SAVES_PRIOR_DISCOUNT,
-)
-
 LAST_SEASON = SeasonPrior(
     code=1, element_type=4, team_code=43, minutes=2953,
     expected_goals=25.5, expected_assists=5.0, saves=0,
@@ -773,3 +769,15 @@ def test_haaland_projects_elite_before_a_ball_is_kicked():
     rate = goal_points(p, 90, 1.0, prior=real) / 4
     assert rate == pytest.approx(0.61, abs=0.01)
     assert rate > 2 * 0.30, "double the positional floor he opens at today"
+
+
+def test_a_stale_total_against_no_minutes_stays_dead():
+    # The live incident _per_90's guard was written for: a bootstrap can
+    # serve a season of totals against zero minutes played. Pooling must
+    # not resurrect it — the prior's evidence carries the player past the
+    # guard, never the self-contradicting current total.
+    stale = player(element_type=4, expected_goals=8.0, minutes=0, team_code=43)
+    honest = player(element_type=4, expected_goals=0.0, minutes=0, team_code=43)
+    assert goal_points(stale, 90, 1.0, prior=LAST_SEASON) == goal_points(
+        honest, 90, 1.0, prior=LAST_SEASON
+    )

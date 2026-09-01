@@ -41,11 +41,15 @@ class SeasonPrior:
 @cache
 def prior_rates() -> dict[int, SeasonPrior]:
     """Every player who played a minute last season, keyed by ``code``."""
-    text = (
-        resources.files("aigaffer.data")
-        .joinpath("prior_season.csv")
-        .read_text(encoding="utf-8")
-    )
+    path = resources.files("aigaffer.data").joinpath("prior_season.csv")
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError as error:
+        raise FileNotFoundError(
+            "prior_season.csv is vendored with the package — its absence is"
+            " a broken install (packaging dropped the data file), not an"
+            " off-season"
+        ) from error
     priors = {}
     for row in csv.DictReader(text.splitlines()):
         prior = SeasonPrior(

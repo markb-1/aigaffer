@@ -460,7 +460,10 @@ def _per_90(total: float, minutes: float) -> float:
     £4.5m substitute comes to project four thousand points and get himself
     drafted. And a player with a minute or two behind him has a sample, not a
     rate. So no minutes is no evidence, and a rate is never taken over less
-    than a full match.
+    than a full match. (Pooling upstream honors the same doctrine:
+    :func:`_pooled` zeroes a current total that arrives with no current
+    minutes before adding last season's, so the contradiction cannot ride
+    in on a prior's minutes.)
     """
     if minutes <= 0:
         return 0.0
@@ -491,6 +494,12 @@ def _pooled(
     """
     if prior is None:
         return total, minutes
+    # A current total against no current minutes is the stale-payload
+    # contradiction :func:`_per_90`'s guard exists for, and pooling must
+    # not carry it past that guard on the prior's minutes: the prior's own
+    # evidence goes forward, the contradiction dies here.
+    if minutes <= 0:
+        total = 0.0
     d = discount
     if prior.team_code and player.team_code and prior.team_code != player.team_code:
         d *= CLUB_CHANGE_FACTOR
@@ -537,6 +546,15 @@ def _shrunk_rate(total: float, minutes: float, prior: float) -> float:
     self-contradicting payload of a full season's totals against zero minutes
     played — and inventing a league-average rate for him would undo exactly the
     caution that guards against. No minutes is no rate, prior included.
+
+    One deliberate exception rides in from above: ``total`` and ``minutes``
+    may arrive with last season pooled in (:func:`_pooled`), so a returning
+    player who has not kicked a ball *this* season still carries real
+    nineties here — his own, a season old and discounted. The guard below
+    then only stands for the player with no evidence in either season, and
+    the stale-payload contradiction is already dead before it arrives:
+    :func:`_pooled` zeroes a current total that comes with no current
+    minutes rather than letting it ride the prior's.
     """
     own_rate = _per_90(total, minutes)
     if minutes <= 0:
