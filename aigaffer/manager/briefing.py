@@ -652,7 +652,7 @@ def _price_watch(solve: "SolveResult", board: _Board) -> str | None:
         line = f"- {_named(pid, board)}: net {abs(net):,} transfers {direction}"
         if moved:
             verb = "rose" if moved > 0 else "fell"
-            line += f"; {verb} £{abs(moved) / 10:.1f}m overnight"
+            line += f"; {verb} £{abs(moved) / 10:.1f}m this gameweek"
         lines.append(line)
     return "\n".join(lines)
 

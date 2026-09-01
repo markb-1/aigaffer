@@ -51,7 +51,9 @@ class Player(BaseModel):
     status: str
     # The market's pulse, for the briefing's price watch: how many managers
     # moved this player in and out this gameweek, and how far his price
-    # moved overnight (tenths, signed). Signal for timing a decided
+    # has moved across the gameweek so far (cumulative tenths, signed —
+    # the API resets it at rollover, so it is not last night's move
+    # alone). Signal for timing a decided
     # transfer, never for making one. Zero defaults keep every payload
     # from before the fields were read exactly as quiet as it was.
     transfers_in_event: int = 0

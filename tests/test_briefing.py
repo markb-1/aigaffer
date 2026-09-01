@@ -990,9 +990,9 @@ def test_the_price_watch_names_the_movers_biggest_first():
     bullets = [line for line in lines if line.startswith("- ")]
     assert len(bullets) == 3
     assert "(id 5)" in bullets[0] and "820,000" in bullets[0]
-    assert "fell £0.1m overnight" in bullets[0]
+    assert "fell £0.1m this gameweek" in bullets[0]
     assert "(id 3)" in bullets[1]
-    assert "(id 8)" in bullets[2] and "rose £0.1m overnight" in bullets[2]
+    assert "(id 8)" in bullets[2] and "rose £0.1m this gameweek" in bullets[2]
 
 
 def test_a_quiet_market_has_no_price_watch():

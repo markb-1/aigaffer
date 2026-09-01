@@ -52,6 +52,7 @@ opinion further down.
 from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import httpx
@@ -1446,7 +1447,7 @@ def _write_report(cfg: Config, event_id: int, mode: str, report: str) -> None:
 LATEST_MARKER = "<!-- latest-verdict -->"
 
 
-def _point_readme(root, event_id: int) -> None:
+def _point_readme(root: Path, event_id: int) -> None:
     """Rewrite the README's marked line to point at ``GW{event_id}.md``."""
     readme = root / "README.md"
     if not readme.exists():
@@ -1454,7 +1455,7 @@ def _point_readme(root, event_id: int) -> None:
     lines = readme.read_text(encoding="utf-8").splitlines(keepends=True)
     for i, line in enumerate(lines):
         if LATEST_MARKER in line:
-            ending = "\n" if line.endswith("\n") else ""
+            ending = "\r\n" if line.endswith("\r\n") else "\n" if line.endswith("\n") else ""
             lines[i] = (
                 f"📋 **Latest verdict: [GW{event_id}](GW{event_id}.md)**"
                 f" {LATEST_MARKER}{ending}"
