@@ -6,9 +6,11 @@ reads the vendored ``aigaffer/data/prior_season.csv`` instead — distilled
 from the public vaastav/Fantasy-Premier-League dataset's end-of-season
 ``players_raw.csv`` (credit where it is due:
 github.com/vaastav/Fantasy-Premier-League) — keyed by FPL's permanent
-player ``code``, which survives the July id reset. To regenerate for a new
-season, change the season in the URL and rerun the distillation in
-``docs/superpowers/plans/2026-09-01-player-priors.md`` Task 1 Step 5.
+player ``code``, which survives the July id reset. To regenerate for a
+new season: fetch that season's ``players_raw.csv`` from the vaastav
+repo, keep this file's header columns for every row with minutes > 0,
+sort by ``code``, and write it over ``aigaffer/data/prior_season.csv``
+— ten lines of csv module, no dependency.
 
 Totals, never per-90s: rates are always computed from totals by the
 model's one small-sample rule (:func:`aigaffer.model.xp._per_90`), and a
