@@ -682,3 +682,94 @@ def test_a_fixture_is_scored_against_the_right_opponent_and_venue():
     fixtures = [Fixture(id=3, event=2, team_h=2, team_a=3)]
     projections = project_all(universe, fixtures, {6: 90.0}, start_event=2, horizon=1)
     assert projections[6].per_gw[2] == approx(fixture_points(grant, 90.0, att_factor, lam))
+
+
+# --- the prior season, pooled -----------------------------------------
+
+
+from aigaffer.model.priors import SeasonPrior, prior_rates
+from aigaffer.model.xp import (
+    CLUB_CHANGE_FACTOR,
+    PRIOR_SEASON_DISCOUNT,
+    SAVES_PRIOR_DISCOUNT,
+)
+
+LAST_SEASON = SeasonPrior(
+    code=1, element_type=4, team_code=43, minutes=2953,
+    expected_goals=25.5, expected_assists=5.0, saves=0,
+    defensive_contribution=30.0,
+)
+
+
+def test_no_prior_is_todays_model_to_the_byte():
+    # The closed form on current-season evidence alone — what the model
+    # computed before this change existed. prior=None (a newcomer, or any
+    # hand-built player with code 0) must reproduce it exactly; the full
+    # suite passing untouched is the broader form of this same claim.
+    p = player(element_type=4, expected_goals=1.4, minutes=90)
+    expected_rate = (1.4 + 6 * 0.30) / (1 + 6)
+    assert goal_points(p, 90, 1.0, prior=None) == pytest.approx(expected_rate * 4)
+
+
+def test_last_season_pools_as_discounted_evidence():
+    # Haaland's real shape: no minutes yet, a monster season behind him.
+    # delta=1/3 makes 2953 prior minutes into 984 effective ones, and the
+    # closed form (total + K*prior)/(nineties + K) gives 0.608 xG/90 —
+    # double the positional floor of 0.30 he opens at today.
+    p = player(element_type=4, expected_goals=0.0, minutes=0, team_code=43)
+    pts = goal_points(p, 90, 1.0, prior=LAST_SEASON)
+    d = PRIOR_SEASON_DISCOUNT
+    expected_rate = (d * 25.5 + 6 * 0.30) / (d * 2953 / 90 + 6)
+    assert pts == pytest.approx(expected_rate * 4)  # FWD goals pay 4
+
+
+def test_a_summer_move_halves_the_trust():
+    stayed = player(element_type=4, expected_goals=0.0, minutes=0, team_code=43)
+    moved = player(element_type=4, expected_goals=0.0, minutes=0, team_code=7)
+    assert goal_points(moved, 90, 1.0, prior=LAST_SEASON) < goal_points(
+        stayed, 90, 1.0, prior=LAST_SEASON
+    )
+    d = PRIOR_SEASON_DISCOUNT * CLUB_CHANGE_FACTOR
+    expected_rate = (d * 25.5 + 6 * 0.30) / (d * 2953 / 90 + 6)
+    assert goal_points(moved, 90, 1.0, prior=LAST_SEASON) == pytest.approx(
+        expected_rate * 4
+    )
+
+
+def test_saves_trust_last_season_less():
+    # Saves/90 is mostly a team stat, so its discount is 1/4, not 1/3.
+    keeper_past = SeasonPrior(
+        code=2, element_type=1, team_code=43, minutes=2700,
+        expected_goals=0.0, expected_assists=0.0, saves=100,
+        defensive_contribution=0.0,
+    )
+    keeper = player(element_type=1, saves=0, minutes=0, team_code=43)
+    d = SAVES_PRIOR_DISCOUNT
+    expected_rate = (d * 100 + 6 * 3.0) / (d * 2700 / 90 + 6)
+    assert save_points(keeper, 90, prior=keeper_past) == pytest.approx(
+        expected_rate / 3
+    )
+
+
+def test_a_reclassified_player_keeps_his_history():
+    # The evidence is per-90 facts and travels with the man; the positional
+    # anchor is the new classification's. A forward's season behind a
+    # midfielder pools the same totals against the midfield prior of 0.12.
+    p = player(element_type=3, expected_goals=0.0, minutes=0, team_code=43)
+    d = PRIOR_SEASON_DISCOUNT
+    expected_rate = (d * 25.5 + 6 * 0.12) / (d * 2953 / 90 + 6)
+    assert goal_points(p, 90, 1.0, prior=LAST_SEASON) == pytest.approx(
+        expected_rate * 5
+    )  # MID goals pay 5
+
+
+def test_haaland_projects_elite_before_a_ball_is_kicked():
+    # The pin this whole upgrade exists for, against the real vendored row.
+    real = prior_rates()[223094]
+    p = player(
+        element_type=4, expected_goals=0.0, minutes=0,
+        code=223094, team_code=real.team_code,
+    )
+    rate = goal_points(p, 90, 1.0, prior=real) / 4
+    assert rate == pytest.approx(0.61, abs=0.01)
+    assert rate > 2 * 0.30, "double the positional floor he opens at today"

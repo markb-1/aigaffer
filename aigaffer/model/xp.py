@@ -39,6 +39,7 @@ from dataclasses import dataclass, field
 from math import exp
 
 from aigaffer.data.models import Bootstrap, Fixture, Player, Team
+from aigaffer.model.priors import SeasonPrior, prior_rates
 
 GOAL_PTS = {1: 10, 2: 6, 3: 5, 4: 4}
 CS_PTS = {1: 4, 2: 4, 3: 1, 4: 0}
@@ -90,6 +91,21 @@ XG90_PRIOR = {GOALKEEPER: 0.0, DEFENDER: 0.05, MIDFIELDER: 0.12, FORWARD: 0.30}
 XA90_PRIOR = {GOALKEEPER: 0.0, DEFENDER: 0.05, MIDFIELDER: 0.12, FORWARD: 0.12}
 DEFCON90_PRIOR = {GOALKEEPER: 0.0, DEFENDER: 10.0, MIDFIELDER: 7.0, FORWARD: 3.0}
 SAVES90_PRIOR = {GOALKEEPER: 3.0, DEFENDER: 0.0, MIDFIELDER: 0.0, FORWARD: 0.0}
+
+# How much of last season a returning player carries into August, as a
+# discount on the vendored totals (aigaffer/model/priors.py) pooled into
+# the evidence the shrinkage reads. One third makes a full season eleven
+# effective nineties: it out-weighs the positional prior from the first
+# kick and is overtaken by the real season around eleven played nineties —
+# Christmas for a nailed starter — fading smoothly with no cliff, which is
+# the two-season Marcel construction the projection field settled on.
+# Saves trust the past less: a save rate is mostly a team-shots-conceded
+# stat wearing a keeper's name, and the team behind it drifts each summer.
+# A summer move halves the discount again — output holds only between
+# similar contexts — read off team_code, the club id that never resets.
+PRIOR_SEASON_DISCOUNT = 1 / 3
+SAVES_PRIOR_DISCOUNT = 1 / 4
+CLUB_CHANGE_FACTOR = 0.5
 
 # Defensive contributions pay two points once in a match, to a defender who
 # reaches ten defensive actions or to anyone further forward who reaches
@@ -183,24 +199,43 @@ def appearance_points(minutes: float) -> float:
     return played(minutes) + p60(minutes)
 
 
-def goal_points(player: Player, minutes: float, att_factor: float) -> float:
+def goal_points(
+    player: Player,
+    minutes: float,
+    att_factor: float,
+    prior: SeasonPrior | None = None,
+) -> float:
     """The season's expected goals as a rate per ninety, shrunk and scored on."""
-    rate = _shrunk_rate(
-        player.expected_goals, player.minutes, XG90_PRIOR[player.element_type]
+    total, evidence = _pooled(
+        player.expected_goals, player.minutes, player, prior,
+        prior.expected_goals if prior else 0.0, PRIOR_SEASON_DISCOUNT,
     )
+    rate = _shrunk_rate(total, evidence, XG90_PRIOR[player.element_type])
     goals = rate * (minutes / 90) * att_factor
     return goals * GOAL_PTS[player.element_type]
 
 
-def assist_points(player: Player, minutes: float, att_factor: float) -> float:
-    rate = _shrunk_rate(
-        player.expected_assists, player.minutes, XA90_PRIOR[player.element_type]
+def assist_points(
+    player: Player,
+    minutes: float,
+    att_factor: float,
+    prior: SeasonPrior | None = None,
+) -> float:
+    total, evidence = _pooled(
+        player.expected_assists, player.minutes, player, prior,
+        prior.expected_assists if prior else 0.0, PRIOR_SEASON_DISCOUNT,
     )
+    rate = _shrunk_rate(total, evidence, XA90_PRIOR[player.element_type])
     assists = rate * (minutes / 90) * att_factor
     return assists * ASSIST_PTS
 
 
-def attacking_points(player: Player, minutes: float, att_factor: float) -> float:
+def attacking_points(
+    player: Player,
+    minutes: float,
+    att_factor: float,
+    prior: SeasonPrior | None = None,
+) -> float:
     """Expected points from goals and assists in one fixture — the ceiling.
 
     The high-variance half of a player's return, the part that doubles into a
@@ -212,8 +247,8 @@ def attacking_points(player: Player, minutes: float, att_factor: float) -> float
     goal threat rather than to a cheap player whose *total* a steady floor and a
     kind fixture have padded past one.
     """
-    return goal_points(player, minutes, att_factor) + assist_points(
-        player, minutes, att_factor
+    return goal_points(player, minutes, att_factor, prior) + assist_points(
+        player, minutes, att_factor, prior
     )
 
 
@@ -229,11 +264,17 @@ def conceded_points(player: Player, minutes: float, lam: float) -> float:
     return -(lam / 2) * p60(minutes)
 
 
-def save_points(player: Player, minutes: float) -> float:
+def save_points(
+    player: Player, minutes: float, prior: SeasonPrior | None = None
+) -> float:
     """A point per three saves, keepers only."""
     if player.element_type != GOALKEEPER:
         return 0.0
-    rate = _shrunk_rate(player.saves, player.minutes, SAVES90_PRIOR[player.element_type])
+    total, evidence = _pooled(
+        player.saves, player.minutes, player, prior,
+        prior.saves if prior else 0.0, SAVES_PRIOR_DISCOUNT,
+    )
+    rate = _shrunk_rate(total, evidence, SAVES90_PRIOR[player.element_type])
     return (rate / 3) * (minutes / 90)
 
 
@@ -249,7 +290,9 @@ def bonus_points(player: Player, minutes: float) -> float:
     return min(1.0, _per_90(player.bonus, player.minutes)) * (minutes / 90)
 
 
-def defcon_points(player: Player, minutes: float) -> float:
+def defcon_points(
+    player: Player, minutes: float, prior: SeasonPrior | None = None
+) -> float:
     """Expected defensive-contribution points from one fixture.
 
     ``defensive_contribution`` counts defensive *actions* over the season,
@@ -269,28 +312,32 @@ def defcon_points(player: Player, minutes: float) -> float:
     threshold = DEFCON_THRESHOLDS.get(player.element_type)
     if threshold is None:
         return 0.0
-    rate = _shrunk_rate(
-        player.defensive_contribution,
-        player.minutes,
-        DEFCON90_PRIOR[player.element_type],
+    total, evidence = _pooled(
+        player.defensive_contribution, player.minutes, player, prior,
+        prior.defensive_contribution if prior else 0.0, PRIOR_SEASON_DISCOUNT,
     )
+    rate = _shrunk_rate(total, evidence, DEFCON90_PRIOR[player.element_type])
     chance = min(MAX_DEFCON_CHANCE, max(0.0, (rate - threshold / 2) / threshold))
     return DEFCON_POINTS * chance * (minutes / 90)
 
 
 def fixture_points(
-    player: Player, minutes: float, att_factor: float, lam: float
+    player: Player,
+    minutes: float,
+    att_factor: float,
+    lam: float,
+    prior: SeasonPrior | None = None,
 ) -> float:
     """Expected points from one fixture against a known opponent."""
     return (
         appearance_points(minutes)
-        + goal_points(player, minutes, att_factor)
-        + assist_points(player, minutes, att_factor)
+        + goal_points(player, minutes, att_factor, prior)
+        + assist_points(player, minutes, att_factor, prior)
         + clean_sheet_points(player, minutes, lam)
         + conceded_points(player, minutes, lam)
-        + save_points(player, minutes)
+        + save_points(player, minutes, prior)
         + bonus_points(player, minutes)
-        + defcon_points(player, minutes)
+        + defcon_points(player, minutes, prior)
     )
 
 
@@ -336,10 +383,15 @@ def project_all(
     away_averages = league_averages(bootstrap.teams, at_home=False)
     schedule = _schedule(fixtures)
     gameweeks = range(start_event, start_event + horizon)
+    # The vendored prior season, joined on the permanent code. A hand-built
+    # player carries code 0 and looks nothing up, which is what keeps every
+    # projection a test constructs byte-for-byte on the code-free model.
+    priors = prior_rates()
 
     projections = {}
     for player in bootstrap.elements:
         minutes = xmins.get(player.id, 0.0)
+        prior = priors.get(player.code) if player.code else None
         per_gw = {}
         attacking_per_gw = {}
         for gw in gameweeks:
@@ -349,8 +401,8 @@ def project_all(
                 opponent = teams[opponent_id]
                 averages = home_averages if opponent_at_home else away_averages
                 att_factor, lam = fixture_factors(opponent, opponent_at_home, averages)
-                points += fixture_points(player, minutes, att_factor, lam)
-                attacking += attacking_points(player, minutes, att_factor)
+                points += fixture_points(player, minutes, att_factor, lam, prior)
+                attacking += attacking_points(player, minutes, att_factor, prior)
             per_gw[gw] = points
             attacking_per_gw[gw] = attacking
         projections[player.id] = PlayerProjection(
@@ -397,7 +449,7 @@ def _mean(values: Iterable[int]) -> float:
     return sum(strengths) / len(strengths) if strengths else 0.0
 
 
-def _per_90(total: float, minutes: int) -> float:
+def _per_90(total: float, minutes: float) -> float:
     """A season total as a rate per ninety minutes, or 0.0 without one.
 
     Every rate in this module comes through here, so this is the one place
@@ -415,7 +467,37 @@ def _per_90(total: float, minutes: int) -> float:
     return (total / max(minutes, MIN_RATE_MINUTES)) * 90
 
 
-def _shrunk_rate(total: float, minutes: int, prior: float) -> float:
+def _pooled(
+    total: float,
+    minutes: float,
+    player: Player,
+    prior: SeasonPrior | None,
+    prior_total: float,
+    discount: float,
+) -> tuple[float, float]:
+    """This season's evidence with last season's pooled in, discounted.
+
+    The discount is halved when the codes say the player moved club in the
+    summer; a missing prior pools nothing, which is the whole of how a
+    newcomer stays byte-for-byte on today's model. Pooling is deliberately
+    position-blind — the totals are facts about the man and travel with
+    him through a reclassification — while the positional anchor the
+    caller hands :func:`_shrunk_rate` is his *current* position's.
+
+    Pooled minutes also carry a zero-minutes player past the no-evidence
+    guard in :func:`_shrunk_rate`, and should: in August nobody has
+    played, and a real season behind a man is evidence in a way a
+    positional average never was.
+    """
+    if prior is None:
+        return total, minutes
+    d = discount
+    if prior.team_code and player.team_code and prior.team_code != player.team_code:
+        d *= CLUB_CHANGE_FACTOR
+    return total + d * prior_total, minutes + d * prior.minutes
+
+
+def _shrunk_rate(total: float, minutes: float, prior: float) -> float:
     """A per-90 rate pulled toward ``prior`` by the thinness of its evidence.
 
     Empirical-Bayes shrinkage. Treat the positional ``prior`` as if it were
