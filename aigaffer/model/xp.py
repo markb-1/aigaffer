@@ -40,6 +40,7 @@ from math import exp
 
 from aigaffer.data.models import Bootstrap, Fixture, Player, Team
 from aigaffer.model.priors import SeasonPrior, prior_rates
+from aigaffer.model.strength import TeamStrengths
 
 GOAL_PTS = {1: 10, 2: 6, 3: 5, 4: 4}
 CS_PTS = {1: 4, 2: 4, 3: 1, 4: 0}
@@ -371,16 +372,29 @@ def project_all(
     start_event: int,
     horizon: int = 6,
     decay: float = 0.85,
+    strengths: TeamStrengths | None = None,
 ) -> dict[int, PlayerProjection]:
     """Project every bootstrap player over ``horizon`` gameweeks from
     ``start_event``, keyed by player id.
 
     A player with no entry in ``xmins`` is treated as expecting no minutes,
     which projects to zero rather than to a guess.
+
+    ``strengths`` is the fitted team-strength model
+    (:func:`aigaffer.model.strength.build_team_strengths`) and replaces the
+    editorial columns' :func:`fixture_factors` when handed in — same
+    ``(att_factor, lam)`` contract, but the concession finally sees both
+    teams. None — a switched-off fit, a failed one, or any caller that
+    predates the model — prices every fixture exactly as before.
     """
     teams = {team.id: team for team in bootstrap.teams}
-    home_averages = league_averages(bootstrap.teams, at_home=True)
-    away_averages = league_averages(bootstrap.teams, at_home=False)
+    codes = {team.id: team.code for team in bootstrap.teams}
+    # The editorial averages are only priced when the fit is absent — the
+    # one branch that reads them — so a run with strengths never pays for
+    # them. `teams` stays: the legacy branch is the only reader there too.
+    if strengths is None:
+        home_averages = league_averages(bootstrap.teams, at_home=True)
+        away_averages = league_averages(bootstrap.teams, at_home=False)
     schedule = _schedule(fixtures)
     gameweeks = range(start_event, start_event + horizon)
     # The vendored prior season, joined on the permanent code. A hand-built
@@ -398,9 +412,18 @@ def project_all(
             points = 0.0
             attacking = 0.0
             for opponent_id, opponent_at_home in schedule.get((gw, player.team), ()):
-                opponent = teams[opponent_id]
-                averages = home_averages if opponent_at_home else away_averages
-                att_factor, lam = fixture_factors(opponent, opponent_at_home, averages)
+                if strengths is not None:
+                    att_factor, lam = strengths.factors(
+                        codes.get(player.team, 0),
+                        codes.get(opponent_id, 0),
+                        opponent_at_home,
+                    )
+                else:
+                    opponent = teams[opponent_id]
+                    averages = home_averages if opponent_at_home else away_averages
+                    att_factor, lam = fixture_factors(
+                        opponent, opponent_at_home, averages
+                    )
                 points += fixture_points(player, minutes, att_factor, lam, prior)
                 attacking += attacking_points(player, minutes, att_factor, prior)
             per_gw[gw] = points

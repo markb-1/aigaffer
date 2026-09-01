@@ -2961,3 +2961,27 @@ def test_an_unknown_command_is_refused():
         cli.main(["wildcard"])
 
     assert refusal.value.code == 2
+
+
+def test_the_strength_switch_is_honored(monkeypatch, tmp_path):
+    # The kill switch is the feature's whole safety story: off must mean
+    # the fit is never even asked for, and on must mean it is.
+    asked = []
+    monkeypatch.setattr(
+        orchestrator, "build_team_strengths", lambda *args, **kw: asked.append(1)
+    )
+    serve(monkeypatch, pipeline_routes())
+
+    def run_with(enabled: bool) -> int:
+        cfg = Config(
+            team_id=TEAM_ID,
+            state_dir=tmp_path / f"state-{enabled}",
+            strength_enabled=enabled,
+        )
+        client = make_client(pipeline_routes())
+        store = Store(tmp_path / f"db-{enabled}.db")
+        run_pipeline(cfg, client, store, "scout", send=False, save=False)
+        return len(asked)
+
+    assert run_with(False) == 0, "off: the fit is never asked for"
+    assert run_with(True) >= 1, "on: it is"

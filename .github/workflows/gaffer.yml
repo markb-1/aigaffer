@@ -146,6 +146,11 @@ jobs:
           # switch. Off makes chips advisory only — Phase 2.5's behaviour — and
           # is one variable to set, not a commit to this file.
           AIGAFFER_CHIPS: ${{ vars.AIGAFFER_CHIPS || 'on' }}
+          # The team-strength fit, same arrangement: on by default, a
+          # repository variable set to 'off' as the kill switch. Off — or
+          # a fit that fails, which says so on the log — prices fixtures
+          # off FPL's strength columns exactly as before the model.
+          AIGAFFER_STRENGTH: ${{ vars.AIGAFFER_STRENGTH || 'on' }}
       - name: Commit state
         # Even when the run failed: it may have sent a report before it died,
         # and a report that went out but was never recorded is one the next

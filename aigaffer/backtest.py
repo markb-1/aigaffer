@@ -17,11 +17,13 @@ projected at zero minutes and would only pad the field with ties.
 Three things here know how the gameweek turned out, and all three flatter the
 model:
 
-* **The rates.** The per-90 rates, the prices and the team strengths come from
-  the bootstrap as it stands today, which includes the gameweek being scored
-  and every one since. The model is being asked to rank a week it has already
-  seen. What leaks is bounded — a season rate moves little for one week of it
-  — but it leaks the model's way.
+* **The rates.** The per-90 rates and the prices come from the bootstrap as
+  it stands today, which includes the gameweek being scored and every one
+  since. The model is being asked to rank a week it has already seen. What
+  leaks is bounded — a season rate moves little for one week of it — but it
+  leaks the model's way. (The fitted team strengths are the exception: they
+  are rebuilt from results before the scored round, dated at its deadline,
+  and do not leak.)
 * **Who is in the field.** The shortlist admits only players available *today*,
   so anyone since injured or gone is never graded. The population is the
   survivors, and a projection is never checked against the weeks it got wrong
@@ -45,6 +47,7 @@ from math import sqrt
 from aigaffer.data.fpl_api import FplClient
 from aigaffer.data.models import Bootstrap, Fixture, GwHistory
 from aigaffer.model.minutes import expected_minutes
+from aigaffer.model.strength import build_team_strengths
 from aigaffer.model.xp import project_all
 from aigaffer.orchestrator import history_pool
 
@@ -90,7 +93,28 @@ def backtest_gw(
         pid: expected_minutes(_before(history, gw), players[pid])
         for pid, history in histories.items()
     }
-    projections = project_all(bootstrap, fixtures, xmins, gw, horizon=1)
+    # The strength fit lives under the same no-peeking rule as the minutes
+    # model: only fixtures from rounds before the one being scored, dated
+    # at that gameweek's own deadline so the decay reads the calendar as
+    # it stood. The fit failing, or a codeless bootstrap, is the editorial
+    # columns — the same net the live run stands on.
+    event = next((e for e in bootstrap.events if e.id == gw), None)
+    # A gameweek the bootstrap has never heard of has no deadline to date
+    # the decay at; the fit stands aside rather than smuggle in today's
+    # calendar and make the same backtest score two things on two days.
+    as_of = event.deadline_time.date() if event is not None else None
+    strengths = (
+        build_team_strengths(
+            bootstrap,
+            [f for f in fixtures if f.event is not None and f.event < gw],
+            as_of,
+        )
+        if as_of is not None
+        else None
+    )
+    projections = project_all(
+        bootstrap, fixtures, xmins, gw, horizon=1, strengths=strengths
+    )
 
     outcomes = [
         PlayerOutcome(pid, projections[pid].per_gw[gw], sum(scores))

@@ -144,3 +144,18 @@ def test_manager_enabled_follows_the_key_when_constructed_directly():
     assert Config(team_id=1, anthropic_api_key=key).manager_enabled is True
     assert Config(team_id=1, anthropic_api_key=key, manager_enabled=False).manager_enabled is False
     assert Config(team_id=1, manager_enabled=True).manager_enabled is False
+
+
+@pytest.fixture
+def strength_env(monkeypatch):
+    monkeypatch.setenv("FPL_TEAM_ID", "1")
+    monkeypatch.delenv("AIGAFFER_STRENGTH", raising=False)
+    return monkeypatch
+
+
+def test_the_strength_fit_is_on_unless_told_off_exactly(strength_env):
+    assert Config.from_env().strength_enabled is True
+    strength_env.setenv("AIGAFFER_STRENGTH", "off")
+    assert Config.from_env().strength_enabled is False
+    strength_env.setenv("AIGAFFER_STRENGTH", "OFF")  # a typo leaves it on
+    assert Config.from_env().strength_enabled is True

@@ -781,3 +781,39 @@ def test_a_stale_total_against_no_minutes_stays_dead():
     assert goal_points(stale, 90, 1.0, prior=LAST_SEASON) == goal_points(
         honest, 90, 1.0, prior=LAST_SEASON
     )
+
+
+def test_the_stingy_defence_projects_the_cleaner_sheet():
+    # The seam between project_all and a fitted TeamStrengths, pinned so
+    # the team/opponent argument order can never silently swap: two
+    # identical defenders meet, and only the one whose OWN team has the
+    # stingy fitted defence gets the cleaner sheet.
+    from math import log
+
+    from aigaffer.model.strength import TeamStrengths
+
+    stingy = Team(
+        id=1, name="Stingy", short_name="STI", code=101,
+        strength_attack_home=1000, strength_attack_away=1000,
+        strength_defence_home=1000, strength_defence_away=1000,
+        strength_overall_home=1000, strength_overall_away=1000,
+    )
+    leaky = Team(
+        id=2, name="Leaky", short_name="LEA", code=102,
+        strength_attack_home=1000, strength_attack_away=1000,
+        strength_defence_home=1000, strength_defence_away=1000,
+        strength_overall_home=1000, strength_overall_away=1000,
+    )
+    fit = TeamStrengths(
+        mu=log(1.4), home=0.0,
+        attack={101: 0.0, 102: 0.0},
+        defence={101: -0.5, 102: 0.5},
+    )
+    home_def = player(id=1, team=1, element_type=2)
+    away_def = player(id=2, team=2, element_type=2)
+    fixture = Fixture(id=1, event=2, team_h=1, team_a=2)
+    universe = Bootstrap(events=[], teams=[stingy, leaky], elements=[home_def, away_def])
+    projections = project_all(
+        universe, [fixture], {1: 90.0, 2: 90.0}, start_event=2, strengths=fit
+    )
+    assert projections[1].per_gw[2] > projections[2].per_gw[2]
