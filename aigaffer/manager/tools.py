@@ -108,6 +108,12 @@ and chip are ever entered, and the path is planned again from scratch every \
 run, so a plan you finalize commits its first gameweek and nothing else. \
 resolve re-plans the paths along with the plans, on your minutes.
 
+The briefing may carry a price watch: who the market is buying, and whose \
+price moved overnight. It is timing information and nothing else — when the \
+plan already buys a heavily-bought player, say in the rationale that the move \
+may be cheaper tonight than at the deadline, and never let a price talk you \
+into a transfer the football does not justify.
+
 Two habits, in the order they matter.
 
 Roll when you are not sure. A transfer has to beat doing nothing by more than \

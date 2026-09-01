@@ -1773,3 +1773,10 @@ def test_the_decision_is_the_shape_the_report_and_the_store_expect():
     assert decision.lineup.captain == decision.captain
     assert decision.lineup.vice == decision.vice
     assert set(decision.lineup.xi) | set(decision.lineup.bench) == set(ROLL.squad)
+
+
+def test_the_prompt_prices_timing_but_never_the_transfer():
+    # The price watch advises WHEN, never WHAT: a rising price can bring a
+    # decided move forward a night, and must never talk him into one.
+    assert "cheaper tonight than at the deadline" in SYSTEM_PROMPT
+    assert "never let a price talk you into" in SYSTEM_PROMPT

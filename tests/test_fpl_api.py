@@ -426,3 +426,23 @@ def test_a_fixture_carries_its_result_and_a_team_its_code():
         "strength_overall_home": 1, "strength_overall_away": 1,
     })
     assert team.code == 3
+
+
+def test_a_player_carries_the_markets_pulse():
+    # Net event transfers and last night's price move: the raw signal the
+    # briefing's price watch reads. Zero defaults keep old payloads quiet.
+    payload = {
+        "id": 1, "web_name": "A", "team": 1, "element_type": 4,
+        "now_cost": 55, "status": "a", "minutes": 90, "starts": 1,
+        "total_points": 2, "bonus": 0, "saves": 0,
+        "transfers_in_event": 812_341, "transfers_out_event": 12_003,
+        "cost_change_event": 1,
+    }
+    player = Player.model_validate(payload)
+    assert player.transfers_in_event == 812_341
+    assert player.transfers_out_event == 12_003
+    assert player.cost_change_event == 1
+    for field in ("transfers_in_event", "transfers_out_event", "cost_change_event"):
+        payload.pop(field)
+    bare = Player.model_validate(payload)
+    assert (bare.transfers_in_event, bare.transfers_out_event, bare.cost_change_event) == (0, 0, 0)
