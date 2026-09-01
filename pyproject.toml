@@ -20,6 +20,12 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 include = ["aigaffer*"]
 
+# The vendored prior season rides the wheel: setuptools ships only Python
+# files by default, and a CI install without this line would import a
+# loader whose file never arrived.
+[tool.setuptools.package-data]
+aigaffer = ["data/*.csv"]
+
 [tool.pytest.ini_options]
 # The solver is run a few hundred times across the suite and PuLP warns on
 # every construction of its bundled CBC binding, which buried the output under
