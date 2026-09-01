@@ -68,6 +68,10 @@ class Team(BaseModel):
     id: int
     name: str
     short_name: str
+    # The permanent club id — Player.code's convention for teams. It joins
+    # the live season to the vendored results across the July id reset.
+    # Zero means a hand-built team with no history, and no fit reads it.
+    code: int = 0
     strength_attack_home: int
     strength_attack_away: int
     strength_defence_home: int
@@ -103,6 +107,13 @@ class Fixture(BaseModel):
     event: int | None
     team_h: int
     team_a: int
+    # The result, for the team-strength fit that reads finished fixtures
+    # as this season's evidence (aigaffer/model/strength.py). None until
+    # the API fills them in; kickoff_time is kept as the ISO string the
+    # API serves and parsed only by the one reader that decays on it.
+    kickoff_time: str | None = None
+    team_h_score: int | None = None
+    team_a_score: int | None = None
     finished: bool = False
     finished_provisional: bool = False
 

@@ -3,7 +3,7 @@ import copy
 import httpx
 import pytest
 
-from aigaffer.data.models import Player
+from aigaffer.data.models import Fixture, Player, Team
 
 from aigaffer.data.fpl_api import (
     RETRY_BACKOFF,
@@ -403,3 +403,26 @@ def test_a_player_carries_his_permanent_codes():
     payload.pop("team_code")
     bare = Player.model_validate(payload)
     assert (bare.code, bare.team_code) == (0, 0)
+
+
+def test_a_fixture_carries_its_result_and_a_team_its_code():
+    # The strength fit reads finished fixtures as results and joins the
+    # vendored seasons on the club code that never resets. Defaults keep
+    # old payloads honest: no score fields is a match nobody played.
+    fixture = Fixture.model_validate({
+        "id": 1, "event": 1, "team_h": 2, "team_a": 3,
+        "finished": True, "kickoff_time": "2026-08-15T14:00:00Z",
+        "team_h_score": 2, "team_a_score": 0,
+    })
+    assert (fixture.team_h_score, fixture.team_a_score) == (2, 0)
+    assert fixture.kickoff_time == "2026-08-15T14:00:00Z"
+    bare = Fixture.model_validate({"id": 2, "event": None, "team_h": 1, "team_a": 2})
+    assert bare.team_h_score is None and bare.kickoff_time is None
+
+    team = Team.model_validate({
+        "id": 1, "name": "Arsenal", "short_name": "ARS", "code": 3,
+        "strength_attack_home": 1, "strength_attack_away": 1,
+        "strength_defence_home": 1, "strength_defence_away": 1,
+        "strength_overall_home": 1, "strength_overall_away": 1,
+    })
+    assert team.code == 3
