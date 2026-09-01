@@ -3,6 +3,8 @@ import copy
 import httpx
 import pytest
 
+from aigaffer.data.models import Player
+
 from aigaffer.data.fpl_api import (
     RETRY_BACKOFF,
     USER_AGENT,
@@ -383,3 +385,21 @@ def test_a_404_is_an_answer_and_is_not_retried():
         client.bootstrap()
     assert len(seen) == 1
     assert slept == []
+
+
+def test_a_player_carries_his_permanent_codes():
+    # `code` survives across seasons where `id` does not; it is the key the
+    # prior-season file joins on. Zero defaults keep hand-built players
+    # honest: no code means no last season, which is true of an invention.
+    payload = {
+        "id": 1, "web_name": "A", "team": 1, "element_type": 4,
+        "now_cost": 55, "status": "a", "minutes": 90, "starts": 1,
+        "total_points": 2, "bonus": 0, "saves": 0,
+        "code": 223094, "team_code": 43,
+    }
+    player = Player.model_validate(payload)
+    assert (player.code, player.team_code) == (223094, 43)
+    payload.pop("code")
+    payload.pop("team_code")
+    bare = Player.model_validate(payload)
+    assert (bare.code, bare.team_code) == (0, 0)

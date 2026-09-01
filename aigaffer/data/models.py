@@ -37,6 +37,15 @@ class Player(BaseModel):
     web_name: str
     team: int
     element_type: int
+    # FPL's permanent identifiers: ``code`` follows the player across
+    # seasons where ``id`` resets every July, and ``team_code`` follows the
+    # club the same way. They exist for one reader — the prior-season file
+    # (aigaffer/model/priors.py) joins on ``code`` and halves its trust
+    # when ``team_code`` says the player moved in the summer. Zero means
+    # the bootstrap never said: no last season, which is true of every
+    # hand-built test player.
+    code: int = 0
+    team_code: int = 0
     now_cost: int
     cost_change_start: int = 0
     status: str
