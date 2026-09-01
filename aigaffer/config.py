@@ -54,6 +54,13 @@ class Config:
     # convention AIGAFFER_PLANNER uses: a typo should not be able to quietly
     # switch a feature off.
     chips: bool = True
+    # Whether fixtures are priced by the fitted team strengths
+    # (aigaffer/model/strength.py) rather than FPL's editorial columns.
+    # On by default; the fit falls back to the columns loudly on any
+    # failure, and this switch exists for the week the fit itself is the
+    # thing misbehaving. Only the literal "off" disables it — the house
+    # convention: a typo must not quietly switch a model off.
+    strength_enabled: bool = True
 
     def __post_init__(self) -> None:
         # An empty key is no key: an unconfigured CI secret arrives exported and
@@ -86,4 +93,6 @@ class Config:
             # leave it on. Turning a feature off by accident is not a thing a
             # misspelling should be able to do.
             chips=os.environ.get("AIGAFFER_CHIPS") != "off",
+            # Same convention again for the team-strength fit.
+            strength_enabled=os.environ.get("AIGAFFER_STRENGTH") != "off",
         )

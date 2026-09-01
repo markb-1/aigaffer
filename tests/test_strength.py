@@ -94,3 +94,69 @@ def test_the_vendored_results_load():
     assert len(results) == 760, "two full seasons"
     assert all(r.home_goals >= 0 and r.away_goals >= 0 for r in results)
     assert load_results() is load_results()
+
+
+def test_the_live_season_joins_the_fit(capsys):
+    # One finished live fixture on top of nothing vendored: a hand-built
+    # bootstrap whose teams carry codes, and a thrashing that must show
+    # up in the ratings.
+    from aigaffer.data.models import Bootstrap, Event, Fixture, Team
+
+    def team(id, code, name):
+        return Team(
+            id=id, name=name, short_name=name[:3].upper(), code=code,
+            strength_attack_home=1, strength_attack_away=1,
+            strength_defence_home=1, strength_defence_away=1,
+            strength_overall_home=1, strength_overall_away=1,
+        )
+
+    from aigaffer.model.strength import build_team_strengths
+
+    bootstrap = Bootstrap(
+        events=[], teams=[team(1, 101, "Alpha"), team(2, 102, "Beta")],
+        elements=[],
+    )
+    fixtures = [
+        Fixture(
+            id=1, event=1, team_h=1, team_a=2, finished=True,
+            kickoff_time="2026-08-25T14:00:00Z",
+            team_h_score=4, team_a_score=0,
+        ),
+        Fixture(id=2, event=2, team_h=2, team_a=1),  # unplayed: ignored
+    ]
+    fit = build_team_strengths(
+        bootstrap, fixtures, TODAY, vendored=[]
+    )
+    assert fit is not None
+    _, lam_beta_concedes = fit.factors(102, 101, opponent_at_home=False)
+    _, lam_alpha_concedes = fit.factors(101, 102, opponent_at_home=False)
+    assert lam_beta_concedes > lam_alpha_concedes, "the thrashing registered"
+
+
+def test_a_failed_fit_says_so_and_stands_aside(capsys):
+    from aigaffer.model.strength import build_team_strengths
+
+    fit = build_team_strengths(None, None, TODAY)  # garbage in
+    assert fit is None
+    out = capsys.readouterr().out
+    assert "team-strength fit failed" in out
+    assert "FPL strength columns stand" in out
+
+
+def test_a_codeless_bootstrap_stands_down_quietly(capsys):
+    # Every hand-built payload predates the codes; that is the old world,
+    # not a failure, and it must not spend a warning line on every test.
+    from aigaffer.data.models import Bootstrap, Team
+    from aigaffer.model.strength import build_team_strengths
+
+    bare = Team(
+        id=1, name="Alpha", short_name="ALP",
+        strength_attack_home=1, strength_attack_away=1,
+        strength_defence_home=1, strength_defence_away=1,
+        strength_overall_home=1, strength_overall_away=1,
+    )
+    fit = build_team_strengths(
+        Bootstrap(events=[], teams=[bare], elements=[]), [], TODAY
+    )
+    assert fit is None
+    assert capsys.readouterr().out == ""

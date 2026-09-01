@@ -256,6 +256,66 @@ def fit_team_strengths(
     return TeamStrengths(mu=mu, home=home, attack=attack, defence=defence)
 
 
+def build_team_strengths(
+    bootstrap, fixtures, as_of: date, vendored: list[MatchResult] | None = None
+) -> TeamStrengths | None:
+    """The fit as the pipeline asks for it: vendored past, live present.
+
+    The live season's finished fixtures join the vendored results through
+    each team's permanent ``code``; a fixture whose teams carry no code —
+    a hand-built test bootstrap — is skipped rather than mis-joined, and
+    an unfinished or scoreless fixture never counts. The two sources
+    cannot overlap: vendored rows are past seasons', live rows are this
+    one's.
+
+    Any failure — a payload shape this never saw, a date that will not
+    parse, the file itself — is one line on stdout and a None, and the
+    caller runs the editorial columns exactly as before this model
+    existed. Never the exception's text: the house rule about what lives
+    inside exceptions.
+
+    ``vendored`` exists for the tests; the pipeline leaves it None and
+    gets the packaged seasons.
+    """
+    try:
+        results = list(load_results() if vendored is None else vendored)
+        codes = {team.id: team.code for team in bootstrap.teams}
+        for fixture in fixtures:
+            home, away = codes.get(fixture.team_h, 0), codes.get(fixture.team_a, 0)
+            if (
+                not fixture.finished
+                or fixture.team_h_score is None
+                or fixture.team_a_score is None
+                or fixture.kickoff_time is None
+                or not home
+                or not away
+            ):
+                continue
+            results.append(
+                MatchResult(
+                    date=fixture.kickoff_time[:10],
+                    home_code=home,
+                    away_code=away,
+                    home_goals=fixture.team_h_score,
+                    away_goals=fixture.team_a_score,
+                )
+            )
+        wanted = {code for code in codes.values() if code}
+        if not wanted:
+            # Not a failure and not worth a line: a bootstrap where no team
+            # carries a code is a payload from before the codes were read —
+            # every hand-built fixture in the tests — and the convention for
+            # those is the same as Player.code's: no code, no model, quietly.
+            return None
+        return fit_team_strengths(results, wanted, as_of)
+    except Exception as error:  # noqa: BLE001 — the fallback is the feature
+        print(
+            f"aigaffer: team-strength fit failed ({type(error).__name__});"
+            " FPL strength columns stand"
+        )
+        return None
+
+
 def _bounded(factor: float) -> float:
     """The projection model's own clamp, imported lazily to avoid the
     circular import: xp reads this module's fit, and this module borrows

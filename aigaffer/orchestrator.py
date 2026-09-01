@@ -51,7 +51,7 @@ opinion further down.
 
 from collections import defaultdict
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import httpx
@@ -76,6 +76,7 @@ from aigaffer.data.models import (
 )
 from aigaffer.ledger import Observation, observe
 from aigaffer.model.minutes import expected_minutes, season_prior
+from aigaffer.model.strength import build_team_strengths
 from aigaffer.model.xp import PlayerProjection, project_all, projected_events
 from aigaffer.report.render import (
     NO_CHIP,
@@ -819,6 +820,17 @@ def build_projections(
     for pid, minutes in (minute_overrides or {}).items():
         xmins[pid] = min(FULL_MATCH, max(NO_MINUTES, float(minutes)))
 
+    # The fitted team strengths, when the switch is on: the vendored
+    # seasons plus whatever this one has finished, refit on every run so
+    # the ratings sharpen weekly for free. A failed fit already said so
+    # on stdout and hands back None, which is the editorial columns.
+    strengths = (
+        build_team_strengths(
+            inputs.bootstrap, inputs.fixtures, datetime.now(UTC).date()
+        )
+        if cfg.strength_enabled
+        else None
+    )
     projections = project_all(
         inputs.bootstrap,
         inputs.fixtures,
@@ -826,6 +838,7 @@ def build_projections(
         inputs.event.id,
         cfg.horizon,
         cfg.decay,
+        strengths=strengths,
     )
     return xmins, projections
 
