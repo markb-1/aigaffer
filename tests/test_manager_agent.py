@@ -54,7 +54,7 @@ import pytest
 from aigaffer.config import Config
 from aigaffer.data.models import Bootstrap, Pick, Player, Squad
 from aigaffer.manager import agent
-from aigaffer.manager.agent import ManagerDecision, run_manager
+from aigaffer.manager.agent import NUDGE, ManagerDecision, run_manager
 from aigaffer.manager.tools import MIN_RATIONALE, SYSTEM_PROMPT, TOOLS
 from aigaffer.model.xp import PlayerProjection
 from aigaffer.orchestrator import PipelineInputs, SolveResult
@@ -1780,3 +1780,12 @@ def test_the_prompt_prices_timing_but_never_the_transfer():
     # decided move forward a night, and must never talk him into one.
     assert "cheaper tonight than at the deadline" in SYSTEM_PROMPT
     assert "never let a price talk you into" in SYSTEM_PROMPT
+
+
+def test_the_nudge_offers_the_refreshed_searches_before_the_exit():
+    # Live GW3 scout: the gaffer paused to refresh its search allowance and
+    # the nudge talked it into finalizing instead — "my allowance ran out
+    # and it did not refresh", it wrote, wrongly. The nudge must offer the
+    # road it paused for before it demands the destination.
+    assert "search allowance, it is fresh now" in NUDGE
+    assert "finalize_decision" in NUDGE, "the demand stays; it comes second"

@@ -97,10 +97,18 @@ FORCE_FINALIZE = {"type": "tool", "name": "finalize_decision"}
 MANAGER = "manager"
 FALLBACK = "solver-fallback"
 
+# The refresh clause first, because the live GW3 scout showed what happens
+# without it: the gaffer ended a turn exactly as the prompt tells it to —
+# to refresh a spent search allowance — and this message's bare demand
+# talked it into finalizing instead, after which it wrote "my allowance
+# ran out and it did not refresh" into the rationale, wrongly. The demand
+# stays: a model that merely talks, twice running, is still forced.
 NUDGE = (
-    "That is not a decision yet. Finish the job: call finalize_decision with"
-    " the plan id you have settled on, your captain and vice from that plan's"
-    " eleven, a chip (or 'none'), and the rationale."
+    "That is not a decision yet. If you ended your turn to refresh your"
+    " search allowance, it is fresh now — continue the research you paused"
+    " for. Otherwise finish the job: call finalize_decision with the plan id"
+    " you have settled on, your captain and vice from that plan's eleven, a"
+    " chip (or 'none'), and the rationale."
 )
 
 # What the report says when there was no managerial view to print. The reason
