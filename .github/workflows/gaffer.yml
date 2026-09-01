@@ -2,18 +2,17 @@ name: gaffer
 
 on:
   schedule:
-    # Hourly, at thirty-five past: FPL deadlines sit on the half hour almost
-    # without exception, so the windows that hang off them open at :30 and a
-    # tick five minutes later delivers each report about as close to its
-    # anchor as an hourly schedule can (the :07 tick this replaces was 37
-    # minutes late by construction). Off the on-the-hour crush GitHub's
-    # scheduler drops from first, and hourly rather than half-hourly because
-    # density stopped buying delivery when the windows went late-open — any
-    # surviving tick sends a missed report, however late. GitHub's cron is
-    # best-effort and has dropped whole days of ticks; scripts/dispatch-tick.sh
-    # exists to be run from a second scheduler as insurance, and the gate and
-    # the store make the duplicate triggers harmless.
-    - cron: "35 * * * *"
+    # Hourly at fifty past — the BACKUP scheduler now, fifteen minutes
+    # behind the primary: a VM fires the real tick at :35 (FPL deadlines
+    # sit on the half hour, so the windows open at :30 and the primary
+    # lands five minutes later), commits its state by about :40, and this
+    # tick then stands down against the store. When the VM misses — it is
+    # one machine — this one carries the report fifteen minutes late,
+    # which the late-open windows absorb. GitHub's cron is best-effort and
+    # has dropped whole days of ticks, which is exactly why it is no
+    # longer the primary; the store makes the two schedulers harmless to
+    # each other whatever order they fire in.
+    - cron: "50 * * * *"
   workflow_dispatch:
     inputs:
       mode:

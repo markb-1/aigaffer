@@ -442,9 +442,14 @@ instead of nothing at all.
 input runs one by name instead of asking the clock (a manual dispatch skips
 the schedule's gate entirely).
 
-The schedule fires hourly at `35 * * * *` — FPL deadlines sit on the half
-hour, so a :35 tick lands each report about five minutes after its window
-opens — and does nothing at all most of the week: a curl-and-jq gate at the
+The schedule fires hourly at `50 * * * *` as a **backup**: the primary
+tick is best run from a machine of your own — any always-on box with the
+repo cloned, running `python -m aigaffer auto` on an hourly timer at :35
+and pushing the state back (FPL deadlines sit on the half hour, so a :35
+tick lands each report about five minutes after its window opens; the
+store then stands GitHub's :50 tick down, and carries the report if your
+box misses). The Actions workflow does nothing at all most of the week: a
+curl-and-jq gate at the
 top of the workflow checks the next deadline and stands the tick down in
 seconds unless it is within about sixty hours (Python stays the authority
 on the windows; the gate is a generous superset that only exists to spare
