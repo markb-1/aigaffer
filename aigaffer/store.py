@@ -1,6 +1,6 @@
 """Persistent record of pipeline runs, and of what the squad cost.
 
-Three SQLite tables. ``runs`` lets the bot answer "did I already run for this
+Four SQLite tables. ``runs`` lets the bot answer "did I already run for this
 gameweek and mode?" across process restarts, and keeps the rendered report
 plus the machine-readable decision around for later inspection. ``purchases``
 is the purchase ledger: what we paid for each player we hold, which the public
@@ -8,6 +8,9 @@ API never says and which is the only way to know what he would sell for
 (:mod:`aigaffer.ledger`). ``squads`` remembers the picks each gameweek served
 — the bank and the fifteen — so that after a deadline the ledger's selling
 estimates can be checked against the bank the game actually published.
+``withheld`` is the one table that is not a record of something done: a row
+per tick that kept a report back because the manager did not decide, so that
+a failure repeating every hour is told to the phone once.
 """
 
 import json
@@ -55,6 +58,20 @@ CREATE TABLE IF NOT EXISTS squads (
 )
 """
 
+# One row per tick that withheld a report because the manager did not decide:
+# which report, and the reason exactly as the report would have labelled it —
+# a class name or a phrase of ours, which is what makes it a key. These rows
+# are not runs and ``has_run`` never reads them; the week is still open.
+WITHHELD_SCHEMA = """
+CREATE TABLE IF NOT EXISTS withheld (
+    id INTEGER PRIMARY KEY,
+    ts TEXT,
+    gw INTEGER,
+    mode TEXT,
+    reason TEXT
+)
+"""
+
 
 class Store:
     """Run history kept in a SQLite file at ``db_path``."""
@@ -66,6 +83,7 @@ class Store:
             conn.execute(SCHEMA)
             conn.execute(PURCHASES_SCHEMA)
             conn.execute(SQUADS_SCHEMA)
+            conn.execute(WITHHELD_SCHEMA)
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -114,6 +132,25 @@ class Store:
         with self._connect() as conn:
             row = conn.execute(
                 "SELECT 1 FROM runs WHERE gw = ? AND mode = ? LIMIT 1", (gw, mode)
+            ).fetchone()
+        return row is not None
+
+    def record_withheld(self, gw: int, mode: str, reason: str) -> None:
+        """Note that this tick kept ``gw``'s ``mode`` report back, and why."""
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO withheld (ts, gw, mode, reason) VALUES (?, ?, ?, ?)",
+                (datetime.now(UTC).isoformat(), gw, mode, reason),
+            )
+
+    def withheld_before(self, gw: int, mode: str, reason: str) -> bool:
+        """Whether ``gw``'s ``mode`` report has already been withheld for
+        ``reason`` — which is whether the phone has already heard about it."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM withheld WHERE gw = ? AND mode = ? AND reason = ?"
+                " LIMIT 1",
+                (gw, mode, reason),
             ).fetchone()
         return row is not None
 

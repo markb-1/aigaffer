@@ -196,3 +196,24 @@ def test_last_squad_before_the_first_record_is_none(tmp_path):
     store.record_squad(2, bank=20, player_ids=[2])
 
     assert store.last_squad_before(2) is None
+
+
+def test_a_withheld_report_is_remembered_by_its_reason(tmp_path):
+    store = Store(tmp_path / "aigaffer.db")
+    assert store.withheld_before(2, "deadline", "AuthenticationError") is False
+
+    store.record_withheld(2, "deadline", "AuthenticationError")
+
+    assert store.withheld_before(2, "deadline", "AuthenticationError") is True
+    assert store.withheld_before(2, "deadline", "RateLimitError") is False
+    assert store.withheld_before(2, "scout", "AuthenticationError") is False
+    assert store.withheld_before(3, "deadline", "AuthenticationError") is False
+
+
+def test_a_withheld_report_has_not_run(tmp_path):
+    store = Store(tmp_path / "aigaffer.db")
+
+    store.record_withheld(2, "deadline", "AuthenticationError")
+
+    assert store.has_run(2, "deadline") is False
+    assert store.last_runs() == []

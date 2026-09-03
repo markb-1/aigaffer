@@ -364,9 +364,10 @@ on and how many searches it took.
 
 A deadline is never silently missed, and a manager who cannot be reached is
 not a reason to miss one. **Every** failure degrades to the solver's own
-recommendation — the pipeline's answer with no manager in it — and the
-report still goes out on time. There are two shapes of failure and they read
-differently:
+recommendation — the pipeline's answer with no manager in it — and that
+recommendation always reaches the phone before the window closes. What
+changes is *when*: see the withholding rule below. There are two shapes of
+failure and they read differently:
 
 **Asked and it went wrong.** A rate limit, an authentication error, a
 refusal, a connection that dies, a turn the model never finishes, twelve
@@ -386,6 +387,19 @@ accident, so the report carries one line — *"Note: the manager is configured
 but was unavailable this run; this is the solver's pick."* — because a fork
 whose `anthropic` install broke would otherwise read a season of solver-only
 reports and never be told.
+
+**Withheld, and asked again.** Either shape, while the report's window still
+has more than three hours left, is not written down: no diary file, no store
+row, no digest. The tick prints *"the report was withheld for the next
+tick"*, sends the phone one short alert — the reason, when the retries stop,
+and the solver's checklist so there is always a plan to act on — and stops.
+The next tick, from either scheduler, runs the whole thing again; a manager
+who has recovered (a key replaced, a rate limit lifted) produces the normal
+report, and the alert is not repeated unless the failure changes. Three
+hours before the window closes the waiting ends: the labelled solver report
+goes out and counts, so the reminder still has a verdict to check the news
+against and the week is never left without one. A dry run withholds nothing
+and alerts nobody.
 
 The rule underneath: the solver-only path is the invariant. With
 `AIGAFFER_MANAGER=0` the pipeline produces byte-identical output to the
@@ -471,7 +485,9 @@ down in
 seconds unless it is within about sixty hours (Python stays the authority
 on the windows; the gate is a generous superset that only exists to spare
 the pip install). Each gameweek gets one report of each kind: the SQLite
-store remembers, so a second tick inside a window is a no-op. GitHub drops
+store remembers, so a second tick inside a window is a no-op — unless the
+manager was asked and did not decide, in which case nothing was recorded
+and the second tick is the retry. GitHub drops
 scheduled runs under load — occasionally for whole days at a stretch —
 which is why the windows stay open late rather than closing at their
 anchor: the first tick to survive sends whatever the dropped ones owed, and

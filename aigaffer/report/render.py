@@ -35,7 +35,7 @@ beside a total for several.
 """
 
 from collections import defaultdict
-from datetime import UTC
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from aigaffer.data.models import Bootstrap, Event, Player
@@ -174,6 +174,18 @@ FRESH_SOLVE_POINTER = (
 # message has a reader with a deadline, and the cap is what keeps one
 # unusually discursive opening from rebuilding the wall the digest replaced.
 DIGEST_PROSE_CAP = 600
+
+# What the phone gets instead of a digest when the manager was asked and did
+# not decide while there was still time to ask him again: why, in the words
+# the report would have used; until when the ticks keep trying; and the
+# solver's checklist, so the owner is never without a plan to act on. It is
+# an alert and not a report — nothing was saved, so there is nothing to point
+# at — and it is sent once per reason, not once per tick.
+WITHHELD_NOTICE = (
+    "⚠️ The gaffer could not run ({reason}). This report is withheld and the"
+    " next tick will ask him again, every hour until {until}; the full report"
+    " follows if he recovers. Until then, the solver's fallback:"
+)
 
 
 def render_report(
@@ -363,6 +375,44 @@ def render_digest(
     if gaffer is not None:
         sections.append(_gaffer_digest(gaffer))
     sections.append(FULL_REPORT_POINTER.format(gw=event.id))
+    return "\n\n".join(sections) + "\n"
+
+
+def render_withheld(
+    mode: str,
+    event: Event,
+    choice: Plan,
+    lineup: Lineup,
+    bootstrap: Bootstrap,
+    reason: str,
+    until: datetime,
+    *,
+    free_transfers: int | None = None,
+    selling_prices: dict[int, int] | None = None,
+) -> str:
+    """The alert the phone gets for a withheld report. Pure; no I/O.
+
+    ``choice`` and ``lineup`` are the solver's own week — the one the report
+    would have carried under the manager's fallback label — and ``reason`` is
+    that label's reason. ``until`` is when the ticks stop asking and let the
+    solver's report through; it is printed the way the deadline is.
+    """
+    players = {player.id: player for player in bootstrap.elements}
+    clubs = {team.id: team.short_name for team in bootstrap.teams}
+    chip = played_chip(choice, None)
+    free_hit = _free_hitting(choice, chip)
+
+    sections = [
+        _header(mode, event),
+        WITHHELD_NOTICE.format(reason=reason, until=_utc(until)),
+    ]
+    if not _drafting(choice):
+        sections.append(
+            _do_this(
+                event, choice, lineup, players, clubs, chip, free_hit,
+                free_transfers, selling_prices,
+            )
+        )
     return "\n\n".join(sections) + "\n"
 
 
@@ -626,13 +676,17 @@ def _header(mode: str, event: Event) -> str:
 
 
 def deadline(event: Event) -> str:
-    """The deadline in UTC, whatever clock it arrived on.
+    """The deadline in UTC, whatever clock it arrived on."""
+    return _utc(event.deadline_time)
+
+
+def _utc(stamp: datetime) -> str:
+    """``stamp`` in UTC, in the deadline's format.
 
     A naive datetime is read as UTC rather than handed to ``astimezone``,
     which would take it for the runner's local time and quietly move the
     deadline by however many hours that machine happens to be out.
     """
-    stamp = event.deadline_time
     if stamp.tzinfo is None:
         stamp = stamp.replace(tzinfo=UTC)
     return stamp.astimezone(UTC).strftime(DEADLINE_FORMAT)
