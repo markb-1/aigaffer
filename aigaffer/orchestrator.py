@@ -47,11 +47,19 @@ line in the report saying so. The rule that makes the rest of this module
 readable is that the decision it comes back with, whoever made it, is the one
 that goes into the report, the store and the phone. There is never a second
 opinion further down.
+
+One judgement sits on top of that rule. A manager who was asked and did not
+decide is a week the solver decided under his name, and while the window has
+time left that week is not written down: :func:`run_pipeline` withholds it —
+no diary, no run row, no phone digest — tells the phone once why, and leaves
+the next tick to ask him again. Only at the floor (:data:`RETRY_FLOORS`), at
+the retry limit, or on a run a person forced does the labelled week go out
+and count, so that a week is never left without a report.
 """
 
 from collections import defaultdict
 from dataclasses import asdict, dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -60,6 +68,8 @@ import httpx
 from aigaffer.config import (
     DEADLINE_ANCHOR_HOURS,
     EARLY_SEASON_GWS,
+    MANAGER_RETRY_FLOOR_HOURS,
+    MANAGER_RETRY_LIMIT,
     REMINDER_ANCHOR_HOURS,
     SCOUT_HORIZON_HOURS,
     Config,
@@ -80,6 +90,9 @@ from aigaffer.model.minutes import expected_minutes, season_prior
 from aigaffer.model.strength import build_team_strengths
 from aigaffer.model.xp import PlayerProjection, project_all, projected_events
 from aigaffer.report.render import (
+    # ``agent.MANAGER``, reached without importing the manager package at
+    # module scope; renamed because this module's own DECIDED is a log line.
+    DECIDED as BY_MANAGER,
     NO_CHIP,
     formation,
     played_chip,
@@ -87,6 +100,7 @@ from aigaffer.report.render import (
     render_reminder,
     render_reminder_digest,
     render_report,
+    render_withheld,
 )
 from aigaffer.report.telegram import send_report
 from aigaffer.solver.lineup import (
@@ -131,6 +145,7 @@ REMINDER_WINDOW = (0, REMINDER_ANCHOR_HOURS)
 SCOUT_WINDOW = (DEADLINE_ANCHOR_HOURS, SCOUT_HORIZON_HOURS)
 
 NOT_CONFIGURED = "telegram not configured: the report was kept but not sent"
+ALERT_NOT_CONFIGURED = "telegram not configured: the alert had nowhere to go"
 
 # What a run says when the history filter takes everything it was given. The
 # cut in :func:`_played` is made against a payload somebody else serves, so a
@@ -174,6 +189,23 @@ MANAGER_UNAVAILABLE = (
 # by a manager who read the news or by a solver that could not.
 DECIDED = "the gaffer decided"
 STOOD_DOWN = "the gaffer stood down"
+# And that the week was not written down over it: the next tick asks again.
+WITHHELD = "the report was withheld for the next tick"
+
+# The reason a manager whose own module would not import is withheld under.
+# There is no decision to label and the class name already went to stdout;
+# the phone needs a key for the failure, not a second copy of the traceback.
+NOT_LOADED = "not loaded"
+
+# Below these hours to the deadline a manager who did not decide no longer
+# buys the report another tick: the window is closing, and the solver's week
+# goes out and counts rather than no week at all. Each is the window's near
+# edge plus the floor — the last hours in which a late report is still worth
+# more than a labelled one. The reminder never asks him and has no floor.
+RETRY_FLOORS = {
+    DEADLINE_MODE: REMINDER_ANCHOR_HOURS + MANAGER_RETRY_FLOOR_HOURS,
+    SCOUT_MODE: DEADLINE_ANCHOR_HOURS + MANAGER_RETRY_FLOOR_HOURS,
+}
 
 # And why a decision of his was not used: he played a chip that is gone. It is
 # the one refusal that happens outside his own loop.
@@ -308,6 +340,8 @@ def run_pipeline(
     mode: str,
     send: bool = True,
     save: bool = True,
+    now: datetime | None = None,
+    force: bool = False,
 ) -> str:
     """Run ``mode`` for the next gameweek and return the report.
 
@@ -326,6 +360,17 @@ def run_pipeline(
     to the report before either flag is read, so that the file, the store and
     the message all say the same thing about who decided this week.
 
+    A manager who was asked and did not decide — that accident, or any of the
+    labelled fallbacks — is not written down at all while the window has more
+    than its floor left and the report has been held fewer than the limit's
+    ticks: the report is returned and nothing else happens, except that the
+    phone is told once, per reason, with the solver's checklist. ``save`` and
+    ``send`` gate that alert and the record of it as they gate everything
+    else, so a dry run stays silent and leaves nothing; ``force`` — a person
+    at the keyboard, or the workflow's button — skips the waiting altogether
+    and takes whatever answer the run got, which is what forcing has always
+    meant here.
+
     The reminder is the exception to almost all of that, and it branches off
     at the top: no manager, no root file, a short alert instead of a report —
     see :func:`_run_reminder`, which owns what it does keep of the flow.
@@ -334,14 +379,21 @@ def run_pipeline(
     to date (:func:`aigaffer.ledger.observe`): the picks are already in hand,
     and what comes back — the true selling price of every man we hold — is
     threaded through the solve, the manager's re-solves and the report's SELL
-    tags. ``save`` gates the ledger's writes exactly as it gates the report's:
+    tags. ``save`` gates the ledger's writes exactly as it gates the report's
+    — and a withheld tick, which saves nothing, persists none of them either:
     a dry run prices its sales in memory and persists none of it.
     """
     if mode == REMINDER_MODE:
         return _run_reminder(cfg, client, store, send=send, save=save)
 
     inputs = fetch_inputs(cfg, client)
-    ledger = observe(store, inputs.squad, inputs.players, inputs.chips_used, save)
+    # Priced now, persisted below with everything else: the ledger's one
+    # reconciliation line per gameweek fires on the first run to see the
+    # squad, and a withheld tick that had written the snapshot would have
+    # spent it on a report nobody saved or sent.
+    ledger = observe(
+        store, inputs.squad, inputs.players, inputs.chips_used, persist=False
+    )
     xmins, projections = build_projections(inputs, cfg)
     solved = solve(inputs, projections, cfg, ledger.selling_prices)
     gaffer = _consult(cfg, inputs, solved, projections, xmins, ledger.selling_prices)
@@ -455,7 +507,47 @@ def run_pipeline(
             searches=gaffer.searches,
         )
 
+    # A manager who was asked and did not decide is not a week to write down
+    # while there is time to ask him again. Nothing is saved — not the diary,
+    # not the store, not the homepage — so the next tick of either scheduler
+    # runs the whole thing afresh, and only his answer or the floor ends the
+    # waiting. The phone hears why, once per reason, with the solver's
+    # checklist so the owner is never without a plan to act on meanwhile.
+    # Past the floor the labelled report below goes out and counts, exactly as
+    # it always did: late beats labelled, but labelled beats nothing.
+    undecided = _undecided(cfg, solved, gaffer)
+    if (
+        undecided is not None
+        and not force
+        and _worth_another_tick(mode, event, now)
+        and store.withheld_count(event.id, mode) < MANAGER_RETRY_LIMIT
+    ):
+        print(WITHHELD)
+        # The phone first and the record second: a record written before an
+        # alert that never landed would keep every later tick quiet, and this
+        # is the one message the whole arrangement exists to send. Nowhere to
+        # send it counts as sent — an unconfigured phone stays unconfigured.
+        first = not (save and store.withheld_before(event.id, mode, undecided))
+        delivered = True
+        if send and first:
+            delivered = _deliver(
+                cfg,
+                render_withheld(
+                    _label(mode, drafting=solved.draft_mode),
+                    event, choice, lineup, inputs.bootstrap, undecided,
+                    until=event.deadline_time - timedelta(hours=RETRY_FLOORS[mode]),
+                    attempts=MANAGER_RETRY_LIMIT,
+                    free_transfers=inputs.free_transfers,
+                    selling_prices=ledger.selling_prices,
+                ),
+                unconfigured=ALERT_NOT_CONFIGURED,
+            )
+        if save and delivered:
+            store.record_withheld(event.id, mode, undecided)
+        return report
+
     if save:
+        observe(store, inputs.squad, inputs.players, inputs.chips_used)
         _write_report(cfg, event.id, mode, report)
         store.save_run(event.id, mode, report, decision)
     if send:
@@ -1059,6 +1151,48 @@ def _consult(
     return decision
 
 
+def _undecided(
+    cfg: Config, solved: SolveResult, gaffer: "ManagerDecision | None"
+) -> str | None:
+    """Why a manager who was asked did not decide — or None, because nobody
+    asked him, or because he did.
+
+    The reason is the one the report prints: a class name or a phrase of
+    ours, never an exception's own words. It is also the key the phone is
+    told the failure under, once, so two ticks that failed the same way are
+    one alert and a tick that failed a new way is another.
+    """
+    if solved.draft_mode or not cfg.manager_enabled:
+        return None
+    if gaffer is None:
+        return NOT_LOADED
+    if gaffer.source == BY_MANAGER:
+        return None
+    return gaffer.source.partition(": ")[2] or gaffer.source
+
+
+def _worth_another_tick(mode: str, event: Event, now: datetime | None) -> bool:
+    """Whether ``mode``'s window has more than its floor left — enough for a
+    later tick to ask the manager again and still land in time.
+
+    The wall clock unless one is handed in, and read here, after the manager
+    has had his turn: a run that spent twenty minutes on him is twenty
+    minutes nearer the floor, which is the right side to err on. A naive
+    clock is UTC, as a naive deadline is. A mode with no floor is never worth
+    waiting on; the reminder never asks him.
+    """
+    floor = RETRY_FLOORS.get(mode)
+    if floor is None:
+        return False
+    deadline = event.deadline_time
+    if deadline.tzinfo is None:
+        deadline = deadline.replace(tzinfo=UTC)
+    now = now or datetime.now(UTC)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=UTC)
+    return (deadline - now).total_seconds() / 3600 > floor
+
+
 def _within(hours: float, window: tuple[float, float]) -> bool:
     """Is ``hours`` inside ``window``, open at the near end and closed at the
     far one? A deadline that has just gone is not a deadline to report on."""
@@ -1464,7 +1598,7 @@ def _point_readme(root: Path, event_id: int) -> None:
             return
 
 
-def _deliver(cfg: Config, report: str) -> bool:
+def _deliver(cfg: Config, report: str, unconfigured: str = NOT_CONFIGURED) -> bool:
     """Send the report on, if there is anywhere to send it.
 
     Half-configured — a token in the secrets and no chat id, or the other way
@@ -1484,7 +1618,7 @@ def _deliver(cfg: Config, report: str) -> bool:
     having deliberately come first; the reminder's save hangs off it.
     """
     if not (cfg.telegram_token and cfg.telegram_chat_id):
-        print(NOT_CONFIGURED)
+        print(unconfigured)
         return True
     try:
         send_report(cfg.telegram_token, cfg.telegram_chat_id, report)

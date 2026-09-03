@@ -76,6 +76,12 @@ from tests.fixtures import (
 
 TEAM_ID = 99
 TOKEN = "1234:super-secret-bot-token"
+# The fixture's GW2 deadline itself: zero hours left, past every floor the
+# withholding rule measures against (tests/test_manager_retry.py). The runs
+# below whose manager fails assert the labelled, saved report, which is the
+# branch this clock puts them on — said here rather than left to the wall
+# clock, which only agrees because 2025 is behind us.
+PAST_THE_FLOOR = datetime(2025, 8, 22, 17, 30, tzinfo=UTC)
 
 PICKS_PATH = f"/api/entry/{TEAM_ID}/event/1/picks/"
 TRANSFERS_PATH = f"/api/entry/{TEAM_ID}/transfers/"
@@ -1647,7 +1653,8 @@ def gaffer_run(monkeypatch, tmp_path, decide=decided, mode="scout", **kwargs):
     gaffer = stub_gaffer(monkeypatch, decide)
     store = Store(tmp_path / "aigaffer.db")
     report = run_pipeline(
-        gaffer_cfg(tmp_path), make_client(pipeline_routes()), store, mode, **kwargs
+        gaffer_cfg(tmp_path), make_client(pipeline_routes()), store, mode, **kwargs,
+        now=PAST_THE_FLOOR,
     )
     return report, store, gaffer
 
@@ -1731,6 +1738,7 @@ def test_the_kill_switch_leaves_the_solver_to_it(monkeypatch, tmp_path, scout_ru
         Store(tmp_path / "aigaffer.db"),
         "scout",
         send=False,
+        now=PAST_THE_FLOOR,
     )
 
     assert report == scout_run.report
@@ -1908,6 +1916,7 @@ def test_an_import_that_blows_up_is_a_fallback_and_not_a_lost_report(
         store,
         "scout",
         send=False,
+        now=PAST_THE_FLOOR,
     )
 
     assert "The gaffer was unavailable (unexpected RuntimeError)" in report
@@ -1935,6 +1944,7 @@ def test_a_manager_who_never_loaded_at_all_says_so_in_the_report(
         store,
         "scout",
         send=False,
+        now=PAST_THE_FLOOR,
     )
 
     assert "## The Gaffer's view" not in report
@@ -1965,7 +1975,8 @@ def test_the_manager_unavailable_notice_rides_the_digest(monkeypatch, tmp_path):
     )
 
     run_pipeline(
-        cfg, make_client(pipeline_routes()), Store(tmp_path / "aigaffer.db"), "scout"
+        cfg, make_client(pipeline_routes()), Store(tmp_path / "aigaffer.db"), "scout",
+        now=PAST_THE_FLOOR,
     )
 
     [(_, _, message)] = sent
@@ -2026,6 +2037,7 @@ def test_a_draft_carries_no_note_either(monkeypatch, tmp_path):
         Store(tmp_path / "aigaffer.db"),
         "scout",
         send=False,
+        now=PAST_THE_FLOOR,
     )
 
     assert orchestrator.MANAGER_UNAVAILABLE not in report
@@ -2082,6 +2094,7 @@ def test_without_a_key_there_is_no_gaffer_and_no_difference(
         store,
         "scout",
         send=False,
+        now=PAST_THE_FLOOR,
     )
 
     assert report == scout_run.report
@@ -2104,6 +2117,7 @@ def test_the_gaffer_is_never_asked_to_draft_a_squad(monkeypatch, tmp_path):
         Store(tmp_path / "aigaffer.db"),
         "scout",
         send=False,
+        now=PAST_THE_FLOOR,
     )
 
     assert gaffer.consults == []
@@ -2159,7 +2173,8 @@ def test_the_report_the_gaffer_wrote_is_the_one_that_is_sent(monkeypatch, tmp_pa
     )
 
     report = run_pipeline(
-        cfg, make_client(pipeline_routes()), Store(tmp_path / "aigaffer.db"), "deadline"
+        cfg, make_client(pipeline_routes()), Store(tmp_path / "aigaffer.db"), "deadline",
+        now=PAST_THE_FLOOR,
     )
 
     assert len(gaffer.consults) == 1

@@ -19,6 +19,26 @@ REMINDER_ANCHOR_HOURS = 3.0
 # more than two hours of widening does.
 SCOUT_HORIZON_HOURS = 60.0
 
+# How close to the end of its window a report is still worth withholding for
+# a manager who did not decide. A gaffer who fails — a dead key, a rate limit,
+# an install that will not import — used to send the solver's week under his
+# fallback label and mark it done, which left the backup scheduler nothing to
+# redo and the owner one buried line to notice. Now the tick withholds the
+# report and the next one asks him again, until this many hours before the
+# window closes; past that the solver's report goes out and counts, because a
+# week without a report is the one failure worse than a week without a
+# manager. Three hours is a few ticks of either scheduler, and for the
+# deadline report still leaves six hours to act on the solver's word.
+MANAGER_RETRY_FLOOR_HOURS = 3.0
+
+# And how many ticks may withhold the same report before the waiting ends
+# regardless of the clock. A dead key fails in seconds and costs nothing, but
+# a manager who fails slowly — a refusal, a loop that runs out of turns or of
+# time — is a full run per tick, and with two schedulers that is two an hour.
+# Twelve is six hours of both or twelve of one: long enough to replace a key
+# after the alert, short enough that a week he cannot decide stays cheap.
+MANAGER_RETRY_LIMIT = 12
+
 # Below this many finished gameweeks the season is "early", and two readers
 # hang two different cautions off the one judgement. The briefing warns the
 # manager that the per-90 rates under the projections are one or two matches

@@ -364,9 +364,10 @@ on and how many searches it took.
 
 A deadline is never silently missed, and a manager who cannot be reached is
 not a reason to miss one. **Every** failure degrades to the solver's own
-recommendation — the pipeline's answer with no manager in it — and the
-report still goes out on time. There are two shapes of failure and they read
-differently:
+recommendation — the pipeline's answer with no manager in it — and that
+recommendation always reaches the phone before the window closes. What
+changes is *when*: see the withholding rule below. There are two shapes of
+failure and they read differently:
 
 **Asked and it went wrong.** A rate limit, an authentication error, a
 refusal, a connection that dies, a turn the model never finishes, twelve
@@ -386,6 +387,22 @@ accident, so the report carries one line — *"Note: the manager is configured
 but was unavailable this run; this is the solver's pick."* — because a fork
 whose `anthropic` install broke would otherwise read a season of solver-only
 reports and never be told.
+
+**Withheld, and asked again.** Either shape, while the report's window still
+has more than three hours left, is not written down: no diary file, no run
+row, no digest. The tick prints *"the report was withheld for the next
+tick"*, sends the phone one short alert — the reason, when the retries stop,
+and the solver's checklist so there is always a plan to act on — and stops.
+The next tick, from either scheduler, runs the whole thing again; a manager
+who has recovered (a key replaced, a rate limit lifted) produces the normal
+report, and the alert is not repeated unless the failure changes. The
+waiting ends three hours before the window closes, or after twelve withheld
+ticks (`MANAGER_RETRY_LIMIT`), whichever comes first: the labelled solver
+report goes out and counts, so the reminder still has a verdict to check the
+news against and the week is never left without one. A dry run withholds
+nothing and alerts nobody, and a run a person forced (`--force`, or the
+workflow's button) takes whatever answer it got: forcing has always meant
+overruling the store, and now it overrules the waiting too.
 
 The rule underneath: the solver-only path is the invariant. With
 `AIGAFFER_MANAGER=0` the pipeline produces byte-identical output to the
@@ -471,7 +488,12 @@ down in
 seconds unless it is within about sixty hours (Python stays the authority
 on the windows; the gate is a generous superset that only exists to spare
 the pip install). Each gameweek gets one report of each kind: the SQLite
-store remembers, so a second tick inside a window is a no-op. GitHub drops
+store remembers, so a second tick inside a window is a no-op — unless the
+manager was asked and did not decide, in which case nothing was recorded
+and the second tick is the retry. The two schedulers see each other only
+through the pushed state, so a failure slow enough to straddle both ticks
+can cost a duplicate alert; that is the worst of it, since a report that
+lands twice is deduplicated by the same store. GitHub drops
 scheduled runs under load — occasionally for whole days at a stretch —
 which is why the windows stay open late rather than closing at their
 anchor: the first tick to survive sends whatever the dropped ones owed, and
@@ -507,7 +529,12 @@ pathological one — a dozen searches, two re-solves, twelve turns each
 re-reading everything before them — costs an order of magnitude more. Two
 decision runs a gameweek (scout and deadline; the reminder never wakes the
 manager), so on the order of $2–8 a week and $50–200 for a season, weighted
-towards the low end because most weeks are quiet.
+towards the low end because most weeks are quiet. The one way a week gets
+expensive is a manager who fails slowly and is asked again: a withheld
+report (see the fallback doctrine) is retried by every tick, and a refusal
+or a loop that runs out of time is a full run each time, which is what the
+twelve-tick limit is for — worst case a dozen runs, and the alert has told
+you by the first of them.
 
 Three cache breakpoints hold it down, of the four the API allows. Two never
 move — the system prompt and the briefing, which are the whole of what
