@@ -31,6 +31,14 @@ SCOUT_HORIZON_HOURS = 60.0
 # deadline report still leaves six hours to act on the solver's word.
 MANAGER_RETRY_FLOOR_HOURS = 3.0
 
+# And how many ticks may withhold the same report before the waiting ends
+# regardless of the clock. A dead key fails in seconds and costs nothing, but
+# a manager who fails slowly — a refusal, a loop that runs out of turns or of
+# time — is a full run per tick, and with two schedulers that is two an hour.
+# Twelve is six hours of both or twelve of one: long enough to replace a key
+# after the alert, short enough that a week he cannot decide stays cheap.
+MANAGER_RETRY_LIMIT = 12
+
 # Below this many finished gameweeks the season is "early", and two readers
 # hang two different cautions off the one judgement. The briefing warns the
 # manager that the per-90 rates under the projections are one or two matches

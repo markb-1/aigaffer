@@ -20,22 +20,30 @@ import sys
 from datetime import UTC, datetime, timedelta
 from functools import partial
 
+import httpx
 import pytest
 
+from aigaffer import __main__ as cli
 from aigaffer import orchestrator
-from aigaffer.config import MANAGER_RETRY_FLOOR_HOURS, Config
+from aigaffer.config import MANAGER_RETRY_FLOOR_HOURS, MANAGER_RETRY_LIMIT, Config
 from aigaffer.orchestrator import run_pipeline
 from aigaffer.store import Store
+from tests.fixtures import PICKS_15_JSON
 from tests.test_orchestrator import (
     GOOD_CHIP,
     TEAM_ID,
     TOKEN,
     PoisonedModule,
+    bootstrap_due_in,
     decided,
     make_client,
+    midweek_bootstrap,
     pipeline_routes,
+    serve,
+    store,  # noqa: F401 — the CLI's configured environment, a fixture
     stub_gaffer,
     unavailable,
+    unplayed_routes,
 )
 
 # The fixture's GW2 deadline; every clock below is read back from it.
@@ -276,5 +284,148 @@ def test_the_clock_defaults_to_now(monkeypatch, tmp_path, phone):
     store = Store(tmp_path / "state" / "aigaffer.db")
 
     run_pipeline(phone_cfg(tmp_path), make_client(pipeline_routes()), store, "deadline")
+
+    assert store.has_run(2, "deadline") is True
+
+
+# --- what the review asked for ---------------------------------------------
+
+
+def test_the_ledgers_note_survives_a_withheld_tick(monkeypatch, tmp_path, phone):
+    # The ledger reconciles the bank once per gameweek, on the first run that
+    # sees it; a withheld tick that wrote the snapshot would spend that one
+    # line on a report nobody saved or sent. Seeded as the ledger's own test
+    # seeds it: a purchase the published bank contradicts.
+    store = Store(tmp_path / "state" / "aigaffer.db")
+    held = [pick["element"] for pick in PICKS_15_JSON["picks"]]
+    previous = [pid if pid != 16 else 17 for pid in held]
+    for pid in previous:
+        store.record_purchase(pid, buy_price=90 if pid == 17 else 50, gw_seen=1)
+    store.record_squad(1, bank=0, player_ids=previous)
+    routes = unplayed_routes(midweek_bootstrap(), (1, 90))
+    gw3_deadline = datetime(2025, 8, 29, 17, 30, tzinfo=UTC)
+
+    stub_gaffer(monkeypatch, AUTH_FAILED)
+    withheld = run_pipeline(
+        phone_cfg(tmp_path), make_client(routes), store, "deadline",
+        now=gw3_deadline - timedelta(hours=20),
+    )
+    stub_gaffer(monkeypatch, decided)
+    final = run_pipeline(
+        phone_cfg(tmp_path), make_client(routes), store, "deadline",
+        now=gw3_deadline - timedelta(hours=19),
+    )
+
+    assert "purchase ledger" in withheld
+    assert "purchase ledger" in final
+    assert "purchase ledger" in phone.messages[-1]
+
+
+def test_an_alert_that_failed_to_send_is_tried_again_next_tick(monkeypatch, tmp_path):
+    calls: list[str] = []
+
+    def flaky(token: str, chat_id: str, text: str) -> None:
+        calls.append(text)
+        if len(calls) == 1:
+            raise httpx.ConnectError("boom")
+
+    monkeypatch.setattr(orchestrator, "send_report", flaky)
+
+    _, store = tick(monkeypatch, tmp_path, AUTH_FAILED, hours=20)
+    tick(monkeypatch, tmp_path, AUTH_FAILED, hours=19, store=store)
+    tick(monkeypatch, tmp_path, AUTH_FAILED, hours=18, store=store)
+
+    # The one that failed, the one that landed, and then silence.
+    assert len(calls) == 2
+
+
+def test_the_retries_stop_at_the_limit(monkeypatch, tmp_path, phone):
+    # A manager who fails slowly — a refusal, a loop that runs out of time —
+    # costs a full run per tick, from two schedulers. The floor bounds the
+    # hours; this bounds the bill.
+    _, store = tick(monkeypatch, tmp_path, AUTH_FAILED, hours=23)
+    for n in range(1, MANAGER_RETRY_LIMIT):
+        tick(monkeypatch, tmp_path, AUTH_FAILED, hours=23 - n * 0.5, store=store)
+    assert store.has_run(2, "deadline") is False
+    assert len(phone.messages) == 1
+
+    report, _ = tick(
+        monkeypatch, tmp_path, AUTH_FAILED,
+        hours=23 - MANAGER_RETRY_LIMIT * 0.5, store=store,
+    )
+
+    assert store.has_run(2, "deadline") is True
+    assert FALLBACK_LINE in report
+    assert "Full report: GW2.md" in phone.messages[-1]
+
+
+def test_a_forced_run_takes_whatever_answer_it_gets(monkeypatch, tmp_path, phone):
+    # ``--force`` is a person overruling the store, and the same person is
+    # the authority the floor stands in for: they asked for a report now,
+    # they can see the stood-down line, and they can force again.
+    report, store = tick(monkeypatch, tmp_path, AUTH_FAILED, hours=20, force=True)
+
+    assert store.has_run(2, "deadline") is True
+    assert FALLBACK_LINE in report
+    [digest] = phone.messages
+    assert "Full report: GW2.md" in digest
+
+
+def test_a_naive_clock_is_read_as_utc(monkeypatch, tmp_path, phone):
+    stub_gaffer(monkeypatch, AUTH_FAILED)
+    store = Store(tmp_path / "state" / "aigaffer.db")
+
+    run_pipeline(
+        phone_cfg(tmp_path), make_client(pipeline_routes()), store, "deadline",
+        now=hours_out(20).replace(tzinfo=None),
+    )
+
+    assert store.has_run(2, "deadline") is False
+
+
+def test_an_unconfigured_phone_is_not_told_the_report_was_kept(
+    monkeypatch, tmp_path, capsys
+):
+    stub_gaffer(monkeypatch, AUTH_FAILED)
+    quiet = Config(team_id=TEAM_ID, state_dir=tmp_path / "state", anthropic_api_key="sk-test")
+
+    run_pipeline(
+        quiet, make_client(pipeline_routes()), Store(tmp_path / "state" / "aigaffer.db"),
+        "deadline", now=hours_out(20),
+    )
+
+    out = capsys.readouterr().out
+    assert orchestrator.NOT_CONFIGURED not in out
+    assert orchestrator.ALERT_NOT_CONFIGURED in out
+
+
+# --- through the command line, where the incident happened -----------------
+
+
+def test_auto_withholds_then_reports_then_stands_down(
+    monkeypatch, tmp_path, capsys, store
+):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    serve(monkeypatch, pipeline_routes(bootstrap=bootstrap_due_in(20)))
+
+    stub_gaffer(monkeypatch, AUTH_FAILED)
+    assert cli.main(["auto"]) == 0
+    assert store.has_run(2, "deadline") is False
+    assert orchestrator.WITHHELD in capsys.readouterr().out
+
+    stub_gaffer(monkeypatch, decided)
+    assert cli.main(["auto"]) == 0
+    assert store.decision(2, "deadline")["decision_source"] == "manager"
+
+    assert cli.main(["auto"]) == 0
+    assert len(store.last_runs()) == 1
+
+
+def test_a_forced_deadline_at_the_keyboard_is_not_withheld(monkeypatch, tmp_path, store):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    serve(monkeypatch, pipeline_routes(bootstrap=bootstrap_due_in(40)))
+    stub_gaffer(monkeypatch, AUTH_FAILED)
+
+    assert cli.main(["deadline", "--force"]) == 0
 
     assert store.has_run(2, "deadline") is True

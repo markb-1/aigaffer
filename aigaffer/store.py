@@ -154,6 +154,14 @@ class Store:
             ).fetchone()
         return row is not None
 
+    def withheld_count(self, gw: int, mode: str) -> int:
+        """How many ticks have withheld ``gw``'s ``mode`` report so far."""
+        with self._connect() as conn:
+            (count,) = conn.execute(
+                "SELECT COUNT(*) FROM withheld WHERE gw = ? AND mode = ?", (gw, mode)
+            ).fetchone()
+        return count
+
     def purchases(self) -> dict[int, int]:
         """The purchase ledger: player id to buy price, in tenths of a million.
 

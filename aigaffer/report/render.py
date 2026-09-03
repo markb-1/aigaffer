@@ -182,9 +182,10 @@ DIGEST_PROSE_CAP = 600
 # an alert and not a report — nothing was saved, so there is nothing to point
 # at — and it is sent once per reason, not once per tick.
 WITHHELD_NOTICE = (
-    "⚠️ The gaffer could not run ({reason}). This report is withheld and the"
-    " next tick will ask him again, every hour until {until}; the full report"
-    " follows if he recovers. Until then, the solver's fallback:"
+    "⚠️ The gaffer did not decide ({reason}). This report is withheld; the"
+    " next tick will ask him again — hourly until {until}, at most {attempts}"
+    " times in all — and the full report follows if he recovers. Until then,"
+    " the solver's fallback:"
 )
 
 
@@ -386,6 +387,7 @@ def render_withheld(
     bootstrap: Bootstrap,
     reason: str,
     until: datetime,
+    attempts: int,
     *,
     free_transfers: int | None = None,
     selling_prices: dict[int, int] | None = None,
@@ -395,7 +397,8 @@ def render_withheld(
     ``choice`` and ``lineup`` are the solver's own week — the one the report
     would have carried under the manager's fallback label — and ``reason`` is
     that label's reason. ``until`` is when the ticks stop asking and let the
-    solver's report through; it is printed the way the deadline is.
+    solver's report through, printed the way the deadline is; ``attempts`` is
+    the other thing that stops them, the most ticks the report can be held.
     """
     players = {player.id: player for player in bootstrap.elements}
     clubs = {team.id: team.short_name for team in bootstrap.teams}
@@ -404,7 +407,7 @@ def render_withheld(
 
     sections = [
         _header(mode, event),
-        WITHHELD_NOTICE.format(reason=reason, until=_utc(until)),
+        WITHHELD_NOTICE.format(reason=reason, until=_utc(until), attempts=attempts),
     ]
     if not _drafting(choice):
         sections.append(

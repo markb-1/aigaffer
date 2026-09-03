@@ -8,8 +8,10 @@ unlike ``auto`` they explain themselves when they decide not to.
 
 A gameweek gets one of each report. The store is what remembers that, so an
 hourly schedule inside a late-open window does not send the same thing twice;
-``--force`` is how a person overrules it. ``--dry-run`` prints the report and
-writes nothing anywhere, which is what makes it safe against the live API.
+``--force`` is how a person overrules it — the store's memory, and the waiting
+a run does for a manager who did not decide (:mod:`aigaffer.orchestrator`).
+``--dry-run`` prints the report and writes nothing anywhere, which is what
+makes it safe against the live API.
 
 ``backtest`` is the odd one out: it grades the model against a gameweek that
 has already been played instead of advising on one to come, so it wants no
@@ -87,7 +89,13 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         report = run_pipeline(
-            cfg, client, store, mode, send=not args.dry_run, save=not args.dry_run
+            cfg,
+            client,
+            store,
+            mode,
+            send=not args.dry_run,
+            save=not args.dry_run,
+            force=args.force,
         )
     except (PipelineError, httpx.HTTPError) as error:
         return _failed(alert_to, error, event_id, stage=f"the {mode} run")
