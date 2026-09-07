@@ -12,7 +12,11 @@ judgements it has to make on its own:
   survived it — which is the reminder, a short alert and not a report.
   :func:`decide_mode` turns the hours to the deadline into one of those or
   into nothing at all, so the cron job can fire as often as it likes and
-  stand down quietly most of the time.
+  stand down quietly most of the time. A fourth moment hangs off the other
+  end of the week: the evening after the round just played, when the
+  results are in and the plans are freshest — the early scout, the same
+  report as the scout, anchored on the round's last kickoff rather than the
+  deadline ahead, and given way to the scout when the two would meet.
 * **Whose history to fetch.** A season of history is one request per player,
   and six hundred requests is not a polite thing to do to a public API on
   every scheduled run. Only the squad and the players who could plausibly
@@ -67,6 +71,7 @@ import httpx
 
 from aigaffer.config import (
     DEADLINE_ANCHOR_HOURS,
+    EARLY_SCOUT_HOUR_UTC,
     EARLY_SEASON_GWS,
     MANAGER_RETRY_FLOOR_HOURS,
     MANAGER_RETRY_LIMIT,
@@ -131,6 +136,11 @@ if TYPE_CHECKING:  # imported inside _consult and nowhere else at module scope
     from aigaffer.manager.agent import ManagerDecision
 
 DEADLINE_MODE, SCOUT_MODE, REMINDER_MODE = "deadline", "scout", "reminder"
+# The scout that runs the evening after the round just played. Its own mode,
+# because the store counts reports by mode and a week gets one of each; its
+# own name in the report header, because "GW4 early" says nothing.
+EARLY_MODE = "early"
+MODE_LABELS = {EARLY_MODE: "early scout"}
 # The windows hang off the anchors in :mod:`aigaffer.config`, opening at the
 # anchor and staying open until the next report's territory begins, so the
 # first tick to land inside one runs as close to the anchor as the schedule
@@ -191,6 +201,9 @@ DECIDED = "the gaffer decided"
 STOOD_DOWN = "the gaffer stood down"
 # And that the week was not written down over it: the next tick asks again.
 WITHHELD = "the report was withheld for the next tick"
+# And the early scout's own ending: written down, out of retries, and not
+# sent, because the scout is hours away and will be asked properly.
+SHELVED = "the early scout was kept but not sent: the scout will be asked properly"
 
 # The reason a manager whose own module would not import is withheld under.
 # There is no decision to label and the class name already went to stdout;
@@ -202,9 +215,15 @@ NOT_LOADED = "not loaded"
 # goes out and counts rather than no week at all. Each is the window's near
 # edge plus the floor — the last hours in which a late report is still worth
 # more than a labelled one. The reminder never asks him and has no floor.
+# The early scout's floor is the scout's own opening: it is retried for as
+# long as the clock would still choose it, and after that the scout is hours
+# away and a labelled early scout would be a second text saying less. Which
+# is also why, past the retry limit, an early scout is shelved rather than
+# sent — see :func:`run_pipeline`.
 RETRY_FLOORS = {
     DEADLINE_MODE: REMINDER_ANCHOR_HOURS + MANAGER_RETRY_FLOOR_HOURS,
     SCOUT_MODE: DEADLINE_ANCHOR_HOURS + MANAGER_RETRY_FLOOR_HOURS,
+    EARLY_MODE: SCOUT_HORIZON_HOURS,
 }
 
 # And why a decision of his was not used: he played a chip that is gone. It is
@@ -304,7 +323,9 @@ class SolveResult:
     draft_mode: bool
 
 
-def decide_mode(now: datetime, deadline: datetime) -> str | None:
+def decide_mode(
+    now: datetime, deadline: datetime, last_kickoff: datetime | None = None
+) -> str | None:
     """Which report ``now`` calls for, or None for none at all.
 
     Three windows, nearest the deadline first, and contiguous from sixty
@@ -313,14 +334,19 @@ def decide_mode(now: datetime, deadline: datetime) -> str | None:
     a day out to those three hours is the full deadline report, aimed at the
     T-24h anchor and caught up late when the schedule failed it. Beyond a
     day and up to two and a half days out is the scout report. Past sixty
-    hours there is nothing worth saying yet. This function answers for the
-    clock alone — whether the report it names already ran is the store's
-    question, asked in ``__main__``.
+    hours there is nothing worth saying yet — unless the round just played
+    ended, and ``last_kickoff`` says when: from the evening of the day after
+    it (:func:`early_anchor`) until the scout's window opens is the early
+    scout. When that evening is already inside the scout's window there is
+    no early scout; the scout is the report for it. This function answers
+    for the clock alone — whether the report it names already ran is the
+    store's question, asked in ``__main__``.
 
     The windows do not overlap as configured, but the constants are
     constants: should widening one ever make a moment ambiguous, the report
     nearest the deadline wins, because it is the one whose moment cannot be
-    made up on a later tick. Both datetimes must be timezone-aware.
+    made up on a later tick. ``now`` and ``deadline`` must be timezone-aware;
+    a naive ``last_kickoff`` is read as UTC, which is what the API serves.
     """
     hours = (deadline - now).total_seconds() / 3600
     for window, mode in (
@@ -330,7 +356,37 @@ def decide_mode(now: datetime, deadline: datetime) -> str | None:
     ):
         if _within(hours, window):
             return mode
+    if last_kickoff is not None and hours > SCOUT_HORIZON_HOURS:
+        if now >= early_anchor(last_kickoff):
+            return EARLY_MODE
     return None
+
+
+def early_anchor(last_kickoff: datetime) -> datetime:
+    """The evening of the day after ``last_kickoff``, in UTC."""
+    if last_kickoff.tzinfo is None:
+        last_kickoff = last_kickoff.replace(tzinfo=UTC)
+    day_after = last_kickoff.astimezone(UTC) + timedelta(days=1)
+    return day_after.replace(hour=EARLY_SCOUT_HOUR_UTC, minute=0, second=0, microsecond=0)
+
+
+def last_kickoff(fixtures: list[Fixture], current: int, before: datetime) -> datetime | None:
+    """When the current round's last match kicked off, or None for a round
+    with no scheduled matches.
+
+    Only kickoffs before ``before`` — the next deadline — count: a postponed
+    match keeps its round number and moves months away, and the round it
+    belonged to still ended when the rest of it did. The API serves kickoffs
+    as ISO strings with a ``Z``, which is what is parsed here.
+    """
+    kickoffs = [
+        stamp
+        for fixture in fixtures
+        if fixture.event == current and fixture.kickoff_time
+        for stamp in [datetime.fromisoformat(fixture.kickoff_time.replace("Z", "+00:00"))]
+        if stamp < before
+    ]
+    return max(kickoffs, default=None)
 
 
 def run_pipeline(
@@ -513,8 +569,9 @@ def run_pipeline(
     # runs the whole thing afresh, and only his answer or the floor ends the
     # waiting. The phone hears why, once per reason, with the solver's
     # checklist so the owner is never without a plan to act on meanwhile.
-    # Past the floor the labelled report below goes out and counts, exactly as
-    # it always did: late beats labelled, but labelled beats nothing.
+    # Past the floor the labelled report below goes out and counts, for every
+    # report but one: late beats labelled, but labelled beats nothing. The
+    # early scout is the one, and the block after this says why.
     undecided = _undecided(cfg, solved, gaffer)
     if (
         undecided is not None
@@ -545,6 +602,15 @@ def run_pipeline(
         if save and delivered:
             store.record_withheld(event.id, mode, undecided)
         return report
+
+    # An early scout the manager never decided, out of retries: written down
+    # so the ticks stand down, and not sent. The scout is hours away and will
+    # be asked properly; a labelled early scout on the phone would be a second
+    # text saying less. A person who forced it gets it regardless — they
+    # asked for whatever the run had.
+    if undecided is not None and mode == EARLY_MODE and not force:
+        print(SHELVED)
+        send = False
 
     if save:
         observe(store, inputs.squad, inputs.players, inputs.chips_used)
@@ -1548,8 +1614,10 @@ def _baseline_label(solved: SolveResult) -> str | None:
 
 def _label(mode: str, drafting: bool) -> str:
     """The mode as the report header says it. A draft is not the week's
-    transfer decision and must not be read as one."""
-    return f"{mode} — {DRAFT_LABEL}" if drafting else mode
+    transfer decision and must not be read as one; the early scout is the
+    scout and says so."""
+    name = MODE_LABELS.get(mode, mode)
+    return f"{name} — {DRAFT_LABEL}" if drafting else name
 
 
 def _write_report(cfg: Config, event_id: int, mode: str, report: str) -> None:
@@ -1558,9 +1626,12 @@ def _write_report(cfg: Config, event_id: int, mode: str, report: str) -> None:
     Two copies. ``state/reports/gw{n}-{mode}.md`` is the history, one file per
     run, never overwritten by the other mode. ``GW{n}.md`` is the polished
     verdict, written at the root beside README.md so the GitHub homepage's
-    file listing shows it: the scout run puts it there midweek and the
-    deadline run overwrites it with the operative plan, which the shared
-    filename does on its own — latest wins. The root is the directory holding
+    file listing shows it: the early scout puts it there the evening after
+    the round, the scout rewrites it midweek and the deadline run overwrites
+    it with the operative plan, which the shared filename does on its own —
+    latest wins. (A shelved early scout writes it too, labelled as the
+    solver's; the diary is honest about a week nobody was told.) The root is
+    the directory holding
     ``state_dir`` rather than the working directory by name: in CI those are
     the same place, since the run starts at the checkout root with
     ``state_dir="state"``, and in a test they are the tmp_path the test owns,

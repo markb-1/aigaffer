@@ -21,6 +21,7 @@ on:
         default: auto
         options:
           - auto
+          - early
           - scout
           - deadline
           - reminder
