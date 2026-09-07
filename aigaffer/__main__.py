@@ -35,11 +35,13 @@ import httpx
 from aigaffer.backtest import backtest_gw, finished_gameweeks
 from aigaffer.config import Config
 from aigaffer.data.fpl_api import FplClient
+from aigaffer.config import SCOUT_HORIZON_HOURS
 from aigaffer.orchestrator import (
     DEADLINE_MODE,
     REMINDER_MODE,
     PipelineError,
     decide_mode,
+    last_kickoff,
     run_pipeline,
 )
 from aigaffer.report.telegram import send_report
@@ -47,7 +49,7 @@ from aigaffer.store import Store
 
 AUTO = "auto"
 BACKTEST = "backtest"
-COMMANDS = (AUTO, "scout", "deadline", "reminder", BACKTEST)
+COMMANDS = (AUTO, "early", "scout", "deadline", "reminder", BACKTEST)
 DB_NAME = "aigaffer.db"
 
 SCHEDULE_STAGE = "reading the schedule"
@@ -226,14 +228,18 @@ def _mode(
     if args.command != AUTO and args.force:
         return args.command, None
 
-    event = client.bootstrap().next_event()
+    bootstrap = client.bootstrap()
+    event = bootstrap.next_event()
     if event is None:
         _explain(args.command, "the API has no gameweek ahead")
         return None, None
 
     mode = args.command
     if mode == AUTO:
-        chosen = decide_mode(datetime.now(UTC), event.deadline_time)
+        now = datetime.now(UTC)
+        chosen = decide_mode(
+            now, event.deadline_time, last_kickoff=_round_end(client, bootstrap, event, now)
+        )
         if chosen is None:
             return None, event.id
         mode = chosen
@@ -254,6 +260,23 @@ def _mode(
         _explain(args.command, f"GW{event.id} {mode} has run already — use --force")
         return None, event.id
     return mode, event.id
+
+
+def _round_end(client: FplClient, bootstrap, event, now: datetime) -> datetime | None:
+    """When the round just played had its last kickoff — the early scout's
+    anchor — or None when the clock could not want it anyway.
+
+    The fixtures are a second request, and most ticks have no use for them:
+    inside the scout horizon the clock has its answer from the deadline
+    alone, so the request is only made beyond it. No current round (the
+    season's first week) is no round end.
+    """
+    if (event.deadline_time - now).total_seconds() / 3600 <= SCOUT_HORIZON_HOURS:
+        return None
+    current = bootstrap.current_event()
+    if current is None:
+        return None
+    return last_kickoff(client.fixtures(), current=current.id, before=event.deadline_time)
 
 
 def _explain(command: str, reason: str) -> None:

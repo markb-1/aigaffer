@@ -19,6 +19,16 @@ REMINDER_ANCHOR_HOURS = 3.0
 # more than two hours of widening does.
 SCOUT_HORIZON_HOURS = 60.0
 
+# The one report that hangs off the round just played rather than the
+# deadline ahead: an early scout, sent the evening of the day after that
+# round's last kickoff, at this hour UTC — a first look at the week while the
+# results are fresh and the fixtures are still days off. Its window runs
+# until the Thursday scout's opens, and when a round ends so close to the
+# next deadline that the evening after is already inside that window, there
+# is no early scout: the scout covers it. Six in the evening in London
+# either side of the clocks; the runner's hourly tick lands it at :35.
+EARLY_SCOUT_HOUR_UTC = 18
+
 # How close to the end of its window a report is still worth withholding for
 # a manager who did not decide. A gaffer who fails — a dead key, a rate limit,
 # an install that will not import — used to send the solver's week under his

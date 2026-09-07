@@ -11,18 +11,23 @@ no transfer is ever executed, and the final tap in the app is yours.
 
 ## What arrives, and when
 
-Three messages per gameweek, each anchored to the deadline:
+Four messages per gameweek, three anchored to the deadline ahead and one
+to the round just played:
 
-| Hours before the deadline | Report | What it is for |
+| When | Report | What it is for |
 | --- | --- | --- |
-| 24–60 | `scout` | transfer plans while there is still time to think — aimed at ~60h out |
-| 3–24 | `deadline` | the full verdict, aimed at T-24h so an evening is left to act on it |
-| 0–3 | `reminder` | a short alert: the moves, and whether the plan survived the team news |
+| the evening after the last match | `early` | the early scout: a first look at the plans while the results are fresh, from 18:00 UTC the day after the round's last kickoff |
+| 24–60h before the deadline | `scout` | transfer plans while there is still time to think — aimed at ~60h out |
+| 3–24h | `deadline` | the full verdict, aimed at T-24h so an evening is left to act on it |
+| 0–3h | `reminder` | a short alert: the moves, and whether the plan survived the team news |
 
 Each report is aimed at the top of its window and sent by the first
 scheduled tick to land inside it; the windows stay open until the next
 report's territory so that a run the scheduler dropped is made up late
-rather than lost. Each is sent once — the store remembers.
+rather than lost. Each is sent once — the store remembers. The early scout
+is the scout under its own name, and its window closes when the scout's
+opens: a round that ends close to the next deadline — a midweek one — gets
+one scout, not two.
 
 Telegram gets a digest, not the document: the ⏰ checklist, the moves priced,
 the gaffer's opening paragraph and a pointer at the rest — a phone message a
@@ -493,7 +498,10 @@ manager was asked and did not decide, in which case nothing was recorded
 and the second tick is the retry. The two schedulers see each other only
 through the pushed state, so a failure slow enough to straddle both ticks
 can cost a duplicate alert; that is the worst of it, since a report that
-lands twice is deduplicated by the same store. GitHub drops
+lands twice is deduplicated by the same store. The early scout is the one
+report the gate never wakes for — its evening is days from the deadline —
+so it is your own box's alone: if that box is down that evening the early
+scout is skipped, and the scout on Thursday is the first word. GitHub drops
 scheduled runs under load — occasionally for whole days at a stretch —
 which is why the windows stay open late rather than closing at their
 anchor: the first tick to survive sends whatever the dropped ones owed, and
@@ -526,10 +534,10 @@ search-heavy week can be a few dollars. The driver is not the searches
 themselves but that the conversation is resent in full on every turn: a
 quiet week that searches twice and decides in three turns is cents, and a
 pathological one — a dozen searches, two re-solves, twelve turns each
-re-reading everything before them — costs an order of magnitude more. Two
-decision runs a gameweek (scout and deadline; the reminder never wakes the
-manager), so on the order of $2–8 a week and $50–200 for a season, weighted
-towards the low end because most weeks are quiet. The one way a week gets
+re-reading everything before them — costs an order of magnitude more. Three
+decision runs a gameweek (early scout, scout and deadline; the reminder
+never wakes the manager), so on the order of $3–12 a week and $75–300 for a
+season, weighted towards the low end because most weeks are quiet. The one way a week gets
 expensive is a manager who fails slowly and is asked again: a withheld
 report (see the fallback doctrine) is retried by every tick, and a refusal
 or a loop that runs out of time is a full run each time, which is what the
