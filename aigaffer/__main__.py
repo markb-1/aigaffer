@@ -2,8 +2,8 @@
 
 ``auto`` is what the schedule calls: it looks at the deadline, works out
 which report the hour calls for and runs it, or says nothing and exits
-cleanly, which is what it does most of the time. ``scout``, ``deadline`` and
-``reminder`` run a report by name for someone sitting at a keyboard, and
+cleanly, which is what it does most of the time. ``early``, ``scout``,
+``deadline`` and ``reminder`` run a report by name for someone at a keyboard, and
 unlike ``auto`` they explain themselves when they decide not to.
 
 A gameweek gets one of each report. The store is what remembers that, so an
@@ -33,11 +33,12 @@ from datetime import UTC, datetime
 import httpx
 
 from aigaffer.backtest import backtest_gw, finished_gameweeks
-from aigaffer.config import Config
+from aigaffer.config import SCOUT_HORIZON_HOURS, Config
 from aigaffer.data.fpl_api import FplClient
-from aigaffer.config import SCOUT_HORIZON_HOURS
+from aigaffer.data.models import Bootstrap, Event
 from aigaffer.orchestrator import (
     DEADLINE_MODE,
+    EARLY_MODE,
     REMINDER_MODE,
     PipelineError,
     decide_mode,
@@ -237,9 +238,15 @@ def _mode(
     mode = args.command
     if mode == AUTO:
         now = datetime.now(UTC)
-        chosen = decide_mode(
-            now, event.deadline_time, last_kickoff=_round_end(client, bootstrap, event, now)
+        # The round's end is only worth asking after while the early scout it
+        # anchors has not gone: four days of hourly ticks sit beyond the
+        # horizon after it has, and none of them needs the fixtures to know.
+        ended = (
+            None
+            if store.has_run(event.id, EARLY_MODE)
+            else _round_end(client, bootstrap, event, now)
         )
+        chosen = decide_mode(now, event.deadline_time, last_kickoff=ended)
         if chosen is None:
             return None, event.id
         mode = chosen
@@ -262,7 +269,9 @@ def _mode(
     return mode, event.id
 
 
-def _round_end(client: FplClient, bootstrap, event, now: datetime) -> datetime | None:
+def _round_end(
+    client: FplClient, bootstrap: Bootstrap, event: Event, now: datetime
+) -> datetime | None:
     """When the round just played had its last kickoff — the early scout's
     anchor — or None when the clock could not want it anyway.
 

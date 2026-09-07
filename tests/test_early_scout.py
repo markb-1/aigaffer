@@ -298,3 +298,88 @@ def test_a_forced_early_scout_is_sent_whatever_the_gaffer_did(monkeypatch, tmp_p
     assert store.has_run(2, "early") is True
     [digest] = phone.messages
     assert digest.startswith("# AI Gaffer — GW2 early scout\n")
+
+
+# --- what the review asked for ---------------------------------------------
+
+
+def test_a_shelved_early_scout_says_so_on_stdout(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(orchestrator, "send_report", Phone())
+    stub_gaffer(monkeypatch, AUTH_FAILED)
+    store = Store(tmp_path / "state" / "aigaffer.db")
+    for _ in range(MANAGER_RETRY_LIMIT):
+        store.record_withheld(2, "early", "AuthenticationError")
+
+    run_pipeline(
+        phone_cfg(tmp_path), make_client(pipeline_routes()), store, "early", now=hours_out(100)
+    )
+
+    assert orchestrator.SHELVED in capsys.readouterr().out
+
+
+def test_a_solver_only_early_scout_is_sent(monkeypatch, tmp_path):
+    # No manager asked for means nothing undecided, and the shelving rule
+    # must never swallow the plain solver week.
+    phone = Phone()
+    monkeypatch.setattr(orchestrator, "send_report", phone)
+    store = Store(tmp_path / "state" / "aigaffer.db")
+
+    run_pipeline(
+        phone_cfg(tmp_path, key=None), make_client(pipeline_routes()), store, "early",
+        now=hours_out(100),
+    )
+
+    assert store.has_run(2, "early") is True
+    [digest] = phone.messages
+    assert digest.startswith("# AI Gaffer — GW2 early scout\n")
+
+
+def test_an_early_scout_named_inside_the_scout_window_is_shelved(monkeypatch, tmp_path):
+    # The clock would never choose it there, but a person can name it. With
+    # the gaffer undecided there is nothing to wait for — the floor is the
+    # window's edge — and nothing worth a text.
+    phone = Phone()
+    monkeypatch.setattr(orchestrator, "send_report", phone)
+    stub_gaffer(monkeypatch, AUTH_FAILED)
+    store = Store(tmp_path / "state" / "aigaffer.db")
+
+    run_pipeline(
+        phone_cfg(tmp_path), make_client(pipeline_routes()), store, "early", now=hours_out(59.5)
+    )
+
+    assert store.has_run(2, "early") is True
+    assert phone.messages == []
+
+
+def test_a_shelved_dry_run_leaves_nothing_behind(monkeypatch, tmp_path):
+    phone = Phone()
+    monkeypatch.setattr(orchestrator, "send_report", phone)
+    stub_gaffer(monkeypatch, AUTH_FAILED)
+    store = Store(tmp_path / "state" / "aigaffer.db")
+    for _ in range(MANAGER_RETRY_LIMIT):
+        store.record_withheld(2, "early", "AuthenticationError")
+
+    run_pipeline(
+        phone_cfg(tmp_path), make_client(pipeline_routes()), store, "early",
+        now=hours_out(100), send=False, save=False,
+    )
+
+    assert store.last_runs() == []
+    assert phone.messages == []
+    assert not (tmp_path / "GW2.md").exists()
+
+
+def test_the_fixtures_are_not_fetched_once_the_early_scout_has_run(tmp_path):
+    # Four days of hourly ticks sit beyond the horizon after the early scout
+    # went; none of them needs the fixtures to know it.
+    from types import SimpleNamespace
+
+    event = SimpleNamespace(id=2, deadline_time=datetime.now(UTC) + timedelta(hours=100))
+    bootstrap = SimpleNamespace(
+        next_event=lambda: event, current_event=lambda: SimpleNamespace(id=1)
+    )
+    client = SimpleNamespace(bootstrap=lambda: bootstrap)
+    store = Store(tmp_path / "state.db")
+    store.save_run(2, "early", "md", {})
+
+    assert cli._mode(_auto(), client, store) == (None, 2)

@@ -201,6 +201,9 @@ DECIDED = "the gaffer decided"
 STOOD_DOWN = "the gaffer stood down"
 # And that the week was not written down over it: the next tick asks again.
 WITHHELD = "the report was withheld for the next tick"
+# And the early scout's own ending: written down, out of retries, and not
+# sent, because the scout is hours away and will be asked properly.
+SHELVED = "the early scout was kept but not sent: the scout will be asked properly"
 
 # The reason a manager whose own module would not import is withheld under.
 # There is no decision to label and the class name already went to stdout;
@@ -566,8 +569,9 @@ def run_pipeline(
     # runs the whole thing afresh, and only his answer or the floor ends the
     # waiting. The phone hears why, once per reason, with the solver's
     # checklist so the owner is never without a plan to act on meanwhile.
-    # Past the floor the labelled report below goes out and counts, exactly as
-    # it always did: late beats labelled, but labelled beats nothing.
+    # Past the floor the labelled report below goes out and counts, for every
+    # report but one: late beats labelled, but labelled beats nothing. The
+    # early scout is the one, and the block after this says why.
     undecided = _undecided(cfg, solved, gaffer)
     if (
         undecided is not None
@@ -605,6 +609,7 @@ def run_pipeline(
     # text saying less. A person who forced it gets it regardless — they
     # asked for whatever the run had.
     if undecided is not None and mode == EARLY_MODE and not force:
+        print(SHELVED)
         send = False
 
     if save:
@@ -1621,9 +1626,12 @@ def _write_report(cfg: Config, event_id: int, mode: str, report: str) -> None:
     Two copies. ``state/reports/gw{n}-{mode}.md`` is the history, one file per
     run, never overwritten by the other mode. ``GW{n}.md`` is the polished
     verdict, written at the root beside README.md so the GitHub homepage's
-    file listing shows it: the scout run puts it there midweek and the
-    deadline run overwrites it with the operative plan, which the shared
-    filename does on its own — latest wins. The root is the directory holding
+    file listing shows it: the early scout puts it there the evening after
+    the round, the scout rewrites it midweek and the deadline run overwrites
+    it with the operative plan, which the shared filename does on its own —
+    latest wins. (A shelved early scout writes it too, labelled as the
+    solver's; the diary is honest about a week nobody was told.) The root is
+    the directory holding
     ``state_dir`` rather than the working directory by name: in CI those are
     the same place, since the run starts at the checkout root with
     ``state_dir="state"``, and in a test they are the tmp_path the test owns,

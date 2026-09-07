@@ -25,8 +25,8 @@ SCOUT_HORIZON_HOURS = 60.0
 # results are fresh and the fixtures are still days off. Its window runs
 # until the Thursday scout's opens, and when a round ends so close to the
 # next deadline that the evening after is already inside that window, there
-# is no early scout: the scout covers it. Six in the evening in London
-# either side of the clocks; the runner's hourly tick lands it at :35.
+# is no early scout: the scout covers it. Six or seven in the evening in
+# London, depending on the clocks; the runner's hourly tick lands it at :35.
 EARLY_SCOUT_HOUR_UTC = 18
 
 # How close to the end of its window a report is still worth withholding for

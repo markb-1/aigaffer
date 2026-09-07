@@ -34,7 +34,8 @@ the gaffer's opening paragraph and a pointer at the rest — a phone message a
 person can act on in one screen. The full reports are kept as a diary in
 `state/reports/`, and the polished verdict for each gameweek is committed by
 CI to `GW{n}.md` at the repo root — the copy the GitHub homepage shows,
-written by the scout run midweek and overwritten by the deadline run.
+written first by the early scout, rewritten by the scout midweek and
+overwritten by the deadline run.
 
 The reminder is the solver alone — the manager is never woken for it — and
 its ⚠️ means the *news* moved, not that the manager isn't a solver: it diffs
@@ -407,7 +408,12 @@ report goes out and counts, so the reminder still has a verdict to check the
 news against and the week is never left without one. A dry run withholds
 nothing and alerts nobody, and a run a person forced (`--force`, or the
 workflow's button) takes whatever answer it got: forcing has always meant
-overruling the store, and now it overrules the waiting too.
+overruling the store, and now it overrules the waiting too. The early scout
+is the one exception to the ending: it is held for as long as the clock
+would still choose it — until the Thursday scout's window opens — and past
+the retry limit it is written down but not sent, because that scout is
+hours away and will be asked properly; a labelled early scout would be a
+second text saying less.
 
 The rule underneath: the solver-only path is the invariant. With
 `AIGAFFER_MANAGER=0` the pipeline produces byte-identical output to the
