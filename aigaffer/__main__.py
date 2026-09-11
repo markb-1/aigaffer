@@ -29,6 +29,7 @@ the Telegram leg of a run that URL has the bot token in it.
 import argparse
 import os
 from datetime import UTC, datetime
+from functools import partial
 
 import httpx
 
@@ -45,13 +46,13 @@ from aigaffer.orchestrator import (
     last_kickoff,
     run_pipeline,
 )
+from aigaffer.peer import peer_has_run
 from aigaffer.report.telegram import send_report
-from aigaffer.store import Store
+from aigaffer.store import DB_NAME, Store
 
 AUTO = "auto"
 BACKTEST = "backtest"
 COMMANDS = (AUTO, "early", "scout", "deadline", "reminder", BACKTEST)
-DB_NAME = "aigaffer.db"
 
 SCHEDULE_STAGE = "reading the schedule"
 BACKTEST_STAGE = "the backtest"
@@ -90,6 +91,16 @@ def main(argv: list[str] | None = None) -> int:
     if mode is None:
         return 0
 
+    # The schedule's ticks ask the other scheduler before the phone: the
+    # store in hand said nothing had run, but a manager run is minutes long
+    # and the peer may have pushed this very report meanwhile. A named mode
+    # or a forced run is a person at the keyboard, who gets what they asked
+    # for. The repository is the state directory's parent — where the diary
+    # and the homepage verdict live too.
+    overtaken = None
+    if args.command == AUTO and not args.force:
+        overtaken = partial(peer_has_run, cfg.state_dir.parent)
+
     try:
         report = run_pipeline(
             cfg,
@@ -99,6 +110,7 @@ def main(argv: list[str] | None = None) -> int:
             send=not args.dry_run,
             save=not args.dry_run,
             force=args.force,
+            overtaken=overtaken,
         )
     except (PipelineError, httpx.HTTPError) as error:
         return _failed(alert_to, error, event_id, stage=f"the {mode} run")
