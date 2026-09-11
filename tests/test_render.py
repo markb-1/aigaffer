@@ -531,16 +531,28 @@ def test_no_chip_prints_no_chip_line():
     assert not any(line.startswith("PLAY") for line in section(report(view=gaffer()), "Do this"))
 
 
-def test_a_signing_that_must_start_asks_for_the_lineup():
-    # Reid is bought and goes straight into the eleven, where the FPL app would
-    # have benched him: the block says to fix the lineup and leaves the full XI
-    # to the section below.
-    starting = replace(LINEUP, xi=[1, 3, 4, 5, 8, 9, 10, 11, 13, 14, 18], bench=[2, 12, 6, 15])
-    block = section(report(lineup=starting), "Do this")
+STARTING = replace(LINEUP, xi=[1, 3, 4, 5, 8, 9, 10, 11, 13, 14, 18], bench=[2, 12, 6, 15])
+STARTING_LINE = (
+    "Set lineup (3-4-3): Alvez; Costa, Dodd, Egan; Hume, Innes, Jonker, Kerr;"
+    " Moss, Nunes, Reid"
+)
 
-    assert "Set lineup: 3-4-3" in block
-    # Still a checklist, not the report: the eleven itself is not duplicated.
-    assert not any("Hume" in line and "Jonker" in line for line in block)
+
+def test_a_signing_that_must_start_names_the_eleven():
+    # Reid is bought and goes straight into the eleven, where the FPL app would
+    # have benched him: the block says to fix the lineup and names the whole
+    # eleven on the line, by position, because the phone gets this block
+    # without the team sheet that follows it in the report.
+    block = section(report(lineup=STARTING), "Do this")
+
+    assert STARTING_LINE in block
+
+
+def test_the_digest_names_the_eleven_when_a_signing_starts():
+    text = digest(lineup=STARTING)
+
+    assert STARTING_LINE in text
+    assert "Starting XI" not in text, "the line, not the section"
 
 
 def test_a_signing_left_on_the_bench_needs_no_lineup_line():
@@ -1055,9 +1067,11 @@ def test_the_watchlist_is_the_five_best_players_the_plan_leaves_behind():
 # and the digest is only ever a shorter way of saying the same decision.
 
 
-def digest(view: ManagerDecision | None = None, mode: str = "deadline") -> str:
+def digest(
+    view: ManagerDecision | None = None, mode: str = "deadline", lineup: Lineup = LINEUP
+) -> str:
     return render_digest(
-        mode, EVENT, ONE, LINEUP, BOOTSTRAP, view,
+        mode, EVENT, ONE, lineup, BOOTSTRAP, view,
         free_transfers=1,
     )
 
