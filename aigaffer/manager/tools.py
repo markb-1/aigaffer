@@ -36,6 +36,7 @@ these validators name players by the only handle that cannot forge a document:
 the id.
 """
 
+import re
 from collections.abc import Callable, Container
 from dataclasses import dataclass
 from math import isfinite
@@ -292,12 +293,19 @@ TOOLS: list[dict] = [
                     "enum": CHIPS,
                     "description": "The chip to play, or 'none'.",
                 },
+                # A string or null, never the empty string: asked for an empty
+                # value here, the model reached for its own close-parameter
+                # token, the strict grammar substituted a near-miss inside the
+                # string, and the rest of the call spilled in after it — every
+                # live finalize from 28 Aug 2026 carried the whole rationale
+                # in this field behind a garbled tag. Null gives an unplayed
+                # chip a value with nothing to write.
                 "chip_justification": {
-                    "type": "string",
+                    "anyOf": [{"type": "string"}, {"type": "null"}],
                     "description": (
                         "Why this chip, this week: what the EV panel says, and"
-                        " what is lost by burning it now. Empty when the chip"
-                        " is 'none'."
+                        " what is lost by burning it now. Plain prose in this"
+                        " field alone. null when the chip is 'none'."
                     ),
                 },
                 "rationale": {
@@ -321,6 +329,12 @@ TOOLS: list[dict] = [
         },
     },
 ]
+
+
+# A parameter tag, however the strict grammar mangled its name: ``<parameter``
+# opening one, ``</antml…parameter>`` closing one with a near-miss in place of
+# the token the grammar would not allow.
+MARKUP = re.compile(r"<\S*parameter\b")
 
 
 class ToolError(Exception):
@@ -432,8 +446,13 @@ def validate_finalize(
     chip = args.get("chip", NO_CHIP)
     if chip not in CHIPS:
         raise ToolError(f"'{chip}' is not a chip. Choose one of: {', '.join(CHIPS)}.")
-    justification = _text(args.get("chip_justification"))
+    # No chip, no argument to keep: whatever was written — or spilled — into
+    # the field for a chip nobody played is dropped without spending a turn
+    # on it. A chip that is played has to be argued for, in this field, in
+    # prose, and that check reads the field as sent.
+    justification = ""
     if chip != NO_CHIP:
+        justification = _text(args.get("chip_justification"))
         _check_chip(chip, justification)
 
     rationale = _words(args.get("rationale"), "rationale")
@@ -468,6 +487,16 @@ def _check_chip(chip: str, justification: str) -> None:
         f" and make the case in full ({MIN_JUSTIFICATION} characters at least),"
         " or finalize the same plan with chip 'none'."
     )
+    if MARKUP.search(justification):
+        # The two tests below pass on a rationale that spilled in behind a
+        # parameter tag — it is long, and it mentions every chip — so the tag
+        # is refused before either is measured.
+        raise ToolError(
+            "That justification carries tool-call markup — a parameter tag,"
+            " and behind it text that belongs in another field. Write the"
+            " argument for the chip in plain prose, in this field alone."
+            f" {checklist}"
+        )
     if len(justification.strip()) < MIN_JUSTIFICATION:
         raise ToolError(f"That is not an argument for a chip. {checklist}")
     if _spoken(chip) not in _spoken(justification):
