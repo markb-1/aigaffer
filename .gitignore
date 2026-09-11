@@ -6,3 +6,6 @@ build/
 
 # Secrets for the VM runner and local runs; never committed.
 .env
+
+# Worktrees for isolated feature work
+.worktrees/
