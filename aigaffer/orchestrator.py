@@ -62,6 +62,7 @@ and count, so that a week is never left without a report.
 """
 
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -204,6 +205,13 @@ WITHHELD = "the report was withheld for the next tick"
 # And the early scout's own ending: written down, out of retries, and not
 # sent, because the scout is hours away and will be asked properly.
 SHELVED = "the early scout was kept but not sent: the scout will be asked properly"
+# The other scheduler pushed this report while this run was going: two
+# schedulers, one store, and a manager run long enough for the second tick
+# to start before the first has finished. Nothing is sent or saved.
+OVERTAKEN = (
+    "the other scheduler recorded this report while this run was going"
+    " — standing down"
+)
 
 # The reason a manager whose own module would not import is withheld under.
 # There is no decision to label and the class name already went to stdout;
@@ -398,6 +406,7 @@ def run_pipeline(
     save: bool = True,
     now: datetime | None = None,
     force: bool = False,
+    overtaken: Callable[[int, str], bool] | None = None,
 ) -> str:
     """Run ``mode`` for the next gameweek and return the report.
 
@@ -415,6 +424,11 @@ def run_pipeline(
     A manager who was configured and could not be reached at all adds one line
     to the report before either flag is read, so that the file, the store and
     the message all say the same thing about who decided this week.
+
+    ``overtaken``, when given, is asked once the manager has spoken and before
+    anything is sent or saved: whether the other scheduler has recorded this
+    report meanwhile. A yes ends the run there — the report is returned, for
+    a dry run to print, and nothing else happens.
 
     A manager who was asked and did not decide — that accident, or any of the
     labelled fallbacks — is not written down at all while the window has more
@@ -440,7 +454,9 @@ def run_pipeline(
     a dry run prices its sales in memory and persists none of it.
     """
     if mode == REMINDER_MODE:
-        return _run_reminder(cfg, client, store, send=send, save=save)
+        return _run_reminder(
+            cfg, client, store, send=send, save=save, overtaken=overtaken
+        )
 
     inputs = fetch_inputs(cfg, client)
     # Priced now, persisted below with everything else: the ledger's one
@@ -563,6 +579,17 @@ def run_pipeline(
             searches=gaffer.searches,
         )
 
+    # The expensive part is over; before the phone, the other scheduler's
+    # word. The store in hand said nothing had run when this tick began, and
+    # the minutes since are exactly when the peer's push lands. The question
+    # is whether a report was recorded — a peer that only withheld is not an
+    # answer, since this manager may have decided where that one did not —
+    # so a manager failing on both hosts inside one window can still cost a
+    # second withheld alert. That residual is small enough to keep.
+    if overtaken is not None and overtaken(event.id, mode):
+        print(OVERTAKEN)
+        return report
+
     # A manager who was asked and did not decide is not a week to write down
     # while there is time to ask him again. Nothing is saved — not the diary,
     # not the store, not the homepage — so the next tick of either scheduler
@@ -640,7 +667,12 @@ def run_pipeline(
 
 
 def _run_reminder(
-    cfg: Config, client: FplClient, store: Store, send: bool, save: bool
+    cfg: Config,
+    client: FplClient,
+    store: Store,
+    send: bool,
+    save: bool,
+    overtaken: Callable[[int, str], bool] | None = None,
 ) -> str:
     """Three hours out: solve again, diff against yesterday's solve, buzz once.
 
@@ -758,6 +790,12 @@ def _run_reminder(
     # leave has_run false so the next tick retries, and the history file
     # goes with the store row so nothing on disk claims a reminder happened
     # that nobody felt.
+    # The other scheduler's word first, as for every scheduled tick: the
+    # solve is seconds, but the ticks are not, and a reminder felt twice is
+    # the kind of text this run exists to keep short.
+    if overtaken is not None and overtaken(event.id, REMINDER_MODE):
+        print(OVERTAKEN)
+        return report
     if send and not _deliver(cfg, buzz):
         return report
     if save:

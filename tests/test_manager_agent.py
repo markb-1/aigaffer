@@ -55,7 +55,12 @@ from aigaffer.config import Config
 from aigaffer.data.models import Bootstrap, Pick, Player, Squad
 from aigaffer.manager import agent
 from aigaffer.manager.agent import NUDGE, ManagerDecision, run_manager
-from aigaffer.manager.tools import MIN_RATIONALE, SYSTEM_PROMPT, TOOLS
+from aigaffer.manager.tools import (
+    CHIP_FIELD_DROPPED,
+    MIN_RATIONALE,
+    SYSTEM_PROMPT,
+    TOOLS,
+)
 from aigaffer.model.xp import PlayerProjection
 from aigaffer.orchestrator import PipelineInputs, SolveResult
 from aigaffer.solver.lineup import ChipEvs, Lineup
@@ -1789,3 +1794,99 @@ def test_the_nudge_offers_the_refreshed_searches_before_the_exit():
     # road it paused for before it demands the destination.
     assert "search allowance, it is fresh now" in NUDGE
     assert "finalize_decision" in NUDGE, "the demand stays; it comes second"
+
+
+# --- the chip field, and what leaked into it -------------------------------
+
+# What every live finalize since 28 Aug 2026 put in chip_justification when
+# no chip was played: the model reached for its own close-parameter token at
+# the empty value, the strict grammar substituted a near-miss inside the JSON
+# string, and the rest of the call spilled in after it — the whole rationale,
+# a second time, behind a garbled tag.
+LEAK = '</antmlःparameter>\n<parameter name="rationale">'
+BENCH_BOOST_CASE = (
+    "Play the bench boost this week: the EV panel has it at +14.1, the four on"
+    " the bench all start in a double gameweek, and no later week in the"
+    " window comes within five points of that. What is lost is the option"
+    " value of holding it past the wildcard, which the panel prices at nothing."
+)
+
+
+def test_the_schema_offers_null_for_the_chip_nobody_played():
+    tool = next(t for t in TOOLS if t.get("name") == "finalize_decision")
+    field = tool["input_schema"]["properties"]["chip_justification"]
+
+    assert {"type": "null"} in field["anyOf"]
+    assert {"type": "string"} in field["anyOf"]
+    assert "null" in field["description"]
+
+
+def test_no_chip_takes_null_for_its_justification():
+    client, decision = converse(
+        [reply(use("finalize_decision", finalize(chip="none", justification=None)))]
+    )
+
+    assert decision.chip == "none"
+    assert decision.chip_justification == ""
+    assert len(client.requests) == 1
+
+
+def test_what_leaked_into_an_unplayed_chips_field_is_dropped():
+    client, decision = converse(
+        [
+            reply(
+                use(
+                    "finalize_decision",
+                    finalize(chip="none", justification=LEAK + RATIONALE),
+                )
+            )
+        ]
+    )
+
+    assert decision.chip_justification == ""
+    assert decision.rationale == RATIONALE
+    assert len(client.requests) == 1, "no chip, no argument to check, no turn spent"
+
+
+def test_what_was_dropped_is_said_on_stdout(capsys):
+    # Null is on offer now; a value that still arrives for an unplayed chip is
+    # worth one line in the log, so a leak that carries on is seen.
+    converse(
+        [
+            reply(
+                use(
+                    "finalize_decision",
+                    finalize(chip="none", justification=LEAK + RATIONALE),
+                )
+            )
+        ]
+    )
+
+    assert CHIP_FIELD_DROPPED in capsys.readouterr().out
+
+
+def test_a_chip_argued_behind_leaked_markup_is_refused():
+    # The belts measure the argument's length and look for the chip's name;
+    # a rationale that spilled in passes both without arguing for anything.
+    client, decision = converse(
+        [
+            reply(
+                use(
+                    "finalize_decision",
+                    finalize(chip="bench_boost", justification=LEAK + BENCH_BOOST_CASE),
+                )
+            ),
+            reply(
+                use(
+                    "finalize_decision",
+                    finalize(chip="bench_boost", justification=BENCH_BOOST_CASE),
+                )
+            ),
+        ]
+    )
+    refusal = only_result(client.requests[1])
+
+    assert refusal["is_error"] is True
+    assert "plain prose" in refusal["content"]
+    assert decision.chip == "bench_boost"
+    assert decision.chip_justification == BENCH_BOOST_CASE

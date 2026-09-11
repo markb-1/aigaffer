@@ -502,9 +502,17 @@ the pip install). Each gameweek gets one report of each kind: the SQLite
 store remembers, so a second tick inside a window is a no-op — unless the
 manager was asked and did not decide, in which case nothing was recorded
 and the second tick is the retry. The two schedulers see each other only
-through the pushed state, so a failure slow enough to straddle both ticks
-can cost a duplicate alert; that is the worst of it, since a report that
-lands twice is deduplicated by the same store. The early scout is the one
+through the pushed state, and a manager run is minutes long — long enough
+for the other scheduler's tick to start before this one has pushed. So a
+scheduled tick reads the store twice: from its own checkout before it
+starts, and again from a fresh fetch of `main` once the manager has spoken
+and before anything is sent or saved; a tick the other scheduler overtook
+stands down there, having spent a manager run and nothing else. What that
+leaves is the few seconds between that second read and the push, which a
+report that lands twice would still cross; a manager failing on both hosts
+inside one window, which can cost a second withheld alert, since only a
+recorded report stands the other tick down; and a fetch that fails leaves
+the tick to carry on rather than silence it. The early scout is the one
 report the gate never wakes for — its evening is days from the deadline —
 so it is your own box's alone: if that box is down that evening the early
 scout is skipped, and the scout on Thursday is the first word. GitHub drops
