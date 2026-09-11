@@ -735,8 +735,10 @@ def _do_this(
 
     A signing that starts is the one lineup change worth flagging here: the app
     drops a transferred-in player onto the bench, so an eleven that needs him in
-    it needs the bench reordered by hand. The shape is named and the full eleven
-    is left to the team sheet below — a checklist, not a second copy of it.
+    it needs the bench reordered by hand. The line names the shape and the
+    whole eleven by position, on one line: this block is what the phone gets,
+    without the team sheet that follows it in the report, and "set the lineup"
+    with no names is a nudge nobody can act on at a deadline.
     """
     lines = ["## Do this", "", f"⏰ Make these by {deadline(event)} — GW{event.id}"]
     if free_hit:
@@ -758,8 +760,20 @@ def _do_this(
         f"CAPTAIN {_who(lineup.captain, players)} · VICE {_who(lineup.vice, players)}"
     )
     if set(choice.transfers_in) & set(lineup.xi):
-        lines.append(f"Set lineup: {formation(lineup, players)}")
+        lines.append(
+            f"Set lineup ({formation(lineup, players)}): {_by_position(lineup, players)}"
+        )
     return "\n".join(lines)
+
+
+def _by_position(lineup: Lineup, players: dict[int, Player]) -> str:
+    """The eleven on one line, keeper to forwards, a semicolon between the
+    lines of the formation — the shape names the groups, so the positions
+    need no labels of their own."""
+    rows: dict[int, list[str]] = defaultdict(list)
+    for pid in lineup.xi:
+        rows[players[pid].element_type].append(players[pid].web_name)
+    return "; ".join(", ".join(rows[position]) for position in POSITIONS)
 
 
 def _eleven(lineup: Lineup, players: dict[int, Player]) -> str:

@@ -62,7 +62,7 @@ Deadline: Sat 28 Nov 2026 13:30 UTC
 ⏰ Make these by Sat 28 Nov 2026 13:30 UTC — GW12
 SELL Byrne (MID AVL £6.4m) → BUY Reid (FWD CRV £9.5m)
 CAPTAIN Reid · VICE Alvez
-Set lineup: 3-5-2
+Set lineup (3-5-2): Alvez; Costa, Egan, Ferris; Hume, Innes, Jonker, Kerr, Salas; Reid, Moss
 
 ## Recommendation
 
