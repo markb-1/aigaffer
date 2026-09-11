@@ -333,8 +333,14 @@ TOOLS: list[dict] = [
 
 # A parameter tag, however the strict grammar mangled its name: ``<parameter``
 # opening one, ``</antml…parameter>`` closing one with a near-miss in place of
-# the token the grammar would not allow.
-MARKUP = re.compile(r"<\S*parameter\b")
+# the token the grammar would not allow. Anchored to the two shapes so that
+# prose which happens to put a ``<`` before a word ending in "parameter"
+# does not cost a turn.
+MARKUP = re.compile(r"</\S*parameter\b|<parameter\b")
+
+# Null is on offer for the chip nobody played; a value that arrives anyway
+# is dropped, and this line is the only trace of it.
+CHIP_FIELD_DROPPED = "chip_justification arrived for chip 'none' and was dropped"
 
 
 class ToolError(Exception):
@@ -454,6 +460,8 @@ def validate_finalize(
     if chip != NO_CHIP:
         justification = _text(args.get("chip_justification"))
         _check_chip(chip, justification)
+    elif _text(args.get("chip_justification")).strip():
+        print(CHIP_FIELD_DROPPED)
 
     rationale = _words(args.get("rationale"), "rationale")
     _check_rationale(rationale)

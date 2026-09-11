@@ -454,7 +454,9 @@ def run_pipeline(
     a dry run prices its sales in memory and persists none of it.
     """
     if mode == REMINDER_MODE:
-        return _run_reminder(cfg, client, store, send=send, save=save)
+        return _run_reminder(
+            cfg, client, store, send=send, save=save, overtaken=overtaken
+        )
 
     inputs = fetch_inputs(cfg, client)
     # Priced now, persisted below with everything else: the ledger's one
@@ -579,9 +581,11 @@ def run_pipeline(
 
     # The expensive part is over; before the phone, the other scheduler's
     # word. The store in hand said nothing had run when this tick began, and
-    # the minutes since are exactly when the peer's push lands. Asked here,
-    # ahead of the withheld alert as well: a duplicate of that is a duplicate
-    # too.
+    # the minutes since are exactly when the peer's push lands. The question
+    # is whether a report was recorded — a peer that only withheld is not an
+    # answer, since this manager may have decided where that one did not —
+    # so a manager failing on both hosts inside one window can still cost a
+    # second withheld alert. That residual is small enough to keep.
     if overtaken is not None and overtaken(event.id, mode):
         print(OVERTAKEN)
         return report
@@ -663,7 +667,12 @@ def run_pipeline(
 
 
 def _run_reminder(
-    cfg: Config, client: FplClient, store: Store, send: bool, save: bool
+    cfg: Config,
+    client: FplClient,
+    store: Store,
+    send: bool,
+    save: bool,
+    overtaken: Callable[[int, str], bool] | None = None,
 ) -> str:
     """Three hours out: solve again, diff against yesterday's solve, buzz once.
 
@@ -781,6 +790,12 @@ def _run_reminder(
     # leave has_run false so the next tick retries, and the history file
     # goes with the store row so nothing on disk claims a reminder happened
     # that nobody felt.
+    # The other scheduler's word first, as for every scheduled tick: the
+    # solve is seconds, but the ticks are not, and a reminder felt twice is
+    # the kind of text this run exists to keep short.
+    if overtaken is not None and overtaken(event.id, REMINDER_MODE):
+        print(OVERTAKEN)
+        return report
     if send and not _deliver(cfg, buzz):
         return report
     if save:

@@ -14,6 +14,7 @@ goes out twice is a nuisance, a report silenced by a flaky fetch is the
 failure the whole arrangement exists to prevent.
 """
 
+import sqlite3
 import subprocess
 import tempfile
 from pathlib import Path
@@ -21,6 +22,9 @@ from pathlib import Path
 from aigaffer.store import DB_NAME, Store
 
 REMOTE = "origin"
+# The branch both schedulers commit to. The workflow's commit step pushes to
+# whatever ref it ran on, so a dispatch from another branch would be asking
+# about the wrong one — a dispatch never asks, and the schedule runs on main.
 BRANCH = "main"
 # Where the committed store lives in the repository: Config's default state
 # directory, and the file name every host keeps it under.
@@ -43,13 +47,21 @@ def peer_has_run(repo: Path, gw: int, mode: str) -> bool:
     except subprocess.SubprocessError:
         # No store on the branch yet: nothing has run, which is an answer.
         return False
-    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as copy:
-        copy.write(blob)
-        path = Path(copy.name)
+    # Whatever is on the branch under the store's name — a truncated push, a
+    # file that is not SQLite — the question must not take the run down with
+    # it, not here, after the manager has been paid for.
+    path: Path | None = None
     try:
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as copy:
+            copy.write(blob)
+            path = Path(copy.name)
         return Store(path).has_run(gw, mode)
+    except (OSError, sqlite3.Error) as error:
+        print(UNANSWERED.format(reason=_reason(error)))
+        return False
     finally:
-        path.unlink(missing_ok=True)
+        if path is not None:
+            path.unlink(missing_ok=True)
 
 
 def _git(repo: Path, *args: str) -> bytes:

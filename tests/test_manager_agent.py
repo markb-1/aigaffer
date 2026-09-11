@@ -55,7 +55,12 @@ from aigaffer.config import Config
 from aigaffer.data.models import Bootstrap, Pick, Player, Squad
 from aigaffer.manager import agent
 from aigaffer.manager.agent import NUDGE, ManagerDecision, run_manager
-from aigaffer.manager.tools import MIN_RATIONALE, SYSTEM_PROMPT, TOOLS
+from aigaffer.manager.tools import (
+    CHIP_FIELD_DROPPED,
+    MIN_RATIONALE,
+    SYSTEM_PROMPT,
+    TOOLS,
+)
 from aigaffer.model.xp import PlayerProjection
 from aigaffer.orchestrator import PipelineInputs, SolveResult
 from aigaffer.solver.lineup import ChipEvs, Lineup
@@ -1841,6 +1846,23 @@ def test_what_leaked_into_an_unplayed_chips_field_is_dropped():
     assert decision.chip_justification == ""
     assert decision.rationale == RATIONALE
     assert len(client.requests) == 1, "no chip, no argument to check, no turn spent"
+
+
+def test_what_was_dropped_is_said_on_stdout(capsys):
+    # Null is on offer now; a value that still arrives for an unplayed chip is
+    # worth one line in the log, so a leak that carries on is seen.
+    converse(
+        [
+            reply(
+                use(
+                    "finalize_decision",
+                    finalize(chip="none", justification=LEAK + RATIONALE),
+                )
+            )
+        ]
+    )
+
+    assert CHIP_FIELD_DROPPED in capsys.readouterr().out
 
 
 def test_a_chip_argued_behind_leaked_markup_is_refused():

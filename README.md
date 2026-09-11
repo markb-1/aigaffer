@@ -509,7 +509,9 @@ starts, and again from a fresh fetch of `main` once the manager has spoken
 and before anything is sent or saved; a tick the other scheduler overtook
 stands down there, having spent a manager run and nothing else. What that
 leaves is the few seconds between that second read and the push, which a
-report that lands twice would still cross; and a fetch that fails leaves
+report that lands twice would still cross; a manager failing on both hosts
+inside one window, which can cost a second withheld alert, since only a
+recorded report stands the other tick down; and a fetch that fails leaves
 the tick to carry on rather than silence it. The early scout is the one
 report the gate never wakes for — its evening is days from the deadline —
 so it is your own box's alone: if that box is down that evening the early

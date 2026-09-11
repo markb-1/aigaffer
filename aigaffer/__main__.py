@@ -96,7 +96,8 @@ def main(argv: list[str] | None = None) -> int:
     # and the peer may have pushed this very report meanwhile. A named mode
     # or a forced run is a person at the keyboard, who gets what they asked
     # for. The repository is the state directory's parent — where the diary
-    # and the homepage verdict live too.
+    # and the homepage verdict live too — which with the default state
+    # directory is the working directory both runners start in.
     overtaken = None
     if args.command == AUTO and not args.force:
         overtaken = partial(peer_has_run, cfg.state_dir.parent)
