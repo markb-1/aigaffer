@@ -29,9 +29,11 @@ is the scout under its own name, and its window closes when the scout's
 opens: a round that ends close to the next deadline — a midweek one — gets
 one scout, not two.
 
-Telegram gets a digest, not the document: the ⏰ checklist, the moves priced,
-the gaffer's opening paragraph and a pointer at the rest — a phone message a
-person can act on in one screen. The full reports are kept as a diary in
+Telegram gets a digest, not the document: one line on where the season stands
+(points, overall rank, team value, bank, free transfers), the ⏰ checklist, the
+moves priced, the gaffer's opening paragraph and a pointer at the rest — a
+phone message a person can act on in one screen. The reminder and the
+withheld alert open with the same line. The full reports are kept as a diary in
 `state/reports/`, and the polished verdict for each gameweek is committed by
 CI to `GW{n}.md` at the repo root — the copy the GitHub homepage shows,
 written first by the early scout, rewritten by the scout midweek and

@@ -1983,6 +1983,48 @@ def test_the_manager_unavailable_notice_rides_the_digest(monkeypatch, tmp_path):
     assert orchestrator.MANAGER_UNAVAILABLE in message
 
 
+# The fifteen-man picks fixture's season so far, as the phone's first line
+# says it: 61 points, a rank in the millions, £100.0m all in, £2.8m of it
+# banked. The free-transfer count follows on the same line.
+STANDING_LINE = "61 pts · rank 2,345,678 · value £100.0m · bank £2.8m · "
+
+
+def test_the_digest_opens_with_the_standing(monkeypatch, tmp_path):
+    # The phone's first screen says how the season is going before it says
+    # what to do, and the figures come off the picks the run already fetched.
+    sent = []
+    monkeypatch.setattr(orchestrator, "send_report", lambda *args: sent.append(args))
+    cfg = Config(
+        team_id=TEAM_ID,
+        telegram_token=TOKEN,
+        telegram_chat_id="42",
+        state_dir=tmp_path / "state",
+    )
+
+    run_pipeline(
+        cfg, make_client(pipeline_routes()), Store(tmp_path / "aigaffer.db"), "deadline"
+    )
+
+    [(_, _, message)] = sent
+    lines = message.splitlines()
+    [standing] = [line for line in lines if line.startswith(STANDING_LINE)]
+    assert standing.endswith("free transfer") or standing.endswith("free transfers")
+    assert lines[lines.index(standing) - 1].startswith("Deadline: ")
+
+
+def test_the_reminder_opens_with_the_standing_too(tmp_path):
+    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
+    store = Store(cfg.state_dir / "aigaffer.db")
+    client = make_client(pipeline_routes())
+
+    run_pipeline(cfg, client, store, "deadline", send=False)
+    alert = run_pipeline(cfg, client, store, "reminder", send=False)
+
+    lines = alert.splitlines()
+    [standing] = [line for line in lines if line.startswith(STANDING_LINE)]
+    assert lines[lines.index(standing) - 1].startswith("Deadline: ")
+
+
 def test_the_audit_line_rides_the_digest_as_well_as_the_report(
     monkeypatch, tmp_path
 ):
