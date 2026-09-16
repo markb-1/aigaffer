@@ -181,6 +181,32 @@ def test_picks_maps_bank():
     assert squad.player_ids == [1, 3, 4, 5, 6, 7, 2, 8]
 
 
+def test_picks_carries_the_standing():
+    # The standing rides the same entry_history block the bank is read from:
+    # the season's points, the overall rank they buy, and the squad's value.
+    c = make_client({"/api/entry/99/event/1/picks/": PICKS_JSON})
+    standing = c.picks(99, 1).standing
+    assert standing is not None
+    assert standing.total_points == 57
+    assert standing.overall_rank == 1234567
+    assert standing.value == 1004
+    assert standing.bank == 13
+
+
+def test_a_gameweek_not_yet_ranked_still_has_a_standing():
+    # Between a deadline and the first kick-off the API has points to show
+    # but no rank to put them at, and the run must not fall over on a line.
+    unranked = {**PICKS_JSON, "entry_history": {
+        **PICKS_JSON["entry_history"], "overall_rank": None, "total_points": None,
+    }}
+    c = make_client({"/api/entry/99/event/1/picks/": unranked})
+    standing = c.picks(99, 1).standing
+    assert standing is not None
+    assert standing.overall_rank is None
+    assert standing.total_points is None
+    assert standing.bank == 13
+
+
 def test_picks_parses_captaincy():
     c = make_client({"/api/entry/99/event/1/picks/": PICKS_JSON})
     picks = {p.element: p for p in c.picks(99, 1).picks}

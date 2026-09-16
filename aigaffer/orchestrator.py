@@ -90,6 +90,7 @@ from aigaffer.data.models import (
     PastSeason,
     Player,
     Squad,
+    Standing,
 )
 from aigaffer.ledger import Observation, observe
 from aigaffer.model.minutes import expected_minutes, season_prior
@@ -623,6 +624,7 @@ def run_pipeline(
                     attempts=MANAGER_RETRY_LIMIT,
                     free_transfers=inputs.free_transfers,
                     selling_prices=ledger.selling_prices,
+                    standing=_standing(inputs),
                 ),
                 unconfigured=ALERT_NOT_CONFIGURED,
             )
@@ -652,6 +654,7 @@ def run_pipeline(
             event, choice, lineup, inputs.bootstrap, gaffer,
             free_transfers=inputs.free_transfers,
             selling_prices=ledger.selling_prices,
+            standing=_standing(inputs),
         )
         # The two lines the report carries that the renderer cannot know
         # about ride the digest too, under the same conditions: the accident
@@ -768,6 +771,8 @@ def _run_reminder(
     report = render_reminder(
         event, fresh, stored, changes, inputs.bootstrap,
         selling_prices=ledger.selling_prices,
+        standing=_standing(inputs),
+        free_transfers=inputs.free_transfers,
     )
     # The buzz is the digest — one checklist, what moved, a pointer — and on
     # the calm weeks it is the alert itself, byte for byte. The audit line
@@ -775,6 +780,8 @@ def _run_reminder(
     buzz = render_reminder_digest(
         event, fresh, stored, changes, inputs.bootstrap,
         selling_prices=ledger.selling_prices,
+        standing=_standing(inputs),
+        free_transfers=inputs.free_transfers,
     )
     report += _audit_line(ledger)
     buzz += _audit_line(ledger)
@@ -1320,6 +1327,12 @@ def _current_squad(
         return client.picks(team_id, current.id)
     except httpx.HTTPStatusError:
         return None
+
+
+def _standing(inputs: PipelineInputs) -> Standing | None:
+    """Where the season stands, for the phone's opening line — or None for a
+    manager with no squad, who stands nowhere yet."""
+    return None if inputs.squad is None else inputs.squad.standing
 
 
 def _free_transfers(

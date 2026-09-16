@@ -312,6 +312,8 @@ PICKS_JSON = {
     "entry_history": {
         "event": 1,
         "points": 57,
+        "total_points": 57,
+        "overall_rank": 1234567,
         "bank": 13,
         "value": 1004,
         "event_transfers": 1,
@@ -530,6 +532,8 @@ PICKS_15_JSON = {
     "entry_history": {
         "event": 1,
         "points": 61,
+        "total_points": 61,
+        "overall_rank": 2345678,
         "bank": 28,
         "value": 1000,
         "event_transfers": 1,

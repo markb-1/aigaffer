@@ -153,6 +153,19 @@ def test_the_phone_is_told_why_and_what_the_solver_would_do(
     assert "Full report: GW2.md" not in alert
 
 
+def test_the_withheld_alert_opens_with_the_standing(monkeypatch, tmp_path, phone):
+    # A withheld week is still a text, and it opens the way the digest does.
+    tick(monkeypatch, tmp_path, AUTH_FAILED, hours=20)
+
+    [alert] = phone.messages
+    lines = alert.splitlines()
+    [standing] = [
+        line for line in lines
+        if line.startswith("61 pts · rank 2,345,678 · value £100.0m · bank £2.8m · ")
+    ]
+    assert lines[lines.index(standing) - 2].startswith("Deadline: ")
+
+
 def test_the_same_failure_is_reported_once(monkeypatch, tmp_path, phone):
     _, store = tick(monkeypatch, tmp_path, AUTH_FAILED, hours=20)
     tick(monkeypatch, tmp_path, AUTH_FAILED, hours=19, store=store)

@@ -42,7 +42,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from aigaffer.data.models import Bootstrap, Event, Player
+from aigaffer.data.models import Bootstrap, Event, Player, Standing
 from aigaffer.manager.agent import ManagerDecision
 from aigaffer.model.xp import PlayerProjection
 from aigaffer.report.render import (
@@ -55,6 +55,7 @@ from aigaffer.report.render import (
     render_digest,
     render_reminder,
     render_reminder_digest,
+    render_withheld,
     render_report,
 )
 from aigaffer.solver.lineup import ChipEvs, Lineup
@@ -1068,12 +1069,82 @@ def test_the_watchlist_is_the_five_best_players_the_plan_leaves_behind():
 
 
 def digest(
-    view: ManagerDecision | None = None, mode: str = "deadline", lineup: Lineup = LINEUP
+    view: ManagerDecision | None = None,
+    mode: str = "deadline",
+    lineup: Lineup = LINEUP,
+    standing: Standing | None = None,
+    free_transfers: int | None = 1,
 ) -> str:
     return render_digest(
         mode, EVENT, ONE, lineup, BOOTSTRAP, view,
-        free_transfers=1,
+        free_transfers=free_transfers,
+        standing=standing,
     )
+
+
+STANDING = Standing(total_points=308, overall_rank=441127, value=1004, bank=5)
+STANDING_LINE = "308 pts · rank 441,127 · value £100.4m · bank £0.5m · 1 free transfer"
+
+
+def test_the_digest_opens_with_where_we_stand():
+    # The phone's first screen says how the season is going before it says
+    # what to do: points, rank, what the team is worth, what is in the bank,
+    # and how many free transfers the week has to spend.
+    text = digest(view=gaffer(), standing=STANDING)
+    lines = text.splitlines()
+
+    assert STANDING_LINE in lines
+    assert lines[lines.index(STANDING_LINE) - 2] == "Deadline: Fri 22 Aug 2025 17:30 UTC"
+    assert lines[lines.index(STANDING_LINE) - 1] == ""
+
+
+def test_a_digest_with_no_standing_has_no_standing_line():
+    # A hand-built squad and a draft week stand nowhere yet, and the line
+    # is left out rather than printed over zeros.
+    text = digest(view=gaffer())
+    assert "pts ·" not in text
+    assert "rank" not in text.lower().split("## do this")[0]
+
+
+def test_the_standing_stops_at_the_bank_when_free_transfers_are_unknown():
+    text = digest(view=gaffer(), standing=STANDING, free_transfers=None)
+    assert "308 pts · rank 441,127 · value £100.4m · bank £0.5m" in text
+    assert "free transfer" not in text.split("## Do this")[0]
+
+
+def test_a_standing_with_no_rank_yet_leaves_the_rank_out():
+    # A gameweek the API has not ranked yet still has a value and a bank to
+    # report; the figures it lacks are left out, not printed as nothing.
+    unranked = Standing(total_points=None, overall_rank=None, value=1004, bank=5)
+    text = digest(view=gaffer(), standing=unranked)
+    assert "value £100.4m · bank £0.5m · 1 free transfer" in text
+    assert "pts" not in text.split("## Do this")[0]
+    assert "rank" not in text.split("## Do this")[0]
+
+
+def test_free_transfers_are_counted_in_the_standing():
+    text = digest(view=gaffer(), standing=STANDING, free_transfers=2)
+    assert "bank £0.5m · 2 free transfers" in text
+
+
+def test_every_text_the_phone_gets_opens_with_the_standing():
+    # The withheld alert and the reminder are texts too, and they open the
+    # same way the digest does — one line, under the deadline.
+    withheld = render_withheld(
+        "deadline", EVENT, ONE, LINEUP, BOOTSTRAP, "AuthenticationError",
+        until=EVENT.deadline_time - timedelta(hours=3), attempts=3,
+        free_transfers=1, standing=STANDING,
+    )
+    alert = reminder(stored=actions(), standing=STANDING, free_transfers=1)
+    buzz = reminder_digest(
+        stored=actions(), changes={"sells_added": [7]},
+        standing=STANDING, free_transfers=1,
+    )
+    for text in (withheld, alert, buzz):
+        lines = text.splitlines()
+        assert STANDING_LINE in lines
+        assert lines[lines.index(STANDING_LINE) - 2] == "Deadline: Fri 22 Aug 2025 17:30 UTC"
+    assert lines[lines.index(STANDING_LINE) - 1] == ""
 
 
 def test_the_digest_is_the_checklist_the_moves_and_the_view():
@@ -1172,10 +1243,14 @@ def reminder(
     stored: dict | None = None,
     changes: dict | None = None,
     selling_prices: dict[int, int] | None = None,
+    standing: Standing | None = None,
+    free_transfers: int | None = None,
 ) -> str:
     return render_reminder(
         EVENT, fresh or actions(), stored, changes or {}, BOOTSTRAP,
         selling_prices=selling_prices,
+        standing=standing,
+        free_transfers=free_transfers,
     )
 
 
@@ -1183,9 +1258,13 @@ def reminder_digest(
     fresh: dict | None = None,
     stored: dict | None = None,
     changes: dict | None = None,
+    standing: Standing | None = None,
+    free_transfers: int | None = None,
 ) -> str:
     return render_reminder_digest(
-        EVENT, fresh or actions(), stored, changes or {}, BOOTSTRAP
+        EVENT, fresh or actions(), stored, changes or {}, BOOTSTRAP,
+        standing=standing,
+        free_transfers=free_transfers,
     )
 
 

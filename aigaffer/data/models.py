@@ -154,12 +154,44 @@ class Pick(BaseModel):
     is_vice_captain: bool
 
 
+class Standing(BaseModel):
+    """Where the manager stands after the last gameweek played.
+
+    All four figures come off the picks endpoint's ``entry_history`` block —
+    the one the squad's ``bank`` is already read from — so the standing costs
+    no request of its own. ``total_points`` is the season's tally and
+    ``overall_rank`` the place it buys among every manager in the game;
+    ``value`` and ``bank`` are in tenths of a million, as the API serves them,
+    and ``value`` is the team's worth *with* the bank counted — a GW1 squad
+    reads 1000 with 5 in the bank, which is the £100.0m budget and not
+    £100.5m of it. Verified against the live endpoint on 2026-09-16: every
+    field is an integer on a played gameweek.
+
+    The points and the rank are optional because a played gameweek is not
+    the only kind the picks are asked for: between a deadline and the first
+    kick-off the round is current and unranked, and a null there must cost
+    the phone one figure, never the run. The value and the bank are money,
+    and money is always there.
+    """
+
+    total_points: int | None = None
+    overall_rank: int | None = None
+    value: int
+    bank: int
+
+
 class Squad(BaseModel):
-    """A manager's picks for one gameweek. ``bank`` is in tenths of a million."""
+    """A manager's picks for one gameweek. ``bank`` is in tenths of a million.
+
+    ``standing`` is the same block's account of the season so far, kept for
+    the phone's opening line. It is None for a squad built by hand rather
+    than read from the API, which has no season behind it to stand in.
+    """
 
     picks: list[Pick]
     bank: int
     event: int
+    standing: Standing | None = None
 
     @property
     def player_ids(self) -> list[int]:

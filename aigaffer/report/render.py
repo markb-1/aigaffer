@@ -38,7 +38,7 @@ from collections import defaultdict
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from aigaffer.data.models import Bootstrap, Event, Player
+from aigaffer.data.models import Bootstrap, Event, Player, Standing
 from aigaffer.model.xp import PlayerProjection
 from aigaffer.solver.lineup import ChipEvs, Lineup
 from aigaffer.solver.optimizer import (
@@ -282,6 +282,8 @@ def render_reminder(
     bootstrap: Bootstrap,
     *,
     selling_prices: dict[int, int] | None = None,
+    standing: Standing | None = None,
+    free_transfers: int | None = None,
 ) -> str:
     """The short alert, three hours out. Pure; no I/O.
 
@@ -316,6 +318,10 @@ def render_reminder(
     ``selling_prices`` is this run's ledger reading, and both blocks read it —
     the stored verdict included, because a selling price is a fact about the
     player today, not about the run that planned the sale.
+
+    ``standing`` and ``free_transfers`` open the alert the way they open the
+    digest — see the standing line. The count is read nowhere else here:
+    the reminder's checklist is a stored plan, and a plan says what it spends.
     """
     players = {player.id: player for player in bootstrap.elements}
     clubs = {team.id: team.short_name for team in bootstrap.teams}
@@ -323,7 +329,7 @@ def render_reminder(
     def block(heading: str, actions: dict) -> str:
         return _actions_block(heading, event, actions, players, clubs, selling_prices)
 
-    sections = [_header("reminder", event)]
+    sections = [_header("reminder", event, standing, free_transfers)]
     if stored is None:
         sections += [block("## Do this", fresh)]
         sections += [NO_FULL_REPORT]
@@ -348,6 +354,7 @@ def render_digest(
     *,
     free_transfers: int | None = None,
     selling_prices: dict[int, int] | None = None,
+    standing: Standing | None = None,
 ) -> str:
     """The report as the phone gets it. Pure; no I/O.
 
@@ -358,13 +365,16 @@ def render_digest(
     unchanged and goes where it always went: the diary and the homepage. The
     digest is never saved — it is a shorter way of *saying* the decision,
     not a second record of it.
+
+    ``standing`` is where the season stands, and it opens the digest under
+    the deadline as one line; None leaves the line out.
     """
     players = {player.id: player for player in bootstrap.elements}
     clubs = {team.id: team.short_name for team in bootstrap.teams}
     chip = played_chip(choice, gaffer)
     free_hit = _free_hitting(choice, chip)
 
-    sections = [_header(mode, event)]
+    sections = [_header(mode, event, standing, free_transfers)]
     if not _drafting(choice):
         sections.append(
             _do_this(
@@ -391,6 +401,7 @@ def render_withheld(
     *,
     free_transfers: int | None = None,
     selling_prices: dict[int, int] | None = None,
+    standing: Standing | None = None,
 ) -> str:
     """The alert the phone gets for a withheld report. Pure; no I/O.
 
@@ -399,6 +410,8 @@ def render_withheld(
     that label's reason. ``until`` is when the ticks stop asking and let the
     solver's report through, printed the way the deadline is; ``attempts`` is
     the other thing that stops them, the most ticks the report can be held.
+    ``standing`` and ``free_transfers`` open the alert the way they open the
+    digest: a withheld week is still a text.
     """
     players = {player.id: player for player in bootstrap.elements}
     clubs = {team.id: team.short_name for team in bootstrap.teams}
@@ -406,7 +419,7 @@ def render_withheld(
     free_hit = _free_hitting(choice, chip)
 
     sections = [
-        _header(mode, event),
+        _header(mode, event, standing, free_transfers),
         WITHHELD_NOTICE.format(reason=reason, until=_utc(until), attempts=attempts),
     ]
     if not _drafting(choice):
@@ -427,6 +440,8 @@ def render_reminder_digest(
     bootstrap: Bootstrap,
     *,
     selling_prices: dict[int, int] | None = None,
+    standing: Standing | None = None,
+    free_transfers: int | None = None,
 ) -> str:
     """The reminder as the phone gets it. Pure; no I/O.
 
@@ -443,11 +458,13 @@ def render_reminder_digest(
         return render_reminder(
             event, fresh, stored, changes, bootstrap,
             selling_prices=selling_prices,
+            standing=standing,
+            free_transfers=free_transfers,
         )
     players = {player.id: player for player in bootstrap.elements}
     clubs = {team.id: team.short_name for team in bootstrap.teams}
     sections = [
-        _header("reminder", event),
+        _header("reminder", event, standing, free_transfers),
         _actions_block("## Do this", event, stored, players, clubs, selling_prices),
         _changed(changes, players, clubs),
         FRESH_SOLVE_POINTER.format(gw=event.id),
@@ -674,8 +691,44 @@ def played_chip(choice: Plan, gaffer: "ManagerDecision | None") -> str:
     return NO_CHIP
 
 
-def _header(mode: str, event: Event) -> str:
-    return f"# AI Gaffer — GW{event.id} {mode}\n\nDeadline: {deadline(event)}"
+def _header(
+    mode: str,
+    event: Event,
+    standing: Standing | None = None,
+    free_transfers: int | None = None,
+) -> str:
+    """The title, the deadline, and — given a standing — how the season is
+    going, each a paragraph of its own so a markdown reader keeps them apart
+    (the reminder alert is saved as one; see the module docstring). The
+    standing sits under the deadline rather than in the heading because the
+    heading is what the store and the diary are keyed by, and it must not
+    change week to week for a reason that is not the week."""
+    lines = [f"# AI Gaffer — GW{event.id} {mode}", "", f"Deadline: {deadline(event)}"]
+    if standing is not None:
+        lines += ["", _standing_line(standing, free_transfers)]
+    return "\n".join(lines)
+
+
+def _standing_line(standing: Standing, free_transfers: int | None = None) -> str:
+    """How the season is going, in one line a phone shows whole.
+
+    Points, the rank they buy, what the team is worth, what is in the bank,
+    and how many free transfers the week has to spend — the five figures a
+    manager glances at before reading what to do. The first four are the
+    API's own account of the last gameweek played (:class:`Standing`); the
+    fifth is ours, replayed from the transfer history. A figure there is no
+    value for — a rank the API has not computed yet, a count nobody made —
+    is left off rather than printed as nothing.
+    """
+    parts = []
+    if standing.total_points is not None:
+        parts.append(f"{standing.total_points} pts")
+    if standing.overall_rank is not None:
+        parts.append(f"rank {standing.overall_rank:,}")
+    parts += [f"value {price(standing.value)}", f"bank {price(standing.bank)}"]
+    if free_transfers is not None:
+        parts.append(plural(free_transfers, "free transfer"))
+    return " · ".join(parts)
 
 
 def deadline(event: Event) -> str:

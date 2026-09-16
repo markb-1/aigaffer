@@ -17,7 +17,14 @@ from typing import Any
 
 import httpx
 
-from aigaffer.data.models import Bootstrap, Fixture, GwHistory, PastSeason, Squad
+from aigaffer.data.models import (
+    Bootstrap,
+    Fixture,
+    GwHistory,
+    PastSeason,
+    Squad,
+    Standing,
+)
 
 BASE_URL = "https://fantasy.premierleague.com/api"
 USER_AGENT = "aigaffer/0.1 (github.com/markb-1/aigaffer)"
@@ -73,10 +80,12 @@ class FplClient:
 
     def picks(self, team_id: int, event: int) -> Squad:
         data = self._get(f"/entry/{team_id}/event/{event}/picks/")
+        history = data["entry_history"]
         return Squad(
             picks=data["picks"],
-            bank=data["entry_history"]["bank"],
+            bank=history["bank"],
             event=event,
+            standing=Standing.model_validate(history),
         )
 
     def transfers(self, team_id: int) -> list[dict]:
