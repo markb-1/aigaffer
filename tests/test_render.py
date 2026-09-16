@@ -1094,7 +1094,8 @@ def test_the_digest_opens_with_where_we_stand():
     lines = text.splitlines()
 
     assert STANDING_LINE in lines
-    assert lines[lines.index(STANDING_LINE) - 1] == "Deadline: Fri 22 Aug 2025 17:30 UTC"
+    assert lines[lines.index(STANDING_LINE) - 2] == "Deadline: Fri 22 Aug 2025 17:30 UTC"
+    assert lines[lines.index(STANDING_LINE) - 1] == ""
 
 
 def test_a_digest_with_no_standing_has_no_standing_line():
@@ -1109,6 +1110,16 @@ def test_the_standing_stops_at_the_bank_when_free_transfers_are_unknown():
     text = digest(view=gaffer(), standing=STANDING, free_transfers=None)
     assert "308 pts · rank 441,127 · value £100.4m · bank £0.5m" in text
     assert "free transfer" not in text.split("## Do this")[0]
+
+
+def test_a_standing_with_no_rank_yet_leaves_the_rank_out():
+    # A gameweek the API has not ranked yet still has a value and a bank to
+    # report; the figures it lacks are left out, not printed as nothing.
+    unranked = Standing(total_points=None, overall_rank=None, value=1004, bank=5)
+    text = digest(view=gaffer(), standing=unranked)
+    assert "value £100.4m · bank £0.5m · 1 free transfer" in text
+    assert "pts" not in text.split("## Do this")[0]
+    assert "rank" not in text.split("## Do this")[0]
 
 
 def test_free_transfers_are_counted_in_the_standing():
@@ -1132,7 +1143,8 @@ def test_every_text_the_phone_gets_opens_with_the_standing():
     for text in (withheld, alert, buzz):
         lines = text.splitlines()
         assert STANDING_LINE in lines
-        assert lines[lines.index(STANDING_LINE) - 1] == "Deadline: Fri 22 Aug 2025 17:30 UTC"
+        assert lines[lines.index(STANDING_LINE) - 2] == "Deadline: Fri 22 Aug 2025 17:30 UTC"
+    assert lines[lines.index(STANDING_LINE) - 1] == ""
 
 
 def test_the_digest_is_the_checklist_the_moves_and_the_view():

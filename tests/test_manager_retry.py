@@ -163,7 +163,7 @@ def test_the_withheld_alert_opens_with_the_standing(monkeypatch, tmp_path, phone
         line for line in lines
         if line.startswith("61 pts · rank 2,345,678 · value £100.0m · bank £2.8m · ")
     ]
-    assert lines[lines.index(standing) - 1].startswith("Deadline: ")
+    assert lines[lines.index(standing) - 2].startswith("Deadline: ")
 
 
 def test_the_same_failure_is_reported_once(monkeypatch, tmp_path, phone):

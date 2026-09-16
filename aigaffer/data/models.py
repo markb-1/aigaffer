@@ -166,10 +166,16 @@ class Standing(BaseModel):
     reads 1000 with 5 in the bank, which is the £100.0m budget and not
     £100.5m of it. Verified against the live endpoint on 2026-09-16: every
     field is an integer on a played gameweek.
+
+    The points and the rank are optional because a played gameweek is not
+    the only kind the picks are asked for: between a deadline and the first
+    kick-off the round is current and unranked, and a null there must cost
+    the phone one figure, never the run. The value and the bank are money,
+    and money is always there.
     """
 
-    total_points: int
-    overall_rank: int
+    total_points: int | None = None
+    overall_rank: int | None = None
     value: int
     bank: int
 
@@ -178,8 +184,8 @@ class Squad(BaseModel):
     """A manager's picks for one gameweek. ``bank`` is in tenths of a million.
 
     ``standing`` is the same block's account of the season so far, kept for
-    the phone's opening line. It is None for a squad built by hand — a test
-    fixture, a draft — which has no season behind it to stand anywhere in.
+    the phone's opening line. It is None for a squad built by hand rather
+    than read from the API, which has no season behind it to stand in.
     """
 
     picks: list[Pick]

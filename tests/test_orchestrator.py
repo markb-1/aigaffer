@@ -2008,8 +2008,8 @@ def test_the_digest_opens_with_the_standing(monkeypatch, tmp_path):
     [(_, _, message)] = sent
     lines = message.splitlines()
     [standing] = [line for line in lines if line.startswith(STANDING_LINE)]
-    assert standing.endswith("free transfer") or standing.endswith("free transfers")
-    assert lines[lines.index(standing) - 1].startswith("Deadline: ")
+    assert standing == STANDING_LINE + "1 free transfer"
+    assert lines[lines.index(standing) - 2].startswith("Deadline: ")
 
 
 def test_the_reminder_opens_with_the_standing_too(tmp_path):
@@ -2022,7 +2022,7 @@ def test_the_reminder_opens_with_the_standing_too(tmp_path):
 
     lines = alert.splitlines()
     [standing] = [line for line in lines if line.startswith(STANDING_LINE)]
-    assert lines[lines.index(standing) - 1].startswith("Deadline: ")
+    assert lines[lines.index(standing) - 2].startswith("Deadline: ")
 
 
 def test_the_audit_line_rides_the_digest_as_well_as_the_report(
