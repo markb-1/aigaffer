@@ -7,7 +7,7 @@ result to a Claude agent that reads the week's team news and may overrule it,
 and messages the finished verdict to your phone. It advises and never acts:
 no transfer is ever executed, and the final tap in the app is yours.
 
-📋 **Latest verdict: [GW5](GW5.md)** <!-- latest-verdict -->
+📋 **Latest verdict: [GW6](GW6.md)** <!-- latest-verdict -->
 
 ## What arrives, and when
 
