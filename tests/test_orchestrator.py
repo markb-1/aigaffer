@@ -3461,3 +3461,23 @@ def test_the_strength_switch_is_honored(monkeypatch, tmp_path):
 
     assert run_with(False) == 0, "off: the fit is never asked for"
     assert run_with(True) >= 1, "on: it is"
+
+
+def test_a_chips_run_carries_the_calendar_in_the_report_and_one_line_on_the_phone(
+    monkeypatch, tmp_path
+):
+    sent = []
+    monkeypatch.setattr(orchestrator, "send_report", lambda *args: sent.append(args))
+    cfg = config(
+        telegram_token=TOKEN, telegram_chat_id="42", state_dir=tmp_path / "state", chips=True
+    )
+
+    report = run_pipeline(
+        cfg, make_client(halves_routes()), Store(tmp_path / "aigaffer.db"), "scout"
+    )
+
+    [(_, _, message)] = sent
+    assert "## Chip calendar" in report
+    assert "## Chip calendar" not in message
+    [line] = [text for text in message.splitlines() if text.startswith("Chips: ")]
+    assert line.endswith("expire GW19")

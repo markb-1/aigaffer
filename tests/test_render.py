@@ -1425,3 +1425,101 @@ def test_a_calendar_with_no_entries_renders_no_section():
 
     empty = ChipCalendar(entries=(), discount=0.97, proxy_scale={}, horizon_end=19)
     assert render_chip_calendar(empty, 6) is None
+
+
+# --- the chip calendar in the report, and one line of it on the phone -------
+
+from aigaffer.chips import (  # noqa: E402
+    BENCH_BOOST,
+    FREE_HIT,
+    TRIPLE_CAPTAIN,
+    WILDCARD,
+    HeldChip,
+)
+from aigaffer.report.render import chip_line  # noqa: E402
+from aigaffer.solver.calendar import (  # noqa: E402
+    CalendarEntry,
+    ChipCalendar,
+    calendar_chips,
+    fallback_calendar,
+)
+
+TC = CalendarEntry(HeldChip(TRIPLE_CAPTAIN, 1, 19), 15, 10.0, {6: 7.0})
+BB = CalendarEntry(HeldChip(BENCH_BOOST, 1, 19), 17, 9.0, {6: 6.0})
+FH = CalendarEntry(HeldChip(FREE_HIT, 2, 19), None, None, {6: 0.0})
+WC = CalendarEntry(HeldChip(WILDCARD, 2, 19), None, None, {6: 35.0})
+CAL = ChipCalendar((BB, TC, WC, FH), 0.97, {}, 19)
+
+
+def plan_with_path(moves: list[PlannedMove], week1_chip: str = "none") -> Plan:
+    return replace(
+        ONE,
+        path=PlannedPath(
+            moves=moves, objective=ONE.objective, weekly_xp={}, week1_chip=week1_chip
+        ),
+    )
+
+
+def test_the_chip_line_lists_each_chip_and_the_nearest_expiry():
+    assert chip_line(CAL, plan_with_path(moves=[]), "none", 6) == (
+        "Chips: TC GW15 · BB GW17 · FH — · WC — · expire GW19"
+    )
+
+
+def test_the_chip_line_shows_the_paths_week_for_a_chip_planned_in_the_window():
+    plan = plan_with_path(moves=[PlannedMove(9, [], [], 0, chip=FREE_HIT)])
+    assert "FH GW9" in chip_line(CAL, plan, "none", 6)
+
+
+def test_the_chip_line_follows_the_gaffers_chip_not_the_solvers():
+    plan = plan_with_path(week1_chip=TRIPLE_CAPTAIN, moves=[])
+    assert "BB now" in chip_line(CAL, plan, BENCH_BOOST, 6)
+    assert "TC GW15" in chip_line(CAL, plan, BENCH_BOOST, 6)
+
+
+def test_no_calendar_no_line_and_a_fallback_says_so():
+    assert chip_line(None, plan_with_path(moves=[]), "none", 6) is None
+    fb = fallback_calendar((HeldChip(TRIPLE_CAPTAIN, 1, 19),), [6, 7, 8, 9, 10, 11])
+    assert chip_line(fb, plan_with_path(moves=[]), "none", 6) == "Chips: calendar unavailable"
+
+
+def test_a_second_set_chip_at_gw6_never_reaches_the_line():
+    # The calendar plans only what the window reaches, so at GW6 the second
+    # set is filtered out before the line is drawn.
+    second = tuple(HeldChip(kind, 20, 38) for kind in (TRIPLE_CAPTAIN, BENCH_BOOST, FREE_HIT, WILDCARD))
+    held = tuple(entry.held for entry in CAL.entries) + second
+    reached = calendar_chips(held, [6, 7, 8, 9, 10, 11])
+    cal = ChipCalendar(
+        tuple(entry for entry in CAL.entries if entry.held in reached), 0.97, {}, 19
+    )
+    line = chip_line(cal, plan_with_path(moves=[]), "none", 6)
+
+    assert len(reached) == 4
+    items = line.removeprefix("Chips: ").split(" · ")
+    assert [item.split()[0] for item in items[:-1]] == ["TC", "BB", "FH", "WC"]
+    assert items[-1] == "expire GW19"
+    assert not any(f"GW{week}" in line for week in range(20, 39))
+
+
+def test_the_digest_carries_the_chip_line_under_the_standing_line():
+    text = render_digest(
+        "deadline", EVENT, ONE, LINEUP, BOOTSTRAP, gaffer(),
+        free_transfers=1, standing=STANDING, calendar=CAL,
+    )
+    lines = text.splitlines()
+    assert lines[lines.index(STANDING_LINE) + 1] == ""
+    assert lines[lines.index(STANDING_LINE) + 2] == (
+        "Chips: TC GW15 · BB GW17 · FH — · WC — · expire GW19"
+    )
+
+
+def test_a_digest_without_a_calendar_has_no_chip_line():
+    assert "Chips:" not in digest(view=gaffer(), standing=STANDING)
+
+
+def test_the_full_report_carries_the_calendar_after_the_chip_panel():
+    text = render_report(
+        "scout", EVENT, PLANS, ONE, LINEUP, CHIPS, BOOTSTRAP, XP, calendar=CAL,
+    )
+    assert text.index("## Chip EV") < text.index("## Chip calendar")
+    assert "Chip calendar" not in report()

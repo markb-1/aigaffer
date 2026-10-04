@@ -38,7 +38,7 @@ from collections import defaultdict
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from aigaffer.chips import WILDCARD
+from aigaffer.chips import BENCH_BOOST, FREE_HIT, TRIPLE_CAPTAIN, WILDCARD
 from aigaffer.data.models import Bootstrap, Event, Player, Standing
 from aigaffer.model.xp import PlayerProjection
 from aigaffer.solver.lineup import ChipEvs, Lineup
@@ -205,6 +205,7 @@ def render_report(
     engine_expected: bool = False,
     free_transfers: int | None = None,
     selling_prices: dict[int, int] | None = None,
+    calendar: "ChipCalendar | None" = None,
 ) -> str:
     """The whole report as one markdown string. Pure; no I/O.
 
@@ -238,6 +239,9 @@ def render_report(
     number the owner sees in the app when he confirms. Omitted, or agreeing
     with ``now_cost`` everywhere, the report is byte for byte the one this
     wrote before there was a ledger at all.
+
+    ``calendar`` is the chip calendar, and it adds one section after the chip
+    panel; None, or a calendar with no chip to plan, adds nothing.
     """
     players = {player.id: player for player in bootstrap.elements}
     clubs = {team.id: team.short_name for team in bootstrap.teams}
@@ -247,6 +251,7 @@ def render_report(
     # a different thing about the same decision.
     chip = played_chip(choice, gaffer)
     free_hit = _free_hitting(choice, chip)
+    chip_section = render_chip_calendar(calendar, event.id)
 
     sections = [
         _header(mode, event),
@@ -271,6 +276,7 @@ def render_report(
         ),
         *([_road_ahead(road, players)] if road else []),
         _chip_panel(chips, horizon_of(projections), chip),
+        *([] if chip_section is None else [chip_section]),
         _watchlist(choice.squad, players, clubs, projections),
     ]
     return "\n\n".join(sections) + "\n"
@@ -357,6 +363,7 @@ def render_digest(
     free_transfers: int | None = None,
     selling_prices: dict[int, int] | None = None,
     standing: Standing | None = None,
+    calendar: "ChipCalendar | None" = None,
 ) -> str:
     """The report as the phone gets it. Pure; no I/O.
 
@@ -369,7 +376,8 @@ def render_digest(
     not a second record of it.
 
     ``standing`` is where the season stands, and it opens the digest under
-    the deadline as one line; None leaves the line out.
+    the deadline as one line; None leaves the line out. ``calendar`` adds one
+    more under it: each chip's week and the nearest expiry (:func:`chip_line`).
     """
     players = {player.id: player for player in bootstrap.elements}
     clubs = {team.id: team.short_name for team in bootstrap.teams}
@@ -377,6 +385,10 @@ def render_digest(
     free_hit = _free_hitting(choice, chip)
 
     sections = [_header(mode, event, standing, free_transfers)]
+    # A draft holds no chips, so its calendar is None and there is no line.
+    line = chip_line(calendar, choice, chip, event.id)
+    if line is not None:
+        sections[0] += "\n\n" + line
     if not _drafting(choice):
         sections.append(
             _do_this(
@@ -1432,3 +1444,46 @@ def render_chip_calendar(calendar: "ChipCalendar | None", event: int) -> str | N
         else f"These chips expire after GW{stop}.",
     ]
     return "\n".join(lines)
+
+
+_ABBREVIATIONS = {TRIPLE_CAPTAIN: "TC", BENCH_BOOST: "BB", FREE_HIT: "FH", WILDCARD: "WC"}
+_LINE_ORDER = (TRIPLE_CAPTAIN, BENCH_BOOST, FREE_HIT, WILDCARD)
+
+
+def chip_line(calendar: "ChipCalendar | None", choice: Plan, chip: str, event: int) -> str | None:
+    """The chip calendar in one line a phone shows whole.
+
+    This gameweek's chip is the one the week actually plays — the gaffer's, if
+    he decided — shown as ``now``, so the line never contradicts the checklist
+    above it. A chip the chosen plan's path plays later in the window shows
+    that week; otherwise the week it is saved for; otherwise a dash. The last
+    item names the nearest expiry. None when no chip is held.
+    """
+    if calendar is None or not calendar.entries:
+        return None
+    if calendar.fell_back:
+        return "Chips: calendar unavailable"
+    planned = {
+        move.event: move.chip
+        for move in (choice.path.moves if choice.path is not None else [])
+        if move.chip != NO_CHIP
+    }
+    entries = sorted(
+        calendar.entries,
+        key=lambda entry: (entry.held.stop_event, _LINE_ORDER.index(entry.held.chip)),
+    )
+    parts = []
+    for entry in entries:
+        held = entry.held
+        later = [gw for gw, kind in planned.items() if kind == held.chip and held.allows(gw)]
+        if held.chip == chip and held.allows(event):
+            when = "now"
+        elif later:
+            when = f"GW{min(later)}"
+        elif entry.saved_for is not None and held.chip != WILDCARD:
+            when = f"GW{entry.saved_for}"
+        else:
+            when = "—"
+        parts.append(f"{_ABBREVIATIONS[held.chip]} {when}")
+    parts.append(f"expire GW{min(entry.held.stop_event for entry in entries)}")
+    return "Chips: " + " · ".join(parts)

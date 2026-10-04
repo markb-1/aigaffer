@@ -529,6 +529,7 @@ def run_pipeline(
         # What each sale actually raises, for the SELL tags that differ from
         # the listed price.
         selling_prices=ledger.selling_prices,
+        calendar=calendar,
     )
     # Asked for, and not there at all. Not the same as the kill switch, no key
     # or a draft — those are choices, and the invariant is that they render
@@ -679,6 +680,7 @@ def run_pipeline(
             free_transfers=inputs.free_transfers,
             selling_prices=ledger.selling_prices,
             standing=_standing(inputs),
+            calendar=calendar,
         )
         # The two lines the report carries that the renderer cannot know
         # about ride the digest too, under the same conditions: the accident
