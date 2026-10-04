@@ -40,7 +40,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import TYPE_CHECKING
 
-from aigaffer.chips import CHIP_ORDER, chip_windows, held_chips, held_for
+from aigaffer.chips import CHIP_ORDER, held_by_rules, held_for
 from aigaffer.config import EARLY_SEASON_GWS
 from aigaffer.data.models import Event, Player
 from aigaffer.model.xp import PlayerProjection
@@ -522,11 +522,12 @@ def _candidates(plans: list[tuple[int, Plan]], board: _Board, pick: int | None) 
 
 def _not_held(inputs: "PipelineInputs", event: int) -> set[str]:
     """The chip kinds he cannot play this gameweek — spent, expired, or the
-    next set's, held but not yet playable — read off the rules and the
-    season's history exactly as the orchestrator's belt reads them
-    (:func:`aigaffer.chips.held_for`), so the panel never marks a chip the
-    belt would let through, nor the other way round."""
-    held = held_chips(chip_windows(inputs.bootstrap.chips), inputs.chips_used, event)
+    next set's, held but not yet playable. Read through
+    :func:`aigaffer.chips.held_by_rules`, the one helper the orchestrator's
+    belt reads too, so the panel marks exactly the chips the belt refuses.
+    Neither looks at the chip switch: off, the solver plans no chip, but a
+    chip we hold is still his to play."""
+    held = held_by_rules(inputs)
     return {chip for chip in CHIP_ORDER if held_for(held, chip, event) is None}
 
 

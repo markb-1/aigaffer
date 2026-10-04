@@ -31,11 +31,13 @@ from aigaffer.store import Store
 from tests.fixtures import PICKS_15_JSON
 from tests.test_orchestrator import (
     GOOD_CHIP,
-    TEAM_ID,
     TOKEN,
     PoisonedModule,
     bootstrap_due_in,
+    chips_off_from_the_environment,  # noqa: F401 — autouse: chips off, as there
+    config,
     decided,
+    halves_routes,
     make_client,
     midweek_bootstrap,
     pipeline_routes,
@@ -62,8 +64,7 @@ def hours_out(hours: float) -> datetime:
 
 
 def phone_cfg(tmp_path, key: str | None = "sk-test") -> Config:
-    return Config(
-        team_id=TEAM_ID,
+    return config(
         telegram_token=TOKEN,
         telegram_chat_id="42",
         state_dir=tmp_path / "state",
@@ -96,6 +97,7 @@ def tick(
     mode: str = "deadline",
     store: Store | None = None,
     cfg: Config | None = None,
+    routes: dict | None = None,
     **kwargs,
 ):
     """One tick of ``mode`` with ``hours`` left on the clock and the manager
@@ -104,7 +106,7 @@ def tick(
     store = store or Store(tmp_path / "state" / "aigaffer.db")
     report = run_pipeline(
         cfg or phone_cfg(tmp_path),
-        make_client(pipeline_routes()),
+        make_client(routes or pipeline_routes()),
         store,
         mode,
         now=hours_out(hours),
@@ -267,9 +269,12 @@ def test_a_gaffer_who_never_loaded_is_withheld_too(monkeypatch, tmp_path, phone)
 def test_a_chip_he_cannot_play_is_not_a_decision_either(monkeypatch, tmp_path, phone):
     # Refused at the door is the solver's week under his name, and a week the
     # solver decided is exactly what the next tick exists to improve on.
+    # Both sets on the board and the first wildcard spent in GW1.
     plays_spent_chip = partial(decided, chip="wildcard", justification=GOOD_CHIP)
 
-    _, store = tick(monkeypatch, tmp_path, plays_spent_chip, hours=20)
+    _, store = tick(
+        monkeypatch, tmp_path, plays_spent_chip, hours=20, routes=halves_routes()
+    )
 
     assert store.has_run(2, "deadline") is False
     [alert] = phone.messages
@@ -400,7 +405,7 @@ def test_an_unconfigured_phone_is_not_told_the_report_was_kept(
     monkeypatch, tmp_path, capsys
 ):
     stub_gaffer(monkeypatch, AUTH_FAILED)
-    quiet = Config(team_id=TEAM_ID, state_dir=tmp_path / "state", anthropic_api_key="sk-test")
+    quiet = config(state_dir=tmp_path / "state", anthropic_api_key="sk-test")
 
     run_pipeline(
         quiet, make_client(pipeline_routes()), Store(tmp_path / "state" / "aigaffer.db"),

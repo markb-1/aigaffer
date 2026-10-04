@@ -94,6 +94,27 @@ HISTORY_PATH = f"/api/entry/{TEAM_ID}/history/"
 DEADLINE = datetime(2025, 8, 22, 17, 30, tzinfo=UTC)
 
 
+def config(**kwargs) -> Config:
+    """This suite's configuration: our team, and the chip switch off.
+
+    Off unless a test says otherwise, because most of what is pinned here is
+    not about chips, and this universe's fixtures stop at GW3: with nothing
+    beyond the window worth saving a chip for, the calendar would bar nothing
+    and every run would play one — a fixture's artefact in every assertion,
+    and a solve twice as slow. The tests that are about chips pass
+    ``chips=True``.
+    """
+    return Config(**{"team_id": TEAM_ID, "chips": False, **kwargs})
+
+
+@pytest.fixture(autouse=True)
+def chips_off_from_the_environment(monkeypatch):
+    """The same default for the runs that build their configuration from the
+    environment — the command line's — which is :func:`config`'s rule by
+    the switch's own name."""
+    monkeypatch.setenv("AIGAFFER_CHIPS", "off")
+
+
 # --- the mode clock --------------------------------------------------------
 
 
@@ -261,7 +282,7 @@ def scout_run(tmp_path_factory) -> Run:
     """One scout run, shared: the pipeline is deterministic and its half-dozen
     solves are not worth repeating for every assertion about the same report."""
     state = tmp_path_factory.mktemp("scout_run") / "state"
-    cfg = Config(team_id=TEAM_ID, state_dir=state)
+    cfg = config(state_dir=state)
     store = Store(state / "aigaffer.db")
     report = run_pipeline(cfg, make_client(pipeline_routes()), store, "scout")
     return Run(report=report, cfg=cfg, store=store)
@@ -300,21 +321,27 @@ def test_the_window_the_projections_cover_is_the_window_the_planner_plans(
         return real(*args, **kwargs)
 
     monkeypatch.setattr(orchestrator, "generate_plans", spy)
-    _, projections = build_projections(seam.inputs, seam.cfg)
+    cfg = replace(seam.cfg, chips=True)
+    _, projections = build_projections(seam.inputs, cfg)
 
-    solve(seam.inputs, projections, seam.cfg)
+    solve(seam.inputs, projections, cfg)
 
     covered = sorted({gw for p in projections.values() for gw in p.per_gw})
-    assert len(covered) == seam.cfg.horizon and covered[0] == seam.inputs.event.id
-    # The wildcard is spent in this universe's history, so the window is handed
-    # the other three — derived in one place and threaded through the sweep.
-    # A solve asked without a ledger reading passes that absence through too.
+    assert len(covered) == cfg.horizon and covered[0] == seam.inputs.event.id
+    # Both sets the live rules hand out are in hand — the history's GW1
+    # wildcard falls outside the 2-19 window and spends nothing — derived in
+    # one place and threaded through the sweep. A solve asked without a ledger
+    # reading, or without a calendar, passes those absences through too.
+    held = asked[0].pop("held_chips")
+    assert [chip.id for chip in held] == [
+        "bench_boost@19", "triple_captain@19", "wildcard@19", "free_hit@19",
+        "bench_boost@38", "triple_captain@38", "wildcard@38", "free_hit@38",
+    ]
     assert asked == [
         {
             "projections_events": covered,
-            "decay": seam.cfg.decay,
+            "decay": cfg.decay,
             "planner": "multi",
-            "held_chips": whole_season("bench_boost", "triple_captain", "free_hit"),
             # No calendar handed in, so no bars: the window's fallback.
             "bars": None,
             "selling_prices": None,
@@ -353,7 +380,7 @@ def test_the_single_week_planner_is_recorded_as_the_engine_it_is(tmp_path):
     # AIGAFFER_PLANNER=single: the other engine, on purpose. There is no path
     # to print and nothing to apologise for.
     store = Store(tmp_path / "aigaffer.db")
-    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state", planner="single")
+    cfg = config(state_dir=tmp_path / "state", planner="single")
 
     report = run_pipeline(cfg, make_client(pipeline_routes()), store, "scout")
     decision = store.last_runs(1)[0]["decision"]
@@ -375,7 +402,7 @@ def test_a_window_that_answers_nothing_says_so_under_the_shortlist(
     store = Store(tmp_path / "aigaffer.db")
 
     report = run_pipeline(
-        Config(team_id=TEAM_ID, state_dir=tmp_path / "state"),
+        config(state_dir=tmp_path / "state"),
         make_client(pipeline_routes()),
         store,
         "scout",
@@ -394,7 +421,7 @@ def test_a_draft_never_claims_the_window_was_unavailable(tmp_path):
     store = Store(tmp_path / "aigaffer.db")
 
     report = run_pipeline(
-        Config(team_id=TEAM_ID, state_dir=tmp_path / "state"),
+        config(state_dir=tmp_path / "state"),
         make_client(routes),
         store,
         "scout",
@@ -432,7 +459,7 @@ def test_the_root_gw_file_carries_the_report(tmp_path):
     # GW{n}.md is the copy a visitor reads without digging into state/. Its
     # root is the directory holding state_dir, which on a CI checkout is the
     # checkout and here is a tmp_path the test owns.
-    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
+    cfg = config(state_dir=tmp_path / "state")
     store = Store(cfg.state_dir / "aigaffer.db")
 
     report = run_pipeline(cfg, make_client(pipeline_routes()), store, "scout")
@@ -445,7 +472,7 @@ def test_the_readme_points_at_the_latest_verdict(tmp_path):
     # marked line the run rewrites: a link to the verdict the homepage
     # would otherwise bury. Only the marked line moves; without a marker —
     # or without a README at all — the run touches nothing and says nothing.
-    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
+    cfg = config(state_dir=tmp_path / "state")
     readme = tmp_path / "README.md"
     readme.write_text(
         "# AI Gaffer\n\nplaceholder <!-- latest-verdict -->\n\nThe pitch.\n",
@@ -464,7 +491,7 @@ def test_the_readme_points_at_the_latest_verdict(tmp_path):
 
 
 def test_a_readme_without_the_marker_is_left_alone(tmp_path):
-    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
+    cfg = config(state_dir=tmp_path / "state")
     readme = tmp_path / "README.md"
     readme.write_text("# Fork without the line\n", encoding="utf-8")
 
@@ -479,7 +506,7 @@ def test_the_deadline_run_overwrites_the_scouts_root_file(tmp_path):
     # Latest wins at the root — the midweek scout report stands until the
     # deadline run replaces it with the operative plan — while the per-mode
     # history in state/reports keeps both.
-    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
+    cfg = config(state_dir=tmp_path / "state")
     store = Store(cfg.state_dir / "aigaffer.db")
     client = make_client(pipeline_routes())
 
@@ -519,17 +546,17 @@ def test_the_chip_switch_off_is_phase_2_5_to_the_byte(tmp_path):
     # closed before this gameweek. Nothing held is the pre-chip model, however
     # it came about.
     off = Store(tmp_path / "off.db")
-    closed = [{**rule, "stop_event": 1} for rule in HALVES if rule["start_event"] == 1]
+    closed = [{**rule, "start_event": 1, "stop_event": 1} for rule in HALVES[:4]]
 
     report = run_pipeline(
-        Config(team_id=TEAM_ID, state_dir=tmp_path / "off", chips=False),
+        config(state_dir=tmp_path / "off", chips=False),
         make_client(pipeline_routes()),
         off,
         "scout",
         send=False,
     )
     nothing_held = run_pipeline(
-        Config(team_id=TEAM_ID, state_dir=tmp_path / "on"),
+        config(state_dir=tmp_path / "on", chips=True),
         make_client(halves_routes(closed)),
         Store(tmp_path / "on.db"),
         "scout",
@@ -543,17 +570,10 @@ def test_the_chip_switch_off_is_phase_2_5_to_the_byte(tmp_path):
 
 
 def test_the_decision_records_the_chip_this_week_plays(scout_run):
-    # No manager, and a universe whose fixtures stop at GW3: no week beyond the
-    # window is worth saving the triple captain for, so the calendar gives it
-    # no saved-for week and a bar of nothing, and the window plays it now. The
-    # record says so — the diary reads the same as the phone about what chip,
-    # if any, went in — and keeps the calendar that let it go.
-    decision = scout_run.store.last_runs(1)[0]["decision"]
-    entries = {entry["chip"]: entry for entry in decision["chip_calendar"]["entries"]}
-
-    assert decision["chip"] == "triple_captain"
-    assert entries["triple_captain@38"]["saved_for"] is None
-    assert set(entries["triple_captain@38"]["bars"].values()) == {0.0}
+    # No manager and the chip switch off (this suite's default), so none is
+    # played and the record says so. The field is there either way — the
+    # diary reads the same as the phone about what chip, if any, went in.
+    assert scout_run.store.last_runs(1)[0]["decision"]["chip"] == "none"
 
 
 def test_a_free_hit_the_solver_plans_reaches_the_report_and_the_record(
@@ -563,10 +583,10 @@ def test_a_free_hit_the_solver_plans_reaches_the_report_and_the_record(
     # a free hit is actually planned: the report labels the free-hit eleven and
     # the record keeps the chip. No manager, so the chip is the solver's own.
     inputs = fetch_inputs(
-        Config(team_id=TEAM_ID, state_dir=tmp_path / "state"),
+        config(state_dir=tmp_path / "state"),
         make_client(pipeline_routes()),
     )
-    _, projections = build_projections(inputs, Config(team_id=TEAM_ID))
+    _, projections = build_projections(inputs, config())
     standing = inputs.squad.player_ids
     positions = {pid: p.element_type for pid, p in inputs.players.items()}
     gw_xp = {pid: pr.per_gw.get(inputs.event.id, 0.0) for pid, pr in projections.items()}
@@ -590,7 +610,7 @@ def test_a_free_hit_the_solver_plans_reaches_the_report_and_the_record(
     store = Store(tmp_path / "aigaffer.db")
 
     report = run_pipeline(
-        Config(team_id=TEAM_ID, state_dir=tmp_path / "state"),
+        config(state_dir=tmp_path / "state"),
         make_client(pipeline_routes()),
         store,
         "scout",
@@ -617,7 +637,7 @@ def test_a_squad_the_api_will_not_show_is_drafted_instead(tmp_path):
     store = Store(tmp_path / "aigaffer.db")
 
     report = run_pipeline(
-        Config(team_id=TEAM_ID, state_dir=tmp_path / "state"),
+        config(state_dir=tmp_path / "state"),
         make_client(routes),
         store,
         "scout",
@@ -638,7 +658,7 @@ def test_a_preseason_run_drafts_a_squad(tmp_path):
     store = Store(tmp_path / "aigaffer.db")
 
     report = run_pipeline(
-        Config(team_id=TEAM_ID, state_dir=tmp_path / "state"),
+        config(state_dir=tmp_path / "state"),
         make_client(routes),
         store,
         "scout",
@@ -662,7 +682,7 @@ def test_one_history_the_api_will_not_serve_does_not_lose_the_report(tmp_path):
     store = Store(tmp_path / "aigaffer.db")
 
     report = run_pipeline(
-        Config(team_id=TEAM_ID, state_dir=tmp_path / "state"),
+        config(state_dir=tmp_path / "state"),
         make_client(pipeline_routes(), statuses={"/api/element-summary/5/": 429}),
         store,
         "scout",
@@ -680,7 +700,7 @@ def test_a_season_with_no_gameweek_ahead_is_an_error(tmp_path):
 
     with pytest.raises(PipelineError):
         run_pipeline(
-            Config(team_id=TEAM_ID, state_dir=tmp_path / "state"),
+            config(state_dir=tmp_path / "state"),
             make_client(pipeline_routes(bootstrap=over)),
             Store(tmp_path / "aigaffer.db"),
             "scout",
@@ -691,7 +711,7 @@ def test_a_dry_run_leaves_nothing_behind(tmp_path):
     store = Store(tmp_path / "state" / "aigaffer.db")
 
     run_pipeline(
-        Config(team_id=TEAM_ID, state_dir=tmp_path / "state"),
+        config(state_dir=tmp_path / "state"),
         make_client(pipeline_routes()),
         store,
         "deadline",
@@ -733,7 +753,7 @@ def test_the_first_run_seeds_the_ledger_and_hands_the_solver_true_prices(
 
     monkeypatch.setattr(orchestrator, "generate_plans", spy)
     store = Store(tmp_path / "aigaffer.db")
-    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
+    cfg = config(state_dir=tmp_path / "state")
 
     run_pipeline(
         cfg, make_client(pipeline_routes(bootstrap=payload)), store, "scout",
@@ -758,7 +778,7 @@ def test_the_reminder_maintains_the_ledger_too(tmp_path):
     # is kept current on every mode — a transfer made between the deadline run
     # and the reminder is sighted three hours out, not a week later.
     store = Store(tmp_path / "aigaffer.db")
-    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
+    cfg = config(state_dir=tmp_path / "state")
 
     run_pipeline(cfg, make_client(pipeline_routes()), store, "reminder", send=False)
 
@@ -772,7 +792,7 @@ def test_a_draft_week_has_no_ledger_to_keep(tmp_path):
     routes = pipeline_routes()
     del routes[PICKS_PATH]
     store = Store(tmp_path / "aigaffer.db")
-    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
+    cfg = config(state_dir=tmp_path / "state")
 
     run_pipeline(cfg, make_client(routes), store, "scout", send=False)
 
@@ -787,7 +807,7 @@ def test_a_bank_the_ledger_did_not_predict_earns_one_line_in_the_report(tmp_path
     # From a previous bank of 0 that predicts 42, and the game published 28 —
     # £1.4m adrift, which is exactly what the report has to say, once.
     store = Store(tmp_path / "aigaffer.db")
-    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
+    cfg = config(state_dir=tmp_path / "state")
     held = [p["element"] for p in PICKS_15_JSON["picks"]]
     previous = [pid if pid != 16 else 17 for pid in held]
     for pid in previous:
@@ -805,7 +825,7 @@ def test_a_bank_the_ledger_predicted_exactly_earns_no_line(tmp_path):
     # Same rolled gameweek, no transfers made, previous bank equal to the
     # published one: the audit passes and the report says nothing about it.
     store = Store(tmp_path / "aigaffer.db")
-    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
+    cfg = config(state_dir=tmp_path / "state")
     held = [p["element"] for p in PICKS_15_JSON["picks"]]
     for pid in held:
         store.record_purchase(pid, buy_price=50, gw_seen=1)
@@ -846,7 +866,7 @@ def test_a_deep_season_where_no_price_ever_moved_reads_as_a_missing_field(
     # would parse cleanly and quietly seed the ledger at now_cost. Weeks into
     # a season, every element claiming an unmoved price is that regression's
     # signature, and the run says so, once.
-    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
+    cfg = config(state_dir=tmp_path / "state")
 
     fetch_inputs(cfg, make_client(pipeline_routes(bootstrap=deep_season_bootstrap())))
     printed = capsys.readouterr().out
@@ -858,7 +878,7 @@ def test_a_deep_season_where_no_price_ever_moved_reads_as_a_missing_field(
 def test_a_single_price_that_moved_proves_the_field_alive(tmp_path, capsys):
     payload = deep_season_bootstrap()
     payload["elements"][0]["cost_change_start"] = 2
-    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
+    cfg = config(state_dir=tmp_path / "state")
 
     fetch_inputs(cfg, make_client(pipeline_routes(bootstrap=payload)))
 
@@ -869,7 +889,7 @@ def test_an_opening_month_of_unmoved_prices_is_not_an_anomaly(tmp_path, capsys):
     # One finished gameweek and every price where it started is simply
     # August: the seed of now_cost minus 0 is exact, and a warning here would
     # cry wolf on every fresh season.
-    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
+    cfg = config(state_dir=tmp_path / "state")
 
     fetch_inputs(cfg, make_client(pipeline_routes()))
 
@@ -897,7 +917,7 @@ class Seam(NamedTuple):
 def seam(tmp_path_factory) -> Seam:
     """One fetch, shared: every stage test below re-runs from these inputs,
     which is the point of them being a value."""
-    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path_factory.mktemp("seam") / "state")
+    cfg = config(state_dir=tmp_path_factory.mktemp("seam") / "state")
     return Seam(cfg=cfg, inputs=fetch_inputs(cfg, make_client(pipeline_routes())))
 
 
@@ -919,7 +939,7 @@ def test_the_chips_already_played_are_fetched_once_and_kept(tmp_path):
     transport = CountingTransport(pipeline_routes())
     client = FplClient(http=httpx.Client(transport=transport), sleep=lambda _: None)
 
-    inputs = fetch_inputs(Config(team_id=TEAM_ID, state_dir=tmp_path / "state"), client)
+    inputs = fetch_inputs(config(state_dir=tmp_path / "state"), client)
 
     assert inputs.chips_used == HISTORY_JSON["chips"]
     assert transport.counts[HISTORY_PATH] == 1
@@ -930,7 +950,7 @@ def test_a_manager_with_no_squad_has_played_no_chips(tmp_path):
     # endpoints do not answer for him either.
     routes = pipeline_routes()
     del routes[PICKS_PATH]
-    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
+    cfg = config(state_dir=tmp_path / "state")
 
     inputs = fetch_inputs(cfg, make_client(routes))
 
@@ -953,11 +973,10 @@ def test_the_fetch_gathers_everything_the_later_stages_need(seam):
 
 
 def test_the_stages_compose_to_the_report_the_pipeline_wrote(seam, scout_run):
-    # The seam is a refactor, not a rewrite: fetch, project, calendar and solve
-    # in that order still produce the report to the character.
+    # The seam is a refactor, not a rewrite: fetch, project and solve in that
+    # order still produce the report to the character.
     _, projections = build_projections(seam.inputs, seam.cfg)
-    calendar = _calendar(seam.inputs, seam.cfg, projections, None)
-    solved = solve(seam.inputs, projections, seam.cfg, None, calendar)
+    solved = solve(seam.inputs, projections, seam.cfg)
 
     report = render_report(
         "scout",
@@ -1072,7 +1091,7 @@ def test_the_pipeline_captains_the_goal_threat_not_the_padded_total(tmp_path):
     # the board. Only a captaincy ranked on the attacking slice finds him now.
     payload = copy.deepcopy(PIPELINE_BOOTSTRAP_JSON)
     next(e for e in payload["elements"] if e["id"] == FERRER)["bonus"] = 0
-    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
+    cfg = config(state_dir=tmp_path / "state")
     inputs = fetch_inputs(cfg, make_client(pipeline_routes(bootstrap=payload)))
 
     _, projections = build_projections(inputs, cfg)
@@ -1101,7 +1120,7 @@ def test_a_solve_with_no_squad_drafts_a_fifteen(tmp_path):
     # The draft path lives inside solve now, and says so.
     routes = pipeline_routes()
     del routes[PICKS_PATH]
-    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
+    cfg = config(state_dir=tmp_path / "state")
     inputs = fetch_inputs(cfg, make_client(routes))
 
     _, projections = build_projections(inputs, cfg)
@@ -1143,9 +1162,13 @@ def halves_routes(rules: list[dict] = HALVES, chips_used: list[dict] | None = No
 def test_with_no_rules_every_chip_not_played_is_held_all_season(seam):
     # A board with no chip rules is the model before halves: one window per
     # chip over the whole season, the played ones gone.
-    inputs = replace(seam.inputs, chips_used=[])
+    inputs = replace(
+        seam.inputs,
+        bootstrap=seam.inputs.bootstrap.model_copy(update={"chips": []}),
+        chips_used=[],
+    )
 
-    assert _held(Config(team_id=TEAM_ID), inputs) == whole_season(
+    assert _held(config(chips=True), inputs) == whole_season(
         "bench_boost", "triple_captain", "wildcard", "free_hit"
     )
 
@@ -1154,10 +1177,10 @@ def test_the_held_chips_are_both_sets_less_the_one_spent(tmp_path):
     # The wildcard went in GW1, which spends the first set's and leaves the
     # second's: held from the start of the season, playable from GW20.
     inputs = fetch_inputs(
-        Config(team_id=TEAM_ID, state_dir=tmp_path), make_client(halves_routes())
+        config(state_dir=tmp_path), make_client(halves_routes())
     )
 
-    held = _held(Config(team_id=TEAM_ID), inputs)
+    held = _held(config(chips=True), inputs)
 
     assert [chip.id for chip in held] == [
         "bench_boost@19", "triple_captain@19", "free_hit@19",
@@ -1169,7 +1192,7 @@ def test_the_held_chips_are_both_sets_less_the_one_spent(tmp_path):
 def test_the_chip_switch_off_holds_nothing(seam):
     inputs = replace(seam.inputs, chips_used=[])
 
-    assert _held(Config(team_id=TEAM_ID, chips=False), inputs) == ()
+    assert _held(config(chips=False), inputs) == ()
 
 
 def test_a_draft_holds_no_chips_to_plan(seam):
@@ -1177,8 +1200,8 @@ def test_a_draft_holds_no_chips_to_plan(seam):
     # reads as "advisory only", which is the pre-chip model.
     inputs = replace(seam.inputs, squad=None)
 
-    assert _held(Config(team_id=TEAM_ID), inputs) == ()
-    assert _calendar(inputs, Config(team_id=TEAM_ID), {}, None) is None
+    assert _held(config(chips=True), inputs) == ()
+    assert _calendar(inputs, config(chips=True), {}, None) is None
 
 
 def test_the_fielded_lineup_is_the_free_hit_team_on_a_free_hit_week(seam):
@@ -1335,7 +1358,7 @@ def unplayed_routes(
 def test_a_round_nobody_has_played_is_not_history(tmp_path):
     # GW1 was played and GW2 has only been entered, so a history of both is a
     # history of one.
-    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
+    cfg = config(state_dir=tmp_path / "state")
     routes = unplayed_routes(midweek_bootstrap(), (1, 90), (2, 0))
 
     inputs = fetch_inputs(cfg, make_client(routes))
@@ -1351,7 +1374,7 @@ def test_an_unplayed_round_does_not_drag_the_minutes_down(tmp_path):
     # the one that has not. The mean of what happened is ninety; averaging the
     # phantom in halves him, and the starts floor then hides the damage at 75
     # — a fit ninety-minute player marked down for a match nobody has played.
-    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
+    cfg = config(state_dir=tmp_path / "state")
     routes = unplayed_routes(midweek_bootstrap(), (1, 90), (2, 0))
     inputs = fetch_inputs(cfg, make_client(routes))
 
@@ -1366,7 +1389,7 @@ def test_a_played_fixture_inside_an_unfinished_round_is_kept(tmp_path):
     # minutes are already in the payload, while the Monday match has a row of
     # nothing. The event is unfinished either way, so a rule written on the
     # event drops the eighty-five along with the phantom.
-    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
+    cfg = config(state_dir=tmp_path / "state")
     routes = unplayed_routes(
         midweek_bootstrap(),
         (1, 90),
@@ -1388,7 +1411,7 @@ def test_a_fixture_at_full_time_counts_before_it_is_data_checked(tmp_path):
     # which is when the minutes appear. Checked live on 2026-08-22: a match
     # kicked off at 19:00 the previous evening still read ``finished: false``
     # with 90 minutes on the clock and its history rows served.
-    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
+    cfg = config(state_dir=tmp_path / "state")
     routes = unplayed_routes(
         midweek_bootstrap(),
         (1, 90),
@@ -1406,7 +1429,7 @@ def test_a_row_with_no_fixture_id_falls_back_on_its_round(tmp_path):
     # Nothing is finished in this fixtures payload, so a row judged on its
     # fixture would be dropped whatever round it is in. These rows carry no
     # fixture id, so the event rule decides: GW1 is finished and GW2 is not.
-    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
+    cfg = config(state_dir=tmp_path / "state")
     routes = unplayed_routes(
         midweek_bootstrap(),
         (1, 90, 0),
@@ -1424,7 +1447,7 @@ def test_a_row_with_no_fixture_id_falls_back_on_its_round(tmp_path):
 def test_a_row_naming_a_fixture_nobody_has_heard_of_is_dropped(tmp_path):
     # Never silently kept: an id the fixtures payload does not carry is not
     # evidence that a match was played, and its round has not finished either.
-    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
+    cfg = config(state_dir=tmp_path / "state")
     routes = unplayed_routes(
         midweek_bootstrap(), (1, 90), (2, 0, 4242), fixtures=fixtures_played(1, 2, 3)
     )
@@ -1449,7 +1472,7 @@ def test_the_opening_weekend_has_no_history_rather_than_a_history_of_zeroes(tmp_
     # kick off tomorrow. None of it is evidence of anything, so none of it is
     # kept, and the minutes model is left with the empty history it knows how
     # to fall back from.
-    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
+    cfg = config(state_dir=tmp_path / "state")
     routes = unplayed_routes(
         opening_weekend_bootstrap(), (1, 0), fixtures=fixtures_played()
     )
@@ -1500,7 +1523,7 @@ def rested_opener_routes(minutes: int | None = 3230) -> dict:
 
 def test_the_fetch_carries_last_seasons_minutes_a_gameweek(tmp_path):
     # 3230 minutes over 38 gameweeks is 85.0.
-    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
+    cfg = config(state_dir=tmp_path / "state")
 
     inputs = fetch_inputs(cfg, make_client(pipeline_routes()))
 
@@ -1510,7 +1533,7 @@ def test_the_fetch_carries_last_seasons_minutes_a_gameweek(tmp_path):
 def test_a_player_with_no_premier_league_past_has_no_prior(tmp_path):
     # Absent rather than zero: nothing to read is not the same as a season of
     # not playing, and the minutes model has to be able to tell them apart.
-    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
+    cfg = config(state_dir=tmp_path / "state")
     routes = pipeline_routes()
     routes[f"/api/element-summary/{FERRER}/"] = summary((1, 90))
 
@@ -1525,7 +1548,7 @@ def test_last_season_lifts_a_returning_premium_the_opener_rested(tmp_path):
     # evidence he was overriding it with now in the payload. One played
     # gameweek, none of it his, and no starts to fall back on: the old floor
     # was a substitute's twenty. 3230 minutes last season is 85.0 a gameweek.
-    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
+    cfg = config(state_dir=tmp_path / "state")
     inputs = fetch_inputs(cfg, make_client(rested_opener_routes()))
 
     xmins, _ = build_projections(inputs, cfg)
@@ -1536,7 +1559,7 @@ def test_last_season_lifts_a_returning_premium_the_opener_rested(tmp_path):
 def test_a_promoted_clubs_player_still_falls_back_on_his_starts(tmp_path):
     # Same week, same rested opener, and no season behind him: the old
     # behaviour, unchanged, because there is nothing better to have.
-    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
+    cfg = config(state_dir=tmp_path / "state")
     inputs = fetch_inputs(cfg, make_client(rested_opener_routes(minutes=None)))
 
     xmins, _ = build_projections(inputs, cfg)
@@ -1565,7 +1588,7 @@ def test_a_prior_does_not_overrule_a_season_that_has_been_played(seam):
 
 
 def test_a_filter_that_empties_every_history_says_so(tmp_path, capsys):
-    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
+    cfg = config(state_dir=tmp_path / "state")
     routes = unplayed_routes(
         opening_weekend_bootstrap(), (1, 0), fixtures=fixtures_played()
     )
@@ -1584,7 +1607,7 @@ def test_a_fetch_with_no_rows_to_remove_is_not_an_anomaly(tmp_path, capsys):
     # Pre-season, and the case the warning must stay quiet for: nobody had a
     # row, so nothing was taken. An empty history here is the season not having
     # started, not the filter having gone wrong.
-    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
+    cfg = config(state_dir=tmp_path / "state")
     routes = unplayed_routes(opening_weekend_bootstrap(), fixtures=fixtures_played())
 
     inputs = fetch_inputs(cfg, make_client(routes))
@@ -1594,7 +1617,7 @@ def test_a_fetch_with_no_rows_to_remove_is_not_an_anomaly(tmp_path, capsys):
 
 
 def test_a_fetch_that_keeps_a_played_match_says_nothing(tmp_path, capsys):
-    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
+    cfg = config(state_dir=tmp_path / "state")
 
     inputs = fetch_inputs(cfg, make_client(pipeline_routes()))
 
@@ -1609,7 +1632,7 @@ def test_a_deadline_that_has_gone_does_not_bench_a_fit_starter(tmp_path):
     # premium is a starter's minutes and a place in the eleven, not the zero
     # that sent the gaffer overriding seven players by hand.
     store = Store(tmp_path / "aigaffer.db")
-    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
+    cfg = config(state_dir=tmp_path / "state")
     routes = unplayed_routes(
         opening_weekend_bootstrap(), (1, 0), fixtures=fixtures_played()
     )
@@ -1742,18 +1765,23 @@ def stub_gaffer(monkeypatch, decide=decided) -> Gaffer:
     return gaffer
 
 
-def gaffer_cfg(tmp_path) -> Config:
-    return Config(
-        team_id=TEAM_ID, state_dir=tmp_path / "state", anthropic_api_key="sk-test"
-    )
+def gaffer_cfg(tmp_path, **kwargs) -> Config:
+    return config(state_dir=tmp_path / "state", anthropic_api_key="sk-test", **kwargs)
 
 
-def gaffer_run(monkeypatch, tmp_path, decide=decided, mode="scout", **kwargs):
+def gaffer_run(
+    monkeypatch, tmp_path, decide=decided, mode="scout", routes=None, chips=False,
+    **kwargs,
+):
     """One run with a manager in it; the report, the store and the manager."""
     gaffer = stub_gaffer(monkeypatch, decide)
     store = Store(tmp_path / "aigaffer.db")
     report = run_pipeline(
-        gaffer_cfg(tmp_path), make_client(pipeline_routes()), store, mode, **kwargs,
+        gaffer_cfg(tmp_path, chips=chips),
+        make_client(routes or pipeline_routes()),
+        store,
+        mode,
+        **kwargs,
         now=PAST_THE_FLOOR,
     )
     return report, store, gaffer
@@ -1825,8 +1853,7 @@ def test_the_kill_switch_leaves_the_solver_to_it(monkeypatch, tmp_path, scout_ru
         raise AssertionError("the manager was asked with the switch off")
 
     stub_gaffer(monkeypatch, never)
-    cfg = Config(
-        team_id=TEAM_ID,
+    cfg = config(
         state_dir=tmp_path / "state",
         anthropic_api_key="sk-test",
         manager_enabled=False,
@@ -2069,8 +2096,7 @@ def test_the_manager_unavailable_notice_rides_the_digest(monkeypatch, tmp_path):
     monkeypatch.setitem(sys.modules, "aigaffer.manager.agent", PoisonedModule())
     sent = []
     monkeypatch.setattr(orchestrator, "send_report", lambda *args: sent.append(args))
-    cfg = Config(
-        team_id=TEAM_ID,
+    cfg = config(
         telegram_token=TOKEN,
         telegram_chat_id="42",
         state_dir=tmp_path / "state",
@@ -2097,8 +2123,7 @@ def test_the_digest_opens_with_the_standing(monkeypatch, tmp_path):
     # what to do, and the figures come off the picks the run already fetched.
     sent = []
     monkeypatch.setattr(orchestrator, "send_report", lambda *args: sent.append(args))
-    cfg = Config(
-        team_id=TEAM_ID,
+    cfg = config(
         telegram_token=TOKEN,
         telegram_chat_id="42",
         state_dir=tmp_path / "state",
@@ -2116,7 +2141,7 @@ def test_the_digest_opens_with_the_standing(monkeypatch, tmp_path):
 
 
 def test_the_reminder_opens_with_the_standing_too(tmp_path):
-    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
+    cfg = config(state_dir=tmp_path / "state")
     store = Store(cfg.state_dir / "aigaffer.db")
     client = make_client(pipeline_routes())
 
@@ -2137,8 +2162,7 @@ def test_the_audit_line_rides_the_digest_as_well_as_the_report(
     monkeypatch.setattr(orchestrator, "_audit_line", lambda ledger: "\nAUDIT-MARK\n")
     sent = []
     monkeypatch.setattr(orchestrator, "send_report", lambda *args: sent.append(args))
-    cfg = Config(
-        team_id=TEAM_ID,
+    cfg = config(
         telegram_token=TOKEN,
         telegram_chat_id="42",
         state_dir=tmp_path / "state",
@@ -2194,6 +2218,7 @@ def test_a_chip_he_still_holds_is_played(monkeypatch, tmp_path):
         tmp_path,
         decide=partial(decided, chip="bench_boost", justification=GOOD_CHIP),
         send=False,
+        chips=True,
     )
     decision = store.last_runs(1)[0]["decision"]
 
@@ -2202,16 +2227,41 @@ def test_a_chip_he_still_holds_is_played(monkeypatch, tmp_path):
     assert decision["chip_justification"] == GOOD_CHIP
 
 
+def test_with_chips_off_a_chip_he_holds_is_still_his_to_play(monkeypatch, tmp_path):
+    # The switch makes chips advisory — priced in the panel, planned by
+    # nobody — and not unplayable. The solver planned no chip and built no
+    # calendar, and the bench boost he finalizes, which the rules say we hold,
+    # is the week that goes in.
+    report, store, gaffer = gaffer_run(
+        monkeypatch,
+        tmp_path,
+        decide=partial(decided, chip="bench_boost", justification=GOOD_CHIP),
+        send=False,
+        chips=False,
+    )
+    decision = store.last_runs(1)[0]["decision"]
+
+    assert gaffer.consults[0].cfg.chips is False
+    assert gaffer.consults[0].solve0.calendar is None
+    assert decision["decision_source"] == "manager"
+    assert decision["chip"] == "bench_boost"
+    assert decision["chip_calendar"] is None
+    assert "Playing the bench boost." in report
+
+
 def test_a_chip_he_has_already_played_is_refused_at_the_door(monkeypatch, tmp_path):
-    # The season's history says the wildcard went in GW1. The briefing tells
-    # him so; this is the belt under that brace, and it costs him the decision
-    # rather than the chip, because a week built on a chip we cannot play is
-    # not a week anybody can enter.
+    # The season's history says the wildcard went in GW1, and on these rules
+    # (both sets, the first from GW1) that spends the first set's. The briefing
+    # tells him so; this is the belt under that brace, and it costs him the
+    # decision rather than the chip, because a week built on a chip we cannot
+    # play is not a week anybody can enter.
     report, store, gaffer = gaffer_run(
         monkeypatch,
         tmp_path,
         decide=partial(decided, chip="wildcard", justification=GOOD_CHIP),
         send=False,
+        routes=halves_routes(),
+        chips=True,
     )
     decision = store.last_runs(1)[0]["decision"]
 
@@ -2236,7 +2286,7 @@ def test_a_chip_not_held_this_gameweek_sends_the_week_back_to_the_solver(
     store = Store(tmp_path / "aigaffer.db")
 
     report = run_pipeline(
-        gaffer_cfg(tmp_path), make_client(routes), store, "scout",
+        gaffer_cfg(tmp_path, chips=True), make_client(routes), store, "scout",
         send=False, now=PAST_THE_FLOOR,
     )
     decision = store.last_runs(1)[0]["decision"]
@@ -2258,13 +2308,15 @@ def test_a_second_half_chip_before_gw20_is_refused(monkeypatch, tmp_path):
     store = Store(tmp_path / "aigaffer.db")
 
     run_pipeline(
-        gaffer_cfg(tmp_path), make_client(routes), store, "scout",
+        gaffer_cfg(tmp_path, chips=True), make_client(routes), store, "scout",
         send=False, now=PAST_THE_FLOOR,
     )
     decision = store.last_runs(1)[0]["decision"]
     inputs = gaffer.consults[0].inputs
 
-    assert "bench_boost@38" in {chip.id for chip in _held(gaffer_cfg(tmp_path), inputs)}
+    assert "bench_boost@38" in {
+        chip.id for chip in _held(gaffer_cfg(tmp_path, chips=True), inputs)
+    }
     assert decision["decision_source"] == f"solver-fallback: {CHIP_SPENT}"
     assert decision["chip"] == "none"
 
@@ -2280,7 +2332,7 @@ def test_without_a_key_there_is_no_gaffer_and_no_difference(
     store = Store(tmp_path / "aigaffer.db")
 
     report = run_pipeline(
-        Config(team_id=TEAM_ID, state_dir=tmp_path / "state"),
+        config(state_dir=tmp_path / "state"),
         make_client(pipeline_routes()),
         store,
         "scout",
@@ -2355,8 +2407,7 @@ def test_the_report_the_gaffer_wrote_is_the_one_that_is_sent(monkeypatch, tmp_pa
     sent = []
     monkeypatch.setattr(orchestrator, "send_report", lambda *args: sent.append(args))
     gaffer = stub_gaffer(monkeypatch)
-    cfg = Config(
-        team_id=TEAM_ID,
+    cfg = config(
         telegram_token=TOKEN,
         telegram_chat_id="42",
         state_dir=tmp_path / "state",
@@ -2420,8 +2471,8 @@ def test_the_calendar_is_built_once_from_base_minutes_and_a_resolve_does_not_mov
     stub_gaffer(monkeypatch, re_solve)
     store = Store(tmp_path / "aigaffer.db")
     run_pipeline(
-        gaffer_cfg(tmp_path), make_client(halves_routes()), store, "scout",
-        send=False, now=PAST_THE_FLOOR,
+        gaffer_cfg(tmp_path, chips=True), make_client(halves_routes()), store,
+        "scout", send=False, now=PAST_THE_FLOOR,
     )
     base, _ = build_projections(seam.inputs, seam.cfg)
 
@@ -2443,11 +2494,11 @@ def test_a_failed_calendar_says_so_and_the_report_still_goes_out(
     monkeypatch.setattr(orchestrator, "build_calendar", broken)
     sent = []
     monkeypatch.setattr(orchestrator, "send_report", lambda *args: sent.append(args))
-    cfg = Config(
-        team_id=TEAM_ID,
+    cfg = config(
         telegram_token=TOKEN,
         telegram_chat_id="42",
         state_dir=tmp_path / "state",
+        chips=True,
     )
     store = Store(tmp_path / "aigaffer.db")
 
@@ -2470,7 +2521,7 @@ def test_a_failed_calendar_says_so_and_the_report_still_goes_out(
 
 
 def test_the_record_keeps_the_calendar(tmp_path):
-    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
+    cfg = config(state_dir=tmp_path / "state", chips=True)
     store = Store(tmp_path / "aigaffer.db")
 
     run_pipeline(cfg, make_client(halves_routes()), store, "scout", send=False)
@@ -2491,7 +2542,7 @@ def test_the_record_keeps_the_calendar(tmp_path):
 
 def test_chips_off_builds_no_calendar_and_records_none(monkeypatch, tmp_path):
     calls = calendar_spy(monkeypatch)
-    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state", chips=False)
+    cfg = config(state_dir=tmp_path / "state", chips=False)
     store = Store(tmp_path / "aigaffer.db")
 
     run_pipeline(cfg, make_client(halves_routes()), store, "scout", send=False)
@@ -2519,7 +2570,7 @@ def test_team_strengths_are_fitted_once_a_run(monkeypatch, tmp_path, mode):
 
     stub_gaffer(monkeypatch, re_solve)
     run_pipeline(
-        gaffer_cfg(tmp_path), make_client(halves_routes()),
+        gaffer_cfg(tmp_path, chips=True), make_client(halves_routes()),
         Store(tmp_path / "aigaffer.db"), mode, send=False, now=PAST_THE_FLOOR,
     )
 
@@ -2627,7 +2678,7 @@ def test_the_full_report_records_the_actions_for_the_reminder(tmp_path):
     # pre-manager plan whole under ``solver_actions``, which is the side the
     # reminder actually diffs. On a week with no manager the two describe the
     # same plan, and that is the invariant pinned here.
-    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path)
+    cfg = config(state_dir=tmp_path)
     store = Store(tmp_path / "aigaffer.db")
 
     run_pipeline(cfg, make_client(pipeline_routes()), store, "deadline", send=False)
@@ -2640,7 +2691,7 @@ def test_the_full_report_records_the_actions_for_the_reminder(tmp_path):
         for out, bought in zip(record["transfers_out"], record["transfers_in"])
     ]
     assert stored["captain"] == record["captain"] == FERRER
-    assert stored["chip"] == record["chip"] == "triple_captain"
+    assert stored["chip"] == "none"
     assert stored["formation"] == record["formation"]
     assert record["solver_actions"] == stored, "no manager: his verdict is the solver's"
 
@@ -2648,7 +2699,7 @@ def test_the_full_report_records_the_actions_for_the_reminder(tmp_path):
 def test_a_plan_that_held_reads_as_a_calm_reminder(tmp_path):
     # The pipeline is deterministic, so a reminder straight after the full
     # report re-solves to the same week and says so quietly.
-    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
+    cfg = config(state_dir=tmp_path / "state")
     store = Store(cfg.state_dir / "aigaffer.db")
     client = make_client(pipeline_routes())
 
@@ -2694,7 +2745,7 @@ def test_the_news_moving_the_solver_is_shouted_about(tmp_path):
     # reads: the warning leads and each change is named. The gaffer's fields
     # are left alone, so the verdict block shows his stored plan, labelled as
     # the operative one, beside the fresh solve — shown, never replaced.
-    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
+    cfg = config(state_dir=tmp_path / "state")
     store = Store(cfg.state_dir / "aigaffer.db")
     client = make_client(pipeline_routes())
     run_pipeline(cfg, client, store, "deadline", send=False)
@@ -2722,7 +2773,7 @@ def test_the_news_moving_the_solver_is_shouted_about(tmp_path):
         f"- Captain moved from {NAMES[record['vice']]}"
         f" to {NAMES[record['captain']]}" in alert
     )
-    assert "- Chip changed from bench boost to triple captain" in alert
+    assert "- Chip changed from bench boost to none" in alert
     assert render.GAFFER_VERDICT in alert and render.FRESH_SOLVE in alert
     assert alert.index(render.GAFFER_VERDICT) < alert.index(render.FRESH_SOLVE)
     # The verdict block still carries the gaffer's own stored moves.
@@ -2733,7 +2784,7 @@ def test_the_news_moving_the_solver_is_shouted_about(tmp_path):
     changes = store.decision(2, "reminder")["changes"]
     assert changes["sells_added"] == [out] and changes["buys_added"] == [bought]
     assert changes["captain"] == [record["vice"], record["captain"]]
-    assert changes["chip"] == ["bench_boost", "triple_captain"]
+    assert changes["chip"] == ["bench_boost", "none"]
 
 
 def test_the_reminder_resolves_with_a_fresh_calendar_and_still_diffs_chips(
@@ -2744,7 +2795,7 @@ def test_the_reminder_resolves_with_a_fresh_calendar_and_still_diffs_chips(
     # the reminder's record. The chip is still a kind on both sides of the
     # diff, so a solver-then of "none" against a solver-now that plays the
     # triple captain is a chip change like any other.
-    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
+    cfg = config(state_dir=tmp_path / "state", chips=True)
     store = Store(cfg.state_dir / "aigaffer.db")
     client = make_client(halves_routes())
     run_pipeline(cfg, client, store, "deadline", send=False)
@@ -2783,7 +2834,7 @@ def test_a_record_from_before_solver_actions_were_kept_stays_calm(tmp_path):
     # formations were kept. The verdict here is doctored to disagree with the
     # fresh solve on every axis, which is exactly the shape an old record of
     # a manager-overridden week has, and it must not shout.
-    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
+    cfg = config(state_dir=tmp_path / "state")
     store = Store(cfg.state_dir / "aigaffer.db")
     client = make_client(pipeline_routes())
     run_pipeline(cfg, client, store, "deadline", send=False)
@@ -2808,7 +2859,7 @@ def test_a_record_from_before_solver_actions_were_kept_stays_calm(tmp_path):
 def test_a_reminder_with_no_full_report_behind_it_says_so(tmp_path):
     # The T-24h tick can be dropped wholesale. The reminder still goes, with
     # the fresh block and one honest line about what it could not compare.
-    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
+    cfg = config(state_dir=tmp_path / "state")
     store = Store(cfg.state_dir / "aigaffer.db")
 
     alert = run_pipeline(
@@ -2825,7 +2876,7 @@ def test_the_reminder_never_touches_the_root_verdict(tmp_path):
     # GW{n}.md at the root is the polished verdict the homepage shows. The
     # reminder is history and a phone buzz, so it goes to state/reports and
     # the store and nowhere else.
-    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
+    cfg = config(state_dir=tmp_path / "state")
     store = Store(cfg.state_dir / "aigaffer.db")
     client = make_client(pipeline_routes())
 
@@ -2862,8 +2913,7 @@ def test_the_manager_is_never_asked_for_the_reminder(monkeypatch, tmp_path):
 def test_the_reminder_goes_to_telegram_and_only_telegram(monkeypatch, tmp_path):
     sent = []
     monkeypatch.setattr(orchestrator, "send_report", lambda *args: sent.append(args))
-    cfg = Config(
-        team_id=TEAM_ID,
+    cfg = config(
         telegram_token=TOKEN,
         telegram_chat_id="42",
         state_dir=tmp_path / "state",
@@ -2893,8 +2943,7 @@ def test_a_reminder_that_never_buzzed_is_not_marked_done(
         raise httpx.ConnectError(f"connecting to /bot{TOKEN}/sendMessage failed")
 
     monkeypatch.setattr(orchestrator, "send_report", explode)
-    cfg = Config(
-        team_id=TEAM_ID,
+    cfg = config(
         telegram_token=TOKEN,
         telegram_chat_id="42",
         state_dir=tmp_path / "state",
@@ -2936,8 +2985,7 @@ def test_a_reminders_failed_buzz_does_not_swallow_the_reconciliation_note(
         raise httpx.ConnectError("the phone is down")
 
     monkeypatch.setattr(orchestrator, "send_report", explode)
-    cfg = Config(
-        team_id=TEAM_ID,
+    cfg = config(
         telegram_token=TOKEN,
         telegram_chat_id="42",
         state_dir=tmp_path / "state",
@@ -3012,8 +3060,7 @@ def test_a_pool_with_no_points_to_rank_on_falls_back_to_price():
 def test_the_report_is_sent_to_telegram(monkeypatch, tmp_path):
     sent = []
     monkeypatch.setattr(orchestrator, "send_report", lambda *args: sent.append(args))
-    cfg = Config(
-        team_id=TEAM_ID,
+    cfg = config(
         telegram_token=TOKEN,
         telegram_chat_id="42",
         state_dir=tmp_path / "state",
@@ -3043,7 +3090,7 @@ def test_nothing_is_sent_without_somewhere_to_send_it(monkeypatch, capsys, tmp_p
     monkeypatch.setattr(orchestrator, "send_report", lambda *args: sent.append(args))
 
     run_pipeline(
-        Config(team_id=TEAM_ID, telegram_token=TOKEN, state_dir=tmp_path / "state"),
+        config(telegram_token=TOKEN, state_dir=tmp_path / "state"),
         make_client(pipeline_routes()),
         Store(tmp_path / "aigaffer.db"),
         "deadline",
@@ -3064,8 +3111,7 @@ def test_a_failed_send_keeps_the_run_and_never_prints_the_token(
 
     monkeypatch.setattr(orchestrator, "send_report", explode)
     store = Store(tmp_path / "aigaffer.db")
-    cfg = Config(
-        team_id=TEAM_ID,
+    cfg = config(
         telegram_token=TOKEN,
         telegram_chat_id="42",
         state_dir=tmp_path / "state",
@@ -3404,8 +3450,7 @@ def test_the_strength_switch_is_honored(monkeypatch, tmp_path):
     serve(monkeypatch, pipeline_routes())
 
     def run_with(enabled: bool) -> int:
-        cfg = Config(
-            team_id=TEAM_ID,
+        cfg = config(
             state_dir=tmp_path / f"state-{enabled}",
             strength_enabled=enabled,
         )

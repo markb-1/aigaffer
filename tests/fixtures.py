@@ -493,10 +493,23 @@ PIPELINE_ELEMENTS_JSON = ELEMENTS_JSON + [
              xg=1.73, xa=0.58, defcon=2),
 ]
 
+# The chip rules as the live bootstrap serves them (2026-27): every chip twice,
+# the first set to GW19 and a fresh one from GW20 — the wildcard and the free
+# hit from GW2, since GW1 has nothing to wildcard or free-hit away from. With
+# them on the board the calendar plans the first set only and projects to GW19,
+# not GW38. (The fixture history's GW1 wildcard falls outside the 2-19 window,
+# so on this board it spends nothing.)
+LIVE_CHIP_RULES_JSON = [
+    {"name": name, "start_event": start, "stop_event": stop}
+    for name, first in (("bboost", 1), ("3xc", 1), ("wildcard", 2), ("freehit", 2))
+    for start, stop in ((first, 19), (20, 38))
+]
+
 PIPELINE_BOOTSTRAP_JSON = {
     "events": EVENTS_JSON,
     "teams": PIPELINE_TEAMS_JSON,
     "elements": PIPELINE_ELEMENTS_JSON,
+    "chips": LIVE_CHIP_RULES_JSON,
 }
 
 # Every club plays once in GW1, GW2 and GW3, so no side is projected at

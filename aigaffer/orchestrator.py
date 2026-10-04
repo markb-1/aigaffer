@@ -70,7 +70,7 @@ from typing import TYPE_CHECKING
 
 import httpx
 
-from aigaffer.chips import HeldChip, chip_windows, held_chips, held_for
+from aigaffer.chips import HeldChip, held_by_rules, held_for
 from aigaffer.config import (
     DEADLINE_ANCHOR_HOURS,
     EARLY_SCOUT_HOUR_UTC,
@@ -1344,8 +1344,10 @@ def _consult(
     # rather than in the loop because the loop has no business knowing what
     # our chip history looks like. A week built on a chip we cannot play is
     # not a week anybody can enter, so the whole decision goes back to the
-    # solver rather than just the chip.
-    held = _held(cfg, inputs)
+    # solver rather than just the chip. Held by the rules, not by the switch:
+    # chips off means planned by nobody, not unplayable, and a chip he holds
+    # stays his to play.
+    held = held_by_rules(inputs)
     if decision.chip != NO_CHIP and held_for(held, decision.chip, inputs.event.id) is None:
         decision = solver_view(CHIP_SPENT, decision.searches)
 
@@ -1614,14 +1616,13 @@ def _held(cfg: Config, inputs: PipelineInputs) -> tuple[HeldChip, ...]:
     may not play before GW20 (:mod:`aigaffer.chips` has the rules). A chip not
     held is simply absent from the decision space, which is where the "not held
     for this gameweek" belt in :func:`_consult` gets its half of the guarantee.
-    The derivation lives here, in one place, so the solver, the calendar and
-    the belt read the same chip history the same way.
+    The solver and the calendar ask this; the belt asks
+    :func:`~aigaffer.chips.held_by_rules`, the same derivation without the
+    switch, because chips off means planned by nobody, not unplayable.
     """
     if not cfg.chips or inputs.squad is None:
         return ()
-    return held_chips(
-        chip_windows(inputs.bootstrap.chips), inputs.chips_used, inputs.event.id
-    )
+    return held_by_rules(inputs)
 
 
 def _calendar(

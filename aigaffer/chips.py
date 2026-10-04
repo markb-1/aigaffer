@@ -13,8 +13,12 @@ so the dependency always runs towards it.
 """
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from aigaffer.data.models import ChipRule
+
+if TYPE_CHECKING:  # read for its fields only; the import never runs
+    from aigaffer.orchestrator import PipelineInputs
 
 BENCH_BOOST = "bench_boost"
 TRIPLE_CAPTAIN = "triple_captain"
@@ -118,6 +122,23 @@ def held_for(held: tuple[HeldChip, ...], chip: str, event: int) -> HeldChip | No
     return next(
         (candidate for candidate in held if candidate.chip == chip and candidate.allows(event)),
         None,
+    )
+
+
+def held_by_rules(inputs: "PipelineInputs") -> tuple[HeldChip, ...]:
+    """The chips in hand at the run's gameweek, by the rules and the history
+    alone — whatever the chip switch says.
+
+    The switch decides whether the solver plans chips, not whether a chip may
+    be played: switched off, chips are advisory, priced in the panel and
+    planned by nobody, and the gaffer may still play one we hold. So the belt
+    that refuses a chip and the briefing panel that marks one both ask this,
+    while the solver and the calendar ask the orchestrator's switch-aware
+    ``_held``. ``inputs`` is read for its fields only (bootstrap rules, chip
+    history, gameweek), which keeps this module below everyone who asks.
+    """
+    return held_chips(
+        chip_windows(inputs.bootstrap.chips), inputs.chips_used, inputs.event.id
     )
 
 

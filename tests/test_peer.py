@@ -26,6 +26,7 @@ from tests.test_manager_retry import phone_cfg
 from tests.test_orchestrator import (
     PAST_THE_FLOOR,
     bootstrap_due_in,
+    chips_off_from_the_environment,  # noqa: F401 — autouse: chips off, as there
     decided,
     make_client,
     pipeline_routes,

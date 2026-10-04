@@ -25,6 +25,7 @@ from tests.test_manager_retry import AUTH_FAILED, Phone, hours_out, phone_cfg
 from tests.test_orchestrator import (
     TEAM_ID,
     bootstrap_due_in,
+    chips_off_from_the_environment,  # noqa: F401 — autouse: chips off, as there
     decided,
     gaffer_cfg,
     make_client,
