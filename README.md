@@ -703,7 +703,7 @@ Still not shipped, deliberately:
 2. **A full-season vaastav backtest with a beat-the-average benchmark.** What
    ships is a single-gameweek ranking sanity check against the live API
    (above), which cannot say whether the bot would have beaten the average
-   manager over a season — the question the spec actually asks.
+   manager over a season — the question that actually matters.
 3. **Chip economics against the plan actually chosen.** The Chip EV panel is
    priced once, against the plan that rolls the transfer, before the manager is
    asked anything. If he picks a different plan and plays a chip on it, the
@@ -734,8 +734,8 @@ Still not shipped, deliberately:
    point, so from GW20 the bot is too strict rather than too generous — it will
    decline to recommend a chip it actually holds. That is the safer of the two
    mistakes, and it is still a mistake.
-7. **The bench order the design asks the manager for.** The spec has him
-   returning a bench order with his decision; he is not asked for one. The
+7. **A bench order from the manager.** He could return a bench order with
+   his decision, but he is not asked for one. The
    order the report prints is the solver's — substitute keeper first, then by
    next gameweek's projection — and it is a good default and nobody's judgement
    about which of two fringe players is likelier to have a game at all.
@@ -753,3 +753,8 @@ Still not shipped, deliberately:
    silly; what bounds a run is the turn cap and the twelve-minute clock, and
    the report prints the count afterwards. The cost note above is written for
    that worst case rather than against it.
+
+## License
+
+MIT — see [LICENSE](LICENSE), which also carries the notice for the
+vendored vaastav data.

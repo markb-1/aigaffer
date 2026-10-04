@@ -13,7 +13,12 @@
 # design — a missed ping from the backup scheduler must never page anyone;
 # the primary schedule and the late-open windows are still there.
 
-REPO="markb-1/aigaffer"
+# The repo to dispatch is the clone this script lives in — owner/name off its
+# `origin` remote, https or ssh — so a fork dispatches to itself. Schedulers
+# rarely start in the repo, hence -C. AIGAFFER_REPO overrides it.
+REPO=${AIGAFFER_REPO:-$(git -C "$(dirname "$0")" remote get-url origin 2>/dev/null \
+  | sed -E 's#^(https://github\.com/|git@github\.com:|ssh://git@github\.com/)##; s#\.git$##')}
+case "$REPO" in */*) ;; *) exit 0 ;; esac
 
 # The same generous gate the workflow runs, run here instead: a manual
 # dispatch stands the workflow's own gate aside, so an ungated hourly ping

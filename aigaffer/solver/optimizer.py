@@ -62,7 +62,7 @@ MIN_XI_FORWARDS = 1
 BENCH_WEIGHT = 0.1
 HIT_POINTS = 4
 MAX_TRANSFERS = 3
-# The spec's ceiling: -8 in a gameweek, whatever the projection says it would
+# The ceiling: -8 in a gameweek, whatever the projection says it would
 # earn back. Two hits is a considered gamble; three is a manager tilting.
 MAX_HITS = 2
 
