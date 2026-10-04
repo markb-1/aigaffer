@@ -488,7 +488,7 @@ def run_pipeline(
     solved = solve(inputs, projections, cfg, ledger.selling_prices, calendar)
     gaffer = _consult(
         cfg, inputs, solved, projections, xmins, ledger.selling_prices,
-        calendar=calendar, strengths=strengths,
+        strengths=strengths,
     )
 
     # From here down the week is his, if there was a him: the plan he chose and
@@ -1213,7 +1213,6 @@ def _consult(
     xmins: dict[int, float],
     selling_prices: dict[int, int] | None = None,
     *,
-    calendar: ChipCalendar | None = None,
     strengths: "TeamStrengths | None | object" = _UNFITTED,
 ) -> "ManagerDecision | None":
     """Put the week to the manager, and come back with the week to enter.
@@ -1235,8 +1234,8 @@ def _consult(
     scope and is closed inside a function, which also keeps the Anthropic SDK
     off the import path of every run that never asks for a manager.
 
-    ``calendar`` and ``strengths`` are the run's own, and his re-solves reuse
-    both rather than make their own: the calendar is built on the model's
+    ``solved.calendar`` and ``strengths`` are the run's own, and his re-solves
+    reuse both rather than make their own: the calendar is built on the model's
     minutes, not his — his are for the coming gameweek and must not reach a
     week months out — and a re-solve judged against bars of its own would be
     a different question, not the same one on better news.
@@ -1294,7 +1293,7 @@ def _consult(
         _, adjusted = build_projections(
             inputs, cfg, overrides, strengths=strengths
         )
-        return solve(inputs, adjusted, cfg, selling_prices, calendar), adjusted
+        return solve(inputs, adjusted, cfg, selling_prices, solved.calendar), adjusted
 
     try:
         # The second group: what asking him needs, imported where it is used,
