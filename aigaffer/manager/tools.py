@@ -41,12 +41,13 @@ from collections.abc import Callable, Container
 from dataclasses import dataclass
 from math import isfinite
 
+from aigaffer.manager.playbook import CHIP_PLAYBOOK
 from aigaffer.solver.optimizer import Plan
 
 # The gaffer, as he is briefed once and cached. Byte-stable by contract: the
 # date, the gameweek and the squad are all briefing lines, and one interpolated
 # variable here would be a cache that never hits and a prompt nobody can diff.
-SYSTEM_PROMPT = """\
+_BASE = """\
 You are the manager of a Fantasy Premier League side. A solver has already done \
 the arithmetic: it has projected every player, priced every legal transfer and \
 handed you a short list of plans it can actually reach. Your job is the half it \
@@ -90,17 +91,17 @@ on the list is not reachable, however good it would be.
 - Your captain and vice-captain must both belong to the eleven of the plan you \
 finalize, and they must be two different players. Choose a different plan and \
 the eleven is picked again from that plan's squad.
-- A chip is played once a season. To play one you must argue for it properly: \
-why this gameweek rather than any other, what the chip EV panel in the briefing \
-says it is worth, and what you give up by burning it now. A sentence will be \
-rejected.
-- The solver now plans chips. All four — bench_boost, triple_captain, wildcard \
+- Chips come in two sets; the first expires after GW19 (see Chips below). To \
+play one you must argue for it properly: why this gameweek rather than the one \
+the chip calendar saves it for, what the chip EV panel says it is worth, and \
+what you give up by playing it now. A sentence will be rejected.
+- The solver plans chips. All four — bench_boost, triple_captain, wildcard \
 and free_hit — are yours to finalize, because a plan the solver reached was \
 built for the chip it recommends, and its road ahead shows the later gameweeks \
 it means to play others. Finalize the chip the plan in hand recommends; a chip \
-the season's history says you have already spent will be refused whatever you \
-argue. If you would rather leave the chip to the person whose team this is, \
-finalize with chip 'none' and make the case in your rationale.
+not held for this gameweek — spent, or the next set's — will be refused \
+whatever you argue. If you would rather leave the chip to the person whose \
+team this is, finalize with chip 'none' and make the case in your rationale.
 
 Some plans carry a path: what the solver would go on to do in later gameweeks \
 if nothing changed, including the gameweeks it plans to play a chip. Read it as \
@@ -146,6 +147,8 @@ He reads it on a phone, after the gameweek, next to the score. Three headings \
 is what makes that readable; a wall of prose is not. Say all three things \
 even where one of them is short — "nothing I found changed a minute" is an \
 answer, and an empty section is not."""
+
+SYSTEM_PROMPT = _BASE + "\n\n" + CHIP_PLAYBOOK
 
 # What the server tool is allowed to cost us in one request. ``max_uses`` is
 # per request — one assistant turn — and not a budget for the conversation: a

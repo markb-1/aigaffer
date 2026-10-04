@@ -1205,8 +1205,8 @@ def test_the_system_prompt_says_the_solver_plans_the_chips():
     # The Phase 2 line naming only two finalizable chips is gone; the prompt now
     # says all four are his and that the road ahead shows the planned chip weeks.
     assert "The only chips you may finalize" not in SYSTEM_PROMPT
-    assert "The solver now plans chips" in SYSTEM_PROMPT
-    assert "already spent will be refused" in SYSTEM_PROMPT
+    assert "The solver plans chips" in SYSTEM_PROMPT
+    assert "not held for this gameweek" in SYSTEM_PROMPT
 
 
 def test_a_chip_argued_properly_is_played():
@@ -1890,3 +1890,11 @@ def test_a_chip_argued_behind_leaked_markup_is_refused():
     assert "plain prose" in refusal["content"]
     assert decision.chip == "bench_boost"
     assert decision.chip_justification == BENCH_BOOST_CASE
+
+
+def test_the_system_prompt_carries_the_chip_playbook():
+    from aigaffer.manager.playbook import CHIP_PLAYBOOK
+
+    assert CHIP_PLAYBOOK in SYSTEM_PROMPT
+    assert "played once a season" not in SYSTEM_PROMPT
+    assert "expires after GW19" in SYSTEM_PROMPT

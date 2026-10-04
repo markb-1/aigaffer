@@ -607,6 +607,24 @@ def test_the_panel_says_the_solver_now_plans_the_chips():
     assert "argue for it in your rationale" in panel
 
 
+def test_the_briefing_carries_the_chip_calendar_after_the_chip_panel():
+    from aigaffer.chips import BENCH_BOOST, HeldChip
+    from aigaffer.solver.calendar import CalendarEntry, ChipCalendar
+
+    cal = ChipCalendar(
+        entries=(CalendarEntry(HeldChip(BENCH_BOOST, 1, 19), None, None, {2: 0.0}),),
+        discount=0.97, proxy_scale={}, horizon_end=19,
+    )
+    text = briefing(solve=replace(solved(), calendar=cal))
+    heads = headings(text)
+    assert heads[heads.index("## Chip EV") + 1] == "## Chip calendar"
+    assert bullets(text, "Chip calendar") == [
+        "- Bench Boost (GW1–19): no later week to save it for"
+        " — play it inside the window (bar 0.0)"
+    ]
+    assert "## Chip calendar" not in briefing()
+
+
 def test_a_chip_already_played_is_priced_and_marked_gone():
     # The EV is still worth reading — it says what the chip would have been
     # worth — but the manager may not play it, and the panel is where he finds
@@ -617,11 +635,11 @@ def test_a_chip_already_played_is_priced_and_marked_gone():
 
     assert bullets(played, "Chip EV") == [
         "- Bench boost: +3.2",
-        "- Triple captain: +8.4 (already played)",
+        "- Triple captain: +8.4 (not held this gameweek)",
         "- Free hit: -1.5",
         "- Wildcard: +12.0 xP over 6 GWs (horizon)",
     ]
-    assert "already played" in section(played, "Chip EV")[-1], "and a guardrail"
+    assert "not held this gameweek" in section(played, "Chip EV")[-1], "and a guardrail"
 
 
 def test_a_panel_with_nothing_played_says_nothing_about_it():
@@ -629,7 +647,7 @@ def test_a_panel_with_nothing_played_says_nothing_about_it():
     # The one about which chips can be finalized is about all of them, always.
     panel = section(briefing(), "Chip EV")
 
-    assert "already played" not in " ".join(panel)
+    assert "not held this gameweek" not in " ".join(panel)
     assert panel[-1].startswith("The solver plans chip weeks now")
 
 
@@ -648,7 +666,7 @@ def test_every_chip_the_api_names_is_recognised(api_name: str, label: str):
         "Chip EV",
     )
 
-    assert [line for line in panel if line.endswith("(already played)")] == [
+    assert [line for line in panel if line.endswith("(not held this gameweek)")] == [
         next(line for line in panel if line.startswith(f"- {label}:"))
     ]
 
@@ -660,7 +678,7 @@ def test_a_chip_the_api_has_not_invented_yet_marks_nothing():
         inputs=pipeline_inputs(chips_used=[{"name": "manager", "event": 3}])
     )
 
-    assert "already played" not in panel
+    assert "not held this gameweek" not in panel
 
 
 def test_the_watchlist_is_the_ten_best_players_we_do_not_own():

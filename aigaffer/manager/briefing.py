@@ -54,6 +54,7 @@ from aigaffer.report.render import (
     horizon_of,
     plural,
     price,
+    render_chip_calendar,
     wildcard_ev,
 )
 from aigaffer.solver.lineup import ChipEvs, Lineup
@@ -96,12 +97,12 @@ DATE_FORMAT = "%a %d %b %Y"
 
 PICK_MARKER = "  <- solver pick"
 
-# What a chip already spent this season is marked with, and the line that says
-# what the mark means. A chip is played once, so the panel has to distinguish
-# "worth nothing" from "not yours to play".
-PLAYED_MARK = " (already played)"
+# What a chip he cannot play this gameweek is marked with, and the line that
+# says what the mark means: spent, or the next set's. The panel has to
+# distinguish "worth nothing" from "not yours to play".
+PLAYED_MARK = " (not held this gameweek)"
 PLAYED_GUARD = (
-    "A chip marked (already played) has been used this season and is gone,"
+    "A chip marked (not held this gameweek) is spent or belongs to the next set,"
     " whatever it is priced at above. Finalize with chip 'none' instead."
 )
 
@@ -256,6 +257,9 @@ def build_briefing(
         _watchlist(held, board, event),
         _relevant(solve, board),
     ]
+    calendar = render_chip_calendar(solve.calendar, event)
+    if calendar is not None:
+        sections.insert(5, calendar)
     # The market on a quiet day — or a payload from before the fields were
     # read — adds nothing, and the briefing stays byte-for-byte what it was.
     watch = _price_watch(solve, board)
@@ -546,11 +550,11 @@ def _chip_panel(
     tells him to play the chip the plan in hand was built for, because a rule
     he meets first as an error is a turn spent learning it.
 
-    A chip already spent is priced anyway and then marked. The number is worth
+    A chip not held this gameweek is priced anyway and then marked. The number is worth
     reading — it says what this week would have been worth with it — but the
     chip is not on the table, and the manager is told so in the one place he
     looks the chips up. The guardrail line is printed only when something has
-    actually been played, because a warning about nothing is a line of noise
+    actually not held, because a warning about nothing is a line of noise
     in a document that is already long.
     """
     if drafting:

@@ -38,6 +38,7 @@ from collections import defaultdict
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from aigaffer.chips import WILDCARD
 from aigaffer.data.models import Bootstrap, Event, Player, Standing
 from aigaffer.model.xp import PlayerProjection
 from aigaffer.solver.lineup import ChipEvs, Lineup
@@ -52,6 +53,7 @@ from aigaffer.solver.optimizer import (
 )
 
 if TYPE_CHECKING:  # the manager imports this module, so never the reverse
+    from aigaffer.solver.calendar import ChipCalendar
     from aigaffer.manager.agent import ManagerDecision
     from aigaffer.solver.multiweek import PlannedMove
 
@@ -1384,3 +1386,48 @@ def price(now_cost: int) -> str:
 
 def plural(count: int, noun: str) -> str:
     return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
+
+
+CALENDAR_UNAVAILABLE = (
+    "Chip calendar unavailable this run: chips are held against the"
+    " old flat bars, and any chip with no later week is played inside the window."
+)
+
+
+def render_chip_calendar(calendar: "ChipCalendar | None", event: int) -> str | None:
+    """The chip calendar as a section: each chip's window, the week it is saved
+    for and what it is worth there, and the bar it must clear this gameweek.
+    Shared by the gaffer's briefing and the owner's report, so the two read
+    the same chips the same way. None when no chip is held."""
+    if calendar is None:
+        return None
+    lines = ["## Chip calendar", ""]
+    if calendar.fell_back:
+        return "\n".join(lines + [CALENDAR_UNAVAILABLE])
+    for entry in calendar.entries:
+        chip = entry.held
+        name = f"{chip_label(chip.chip)} (GW{chip.start_event}–{chip.stop_event})"
+        bar = entry.bars.get(event)
+        if chip.chip == WILDCARD:
+            text = (
+                f"this week's bar {bar:.1f}, falling to 0 as GW{chip.stop_event} nears"
+                if bar is not None
+                else f"playable from GW{chip.start_event}"
+            )
+        elif entry.saved_for is not None:
+            text = f"saved for GW{entry.saved_for}, worth {entry.value:+.1f} there"
+            if bar is not None:
+                text += f"; this week's bar {bar:.1f}"
+        elif bar is not None:
+            text = f"no later week to save it for — play it inside the window (bar {bar:.1f})"
+        else:
+            text = f"playable from GW{chip.start_event}"
+        lines.append(f"- {name}: {text}")
+    stop = min(entry.held.stop_event for entry in calendar.entries)
+    lines += [
+        "",
+        f"The first set expires after GW{stop}."
+        if stop < 38
+        else f"These chips expire after GW{stop}.",
+    ]
+    return "\n".join(lines)

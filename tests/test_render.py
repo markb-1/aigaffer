@@ -1386,3 +1386,34 @@ def test_a_stored_plan_the_board_has_never_heard_of_still_renders():
 
     assert "player 999" in alert
     assert "- Captain moved from player 999 to Hume" in alert
+
+
+def test_the_calendar_section_names_each_chips_week_bar_and_expiry():
+    from aigaffer.chips import BENCH_BOOST, TRIPLE_CAPTAIN, WILDCARD, HeldChip
+    from aigaffer.report.render import render_chip_calendar
+    from aigaffer.solver.calendar import CalendarEntry, ChipCalendar
+
+    cal = ChipCalendar(
+        entries=(
+            CalendarEntry(HeldChip(TRIPLE_CAPTAIN, 1, 19), 15, 10.2, {6: 7.8}),
+            CalendarEntry(HeldChip(BENCH_BOOST, 1, 19), None, None, {6: 0.0}),
+            CalendarEntry(HeldChip(WILDCARD, 2, 19), None, None, {6: 35.0}),
+        ),
+        discount=0.97, proxy_scale={}, horizon_end=19,
+    )
+    text = render_chip_calendar(cal, 6)
+    assert text.startswith("## Chip calendar")
+    assert "Triple Captain (GW1–19): saved for GW15, worth +10.2 there; this week's bar 7.8" in text
+    assert "Bench Boost (GW1–19): no later week to save it for — play it inside the window (bar 0.0)" in text
+    assert "Wildcard (GW2–19): this week's bar 35.0, falling to 0 as GW19 nears" in text
+    assert "The first set expires after GW19." in text
+    assert render_chip_calendar(None, 6) is None
+
+
+def test_a_fallen_back_calendar_says_it_is_unavailable():
+    from aigaffer.chips import TRIPLE_CAPTAIN, HeldChip
+    from aigaffer.report.render import render_chip_calendar
+    from aigaffer.solver.calendar import fallback_calendar
+
+    cal = fallback_calendar((HeldChip(TRIPLE_CAPTAIN, 1, 19),), [6, 7, 8, 9, 10, 11])
+    assert "calendar unavailable" in render_chip_calendar(cal, 6)
