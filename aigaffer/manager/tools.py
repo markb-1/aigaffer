@@ -41,7 +41,6 @@ from collections.abc import Callable, Container
 from dataclasses import dataclass
 from math import isfinite
 
-from aigaffer.chips import CHIP_API_NAMES
 from aigaffer.solver.optimizer import Plan
 
 # The gaffer, as he is briefed once and cached. Byte-stable by contract: the
@@ -361,25 +360,6 @@ class Finalized:
     chip: str
     chip_justification: str
     rationale: str
-
-
-def played_chips(chips_used: list[dict]) -> set[str]:
-    """Which of :data:`CHIPS` the season's chip history says are gone.
-
-    ``chips_used`` is the raw list from
-    :meth:`~aigaffer.data.fpl_api.FplClient.chips_used`, and it is somebody
-    else's payload: an entry with no name, or a name for a chip this bot does
-    not price — the assistant manager, whatever is invented next — is not one
-    of ours and marks nothing.
-
-    A chip is counted whenever it appears, without asking which half of the
-    season it was played in. Modern FPL hands out a second set of chips at the
-    halfway point, so this reads as too strict rather than too generous after
-    the reset; the cost of that is a chip the report declines to recommend,
-    which is the safer of the two mistakes to make about a chip.
-    """
-    played = {str(chip.get("name", "")).strip().lower() for chip in chips_used}
-    return {chip for chip, api_name in CHIP_API_NAMES.items() if api_name in played}
 
 
 def validate_adjustments(args: dict, known: Container[int]) -> list[dict]:

@@ -273,7 +273,7 @@ def test_a_chip_he_cannot_play_is_not_a_decision_either(monkeypatch, tmp_path, p
 
     assert store.has_run(2, "deadline") is False
     [alert] = phone.messages
-    assert "chip already played" in alert
+    assert orchestrator.CHIP_SPENT in alert
 
 
 def test_a_gaffer_nobody_asked_for_is_never_withheld(monkeypatch, tmp_path, phone):

@@ -40,9 +40,9 @@ from dataclasses import dataclass
 from datetime import date
 from typing import TYPE_CHECKING
 
+from aigaffer.chips import CHIP_ORDER, chip_windows, held_chips, held_for
 from aigaffer.config import EARLY_SEASON_GWS
 from aigaffer.data.models import Event, Player
-from aigaffer.manager.tools import played_chips
 from aigaffer.model.xp import PlayerProjection
 from aigaffer.report.render import (
     NO_CHIP,
@@ -250,7 +250,7 @@ def build_briefing(
         _chip_panel(
             solve.chips,
             solve.draft_mode,
-            played_chips(inputs.chips_used),
+            _not_held(inputs, event),
             board.horizon,
         ),
         _watchlist(held, board, event),
@@ -518,6 +518,16 @@ def _candidates(plans: list[tuple[int, Plan]], board: _Board, pick: int | None) 
         format_plans(plans, board.players, board.clubs, board.projections, pick),
     ]
     return "\n".join(lines)
+
+
+def _not_held(inputs: "PipelineInputs", event: int) -> set[str]:
+    """The chip kinds he cannot play this gameweek — spent, expired, or the
+    next set's, held but not yet playable — read off the rules and the
+    season's history exactly as the orchestrator's belt reads them
+    (:func:`aigaffer.chips.held_for`), so the panel never marks a chip the
+    belt would let through, nor the other way round."""
+    held = held_chips(chip_windows(inputs.bootstrap.chips), inputs.chips_used, event)
+    return {chip for chip in CHIP_ORDER if held_for(held, chip, event) is None}
 
 
 def _chip_panel(

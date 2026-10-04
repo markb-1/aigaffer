@@ -33,21 +33,23 @@ import pytest
 
 from aigaffer import __main__ as cli
 from aigaffer import orchestrator
-from aigaffer.chips import whole_season
+from aigaffer.chips import TRIPLE_CAPTAIN, held_for, whole_season
 from aigaffer.config import Config
 from aigaffer.data.fpl_api import FplClient
 from aigaffer.data.models import GwHistory, Player
 from aigaffer.manager import agent
 from aigaffer.manager.agent import ManagerDecision
-from aigaffer.model.xp import PlayerProjection
+from aigaffer.model.xp import PlayerProjection, projected_events
 from aigaffer.orchestrator import (
-    ALL_CHIPS,
+    CALENDAR_FAILED,
+    CHIP_SPENT,
     NO_CHIPS,
     PipelineError,
     PipelineInputs,
     SolveResult,
-    _available_chips,
+    _calendar,
     _fielded_lineup,
+    _held,
     _stored_actions,
     build_projections,
     decide_mode,
@@ -60,8 +62,9 @@ from aigaffer.orchestrator import (
 from aigaffer.report import render
 from aigaffer.report.render import render_report
 from aigaffer.report.telegram import send_report
+from aigaffer.solver.calendar import CHIP_DISCOUNT
 from aigaffer.solver.lineup import Lineup, attacking_evs, pick_lineup
-from aigaffer.solver.multiweek import PlannedPath
+from aigaffer.solver.multiweek import FALLBACK_BARS, PlannedPath
 from aigaffer.solver.optimizer import FORWARD, MIDFIELDER, Plan
 from aigaffer.store import Store
 from tests.fixtures import (
@@ -312,6 +315,8 @@ def test_the_window_the_projections_cover_is_the_window_the_planner_plans(
             "decay": seam.cfg.decay,
             "planner": "multi",
             "held_chips": whole_season("bench_boost", "triple_captain", "free_hit"),
+            # No calendar handed in, so no bars: the window's fallback.
+            "bars": None,
             "selling_prices": None,
         }
     ]
@@ -506,31 +511,49 @@ def test_the_decision_says_what_was_decided(scout_run):
     assert isinstance(decision["objective"], float)
 
 
-def test_the_chip_switch_off_is_phase_2_5_to_the_byte(tmp_path, scout_run):
+def test_the_chip_switch_off_is_phase_2_5_to_the_byte(tmp_path):
     # The whole feature is gated. With the switch off the window is handed no
-    # chips and builds the chip-blind model, and the report is the one the
-    # default run wrote — which the assertions above pin to Phase 2.5's shape —
-    # character for character. A chip nobody could clear the bar for changes
-    # nothing on this quiet board either way, so the two agree.
-    store = Store(tmp_path / "aigaffer.db")
+    # chips and builds the chip-blind model: no chip played, no calendar built,
+    # and the report is, character for character, the one a run writes with
+    # the switch on and no chip left in hand — every window the rules hand out
+    # closed before this gameweek. Nothing held is the pre-chip model, however
+    # it came about.
+    off = Store(tmp_path / "off.db")
+    closed = [{**rule, "stop_event": 1} for rule in HALVES if rule["start_event"] == 1]
 
     report = run_pipeline(
-        Config(team_id=TEAM_ID, state_dir=tmp_path / "state", chips=False),
+        Config(team_id=TEAM_ID, state_dir=tmp_path / "off", chips=False),
         make_client(pipeline_routes()),
-        store,
+        off,
+        "scout",
+        send=False,
+    )
+    nothing_held = run_pipeline(
+        Config(team_id=TEAM_ID, state_dir=tmp_path / "on"),
+        make_client(halves_routes(closed)),
+        Store(tmp_path / "on.db"),
         "scout",
         send=False,
     )
 
-    assert report == scout_run.report
-    assert store.last_runs(1)[0]["decision"]["chip"] == "none"
+    assert report == nothing_held
+    assert "PLAY " not in report
+    decision = off.last_runs(1)[0]["decision"]
+    assert decision["chip"] == "none" and decision["chip_calendar"] is None
 
 
 def test_the_decision_records_the_chip_this_week_plays(scout_run):
-    # No manager and a quiet universe: the reservation bars stop every chip, so
-    # none is played and the record says so. The field is there either way — the
-    # diary reads the same as the phone about what chip, if any, went in.
-    assert scout_run.store.last_runs(1)[0]["decision"]["chip"] == "none"
+    # No manager, and a universe whose fixtures stop at GW3: no week beyond the
+    # window is worth saving the triple captain for, so the calendar gives it
+    # no saved-for week and a bar of nothing, and the window plays it now. The
+    # record says so — the diary reads the same as the phone about what chip,
+    # if any, went in — and keeps the calendar that let it go.
+    decision = scout_run.store.last_runs(1)[0]["decision"]
+    entries = {entry["chip"]: entry for entry in decision["chip_calendar"]["entries"]}
+
+    assert decision["chip"] == "triple_captain"
+    assert entries["triple_captain@38"]["saved_for"] is None
+    assert set(entries["triple_captain@38"]["bars"].values()) == {0.0}
 
 
 def test_a_free_hit_the_solver_plans_reaches_the_report_and_the_record(
@@ -930,10 +953,11 @@ def test_the_fetch_gathers_everything_the_later_stages_need(seam):
 
 
 def test_the_stages_compose_to_the_report_the_pipeline_wrote(seam, scout_run):
-    # The seam is a refactor, not a rewrite: fetch, project and solve in that
-    # order still produce the report to the character.
+    # The seam is a refactor, not a rewrite: fetch, project, calendar and solve
+    # in that order still produce the report to the character.
     _, projections = build_projections(seam.inputs, seam.cfg)
-    solved = solve(seam.inputs, projections, seam.cfg)
+    calendar = _calendar(seam.inputs, seam.cfg, projections, None)
+    solved = solve(seam.inputs, projections, seam.cfg, None, calendar)
 
     report = render_report(
         "scout",
@@ -1093,41 +1117,68 @@ def test_a_solve_with_no_squad_drafts_a_fifteen(tmp_path):
 
 # --- which chips the window may plan ---------------------------------------
 #
-# The four chips, less the ones the season's history says are spent, when the
-# switch is on and there is a squad to play them against. Off, or drafting, the
-# set is empty and the window builds Phase 2.5's chip-blind model.
+# The chips in hand at this gameweek, each with the window it must be played
+# in, when the switch is on and there is a squad to play them against. Off, or
+# drafting, the set is empty and the window builds Phase 2.5's chip-blind model.
+
+# The rules as the bootstrap serves them: every chip twice, one set to GW19 and
+# a fresh one from GW20.
+HALVES = [
+    {"name": api, "start_event": start, "stop_event": stop}
+    for start, stop in ((1, 19), (20, 38))
+    for api in ("bboost", "3xc", "wildcard", "freehit")
+]
+FIRST_SET_ONLY = [rule for rule in HALVES if rule["stop_event"] == 19]
 
 
-def test_available_chips_are_the_four_less_the_ones_spent(seam):
-    # Nothing played: all four are in hand.
+def halves_routes(rules: list[dict] = HALVES, chips_used: list[dict] | None = None) -> dict:
+    """The pipeline universe with chip rules on its bootstrap and, given one, a
+    chip history of its own (the fixture's is the wildcard in GW1)."""
+    routes = pipeline_routes(bootstrap={**PIPELINE_BOOTSTRAP_JSON, "chips": rules})
+    if chips_used is not None:
+        routes[HISTORY_PATH] = {**HISTORY_JSON, "chips": chips_used}
+    return routes
+
+
+def test_with_no_rules_every_chip_not_played_is_held_all_season(seam):
+    # A board with no chip rules is the model before halves: one window per
+    # chip over the whole season, the played ones gone.
     inputs = replace(seam.inputs, chips_used=[])
 
-    assert _available_chips(Config(team_id=TEAM_ID), inputs) == whole_season(*ALL_CHIPS)
+    assert _held(Config(team_id=TEAM_ID), inputs) == whole_season(
+        "bench_boost", "triple_captain", "wildcard", "free_hit"
+    )
 
 
-def test_available_chips_drop_a_chip_already_played(seam):
-    # The API spells it "wildcard" and so do we; a played one is simply absent
-    # from the decision space, which is half of the "already played" guarantee.
-    inputs = replace(seam.inputs, chips_used=[{"name": "wildcard", "event": 1}])
+def test_the_held_chips_are_both_sets_less_the_one_spent(tmp_path):
+    # The wildcard went in GW1, which spends the first set's and leaves the
+    # second's: held from the start of the season, playable from GW20.
+    inputs = fetch_inputs(
+        Config(team_id=TEAM_ID, state_dir=tmp_path), make_client(halves_routes())
+    )
 
-    available = _available_chips(Config(team_id=TEAM_ID), inputs)
+    held = _held(Config(team_id=TEAM_ID), inputs)
 
-    assert "wildcard" not in {chip.chip for chip in available}
-    assert available == whole_season(*(ALL_CHIPS - {"wildcard"}))
+    assert [chip.id for chip in held] == [
+        "bench_boost@19", "triple_captain@19", "free_hit@19",
+        "bench_boost@38", "triple_captain@38", "wildcard@38", "free_hit@38",
+    ]
+    assert held_for(held, "wildcard", inputs.event.id) is None
 
 
-def test_the_chip_switch_off_leaves_no_chips_available(seam):
+def test_the_chip_switch_off_holds_nothing(seam):
     inputs = replace(seam.inputs, chips_used=[])
 
-    assert _available_chips(Config(team_id=TEAM_ID, chips=False), inputs) == ()
+    assert _held(Config(team_id=TEAM_ID, chips=False), inputs) == ()
 
 
-def test_a_draft_has_no_chips_to_plan(seam):
+def test_a_draft_holds_no_chips_to_plan(seam):
     # No squad, so nothing to play a chip against — the empty set the window
     # reads as "advisory only", which is the pre-chip model.
     inputs = replace(seam.inputs, squad=None)
 
-    assert _available_chips(Config(team_id=TEAM_ID), inputs) == ()
+    assert _held(Config(team_id=TEAM_ID), inputs) == ()
+    assert _calendar(inputs, Config(team_id=TEAM_ID), {}, None) is None
 
 
 def test_the_fielded_lineup_is_the_free_hit_team_on_a_free_hit_week(seam):
@@ -2164,12 +2215,58 @@ def test_a_chip_he_has_already_played_is_refused_at_the_door(monkeypatch, tmp_pa
     )
     decision = store.last_runs(1)[0]["decision"]
 
-    assert "The gaffer was unavailable (chip already played)" in report
-    assert decision["decision_source"] == "solver-fallback: chip already played"
+    assert "The gaffer was unavailable (chip not held for this gameweek)" in report
+    assert decision["decision_source"] == f"solver-fallback: {CHIP_SPENT}"
     assert decision["chip"] == "none"
     assert decision["transfers_in"] == gaffer.consults[0].solve0.choice.transfers_in
     assert decision["searches"] == 2, "the searches were still paid for"
     assert GAFFER_RATIONALE not in report
+
+
+def test_a_chip_not_held_this_gameweek_sends_the_week_back_to_the_solver(
+    monkeypatch, tmp_path
+):
+    # The rules hand out one set only and the bench boost went in GW1: there
+    # is no bench boost in hand at all, so a week built on one is refused
+    # whole, exactly as a spent chip always was.
+    routes = halves_routes(FIRST_SET_ONLY, chips_used=[{"name": "bboost", "event": 1}])
+    gaffer = stub_gaffer(
+        monkeypatch, partial(decided, chip="bench_boost", justification=GOOD_CHIP)
+    )
+    store = Store(tmp_path / "aigaffer.db")
+
+    report = run_pipeline(
+        gaffer_cfg(tmp_path), make_client(routes), store, "scout",
+        send=False, now=PAST_THE_FLOOR,
+    )
+    decision = store.last_runs(1)[0]["decision"]
+
+    assert decision["decision_source"] == f"solver-fallback: {CHIP_SPENT}"
+    assert decision["chip"] == "none"
+    assert decision["transfers_in"] == gaffer.consults[0].solve0.choice.transfers_in
+    assert GAFFER_RATIONALE not in report
+
+
+def test_a_second_half_chip_before_gw20_is_refused(monkeypatch, tmp_path):
+    # Both sets on the board, the first bench boost spent in GW1. The second
+    # is in hand — held from the start of the season — but not playable until
+    # GW20, so at GW2 it is no more a chip to play than the spent one.
+    routes = halves_routes(chips_used=[{"name": "bboost", "event": 1}])
+    gaffer = stub_gaffer(
+        monkeypatch, partial(decided, chip="bench_boost", justification=GOOD_CHIP)
+    )
+    store = Store(tmp_path / "aigaffer.db")
+
+    run_pipeline(
+        gaffer_cfg(tmp_path), make_client(routes), store, "scout",
+        send=False, now=PAST_THE_FLOOR,
+    )
+    decision = store.last_runs(1)[0]["decision"]
+    inputs = gaffer.consults[0].inputs
+
+    assert "bench_boost@38" in {chip.id for chip in _held(gaffer_cfg(tmp_path), inputs)}
+    assert decision["decision_source"] == f"solver-fallback: {CHIP_SPENT}"
+    assert decision["chip"] == "none"
 
 
 def test_without_a_key_there_is_no_gaffer_and_no_difference(
@@ -2278,6 +2375,156 @@ def test_the_report_the_gaffer_wrote_is_the_one_that_is_sent(monkeypatch, tmp_pa
     [(_, _, message)] = sent
     assert "## The Gaffer's view" in message
     assert "Decided by the gaffer." in message
+
+
+# --- the chip calendar ------------------------------------------------------
+#
+# Built once a run, outside the solve, from projections of its own: base
+# minutes and a horizon running to the furthest expiry the window can reach.
+# The solve and every re-solve the gaffer asks for read the same one, and the
+# decision record keeps it.
+
+
+def calendar_spy(monkeypatch) -> list[SimpleNamespace]:
+    """Record each ``build_calendar`` call — what it was handed — and build it."""
+    calls: list[SimpleNamespace] = []
+    real = orchestrator.build_calendar
+
+    def spy(held, window, players, projections, xmins, *rest):
+        calls.append(
+            SimpleNamespace(
+                held=held,
+                window=window,
+                xmins=dict(xmins),
+                events=projected_events(projections),
+            )
+        )
+        return real(held, window, players, projections, xmins, *rest)
+
+    monkeypatch.setattr(orchestrator, "build_calendar", spy)
+    return calls
+
+
+def test_the_calendar_is_built_once_from_base_minutes_and_a_resolve_does_not_move_it(
+    monkeypatch, tmp_path, seam
+):
+    calls = calendar_spy(monkeypatch)
+    seen = {}
+
+    def re_solve(consult: Consult) -> ManagerDecision:
+        # Ferrer ruled out for the coming week: his minutes, not the model's.
+        solved, _ = consult.resolver({FERRER: 0.0})
+        seen["first"], seen["again"] = consult.solve0.calendar, solved.calendar
+        return decided(consult, plan=solved.choice)
+
+    stub_gaffer(monkeypatch, re_solve)
+    store = Store(tmp_path / "aigaffer.db")
+    run_pipeline(
+        gaffer_cfg(tmp_path), make_client(halves_routes()), store, "scout",
+        send=False, now=PAST_THE_FLOOR,
+    )
+    base, _ = build_projections(seam.inputs, seam.cfg)
+
+    assert len(calls) == 1, "once a run, and never again for a re-solve"
+    assert calls[0].xmins[FERRER] == base[FERRER] > 0, "the model's minutes, not his"
+    # The window it judges is the solve's; the weeks it projects run on to the
+    # first set's expiry, which is where its chips are saved for.
+    assert calls[0].window == list(range(2, 2 + seam.cfg.horizon))
+    assert calls[0].events == list(range(2, 20))
+    assert seen["first"] is not None and seen["again"] is seen["first"]
+
+
+def test_a_failed_calendar_says_so_and_the_report_still_goes_out(
+    monkeypatch, capsys, tmp_path
+):
+    def broken(*args, **kwargs):
+        raise ValueError("a payload nobody has seen before")
+
+    monkeypatch.setattr(orchestrator, "build_calendar", broken)
+    sent = []
+    monkeypatch.setattr(orchestrator, "send_report", lambda *args: sent.append(args))
+    cfg = Config(
+        team_id=TEAM_ID,
+        telegram_token=TOKEN,
+        telegram_chat_id="42",
+        state_dir=tmp_path / "state",
+    )
+    store = Store(tmp_path / "aigaffer.db")
+
+    report = run_pipeline(cfg, make_client(halves_routes()), store, "deadline")
+
+    printed = capsys.readouterr().out.splitlines()
+    assert f"{CALENDAR_FAILED}: ValueError" in printed
+    assert not any("nobody has seen" in line for line in printed), "the type, never the words"
+    assert len(sent) == 1 and report.startswith("# AI Gaffer — GW2")
+    record = store.decision(2, "deadline")["chip_calendar"]
+    assert record["fell_back"] is True
+    # The old flat bars, for every first-set chip still in hand: each has
+    # weeks left beyond the window, so none is forced to play inside it.
+    bars = {entry["chip"]: entry["bars"]["2"] for entry in record["entries"]}
+    assert bars == {
+        "bench_boost@19": FALLBACK_BARS["bench_boost"],
+        "triple_captain@19": FALLBACK_BARS["triple_captain"],
+        "free_hit@19": FALLBACK_BARS["free_hit"],
+    }
+
+
+def test_the_record_keeps_the_calendar(tmp_path):
+    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
+    store = Store(tmp_path / "aigaffer.db")
+
+    run_pipeline(cfg, make_client(halves_routes()), store, "scout", send=False)
+    record = store.last_runs(1)[0]["decision"]["chip_calendar"]
+
+    assert record["fell_back"] is False
+    assert record["discount"] == CHIP_DISCOUNT
+    assert record["horizon_end"] == 19
+    # The first set the window can reach, soonest to expire and in chip order;
+    # the second set starts beyond the window and is not on it yet, and the
+    # wildcard went in GW1.
+    assert [entry["chip"] for entry in record["entries"]] == [
+        "bench_boost@19", "triple_captain@19", "free_hit@19",
+    ]
+    assert record["entries"][0]["chip"] == "bench_boost@19"
+    assert set(record["entries"][0]["bars"]) == {str(gw) for gw in range(2, 8)}
+
+
+def test_chips_off_builds_no_calendar_and_records_none(monkeypatch, tmp_path):
+    calls = calendar_spy(monkeypatch)
+    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state", chips=False)
+    store = Store(tmp_path / "aigaffer.db")
+
+    run_pipeline(cfg, make_client(halves_routes()), store, "scout", send=False)
+
+    assert calls == []
+    assert store.last_runs(1)[0]["decision"]["chip_calendar"] is None
+
+
+@pytest.mark.parametrize("mode", ["scout", "reminder"])
+def test_team_strengths_are_fitted_once_a_run(monkeypatch, tmp_path, mode):
+    # The run's projections, the calendar's and every re-solve's read one fit.
+    fits = []
+    real = orchestrator.build_team_strengths
+
+    def counting(*args, **kwargs):
+        fits.append(args)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(orchestrator, "build_team_strengths", counting)
+    calls = calendar_spy(monkeypatch)
+
+    def re_solve(consult: Consult) -> ManagerDecision:
+        solved, _ = consult.resolver({FERRER: 0.0})
+        return decided(consult, plan=solved.choice)
+
+    stub_gaffer(monkeypatch, re_solve)
+    run_pipeline(
+        gaffer_cfg(tmp_path), make_client(halves_routes()),
+        Store(tmp_path / "aigaffer.db"), mode, send=False, now=PAST_THE_FLOOR,
+    )
+
+    assert len(calls) == 1, "a calendar was built, so its projections were asked for"
+    assert len(fits) == 1
 
 
 # --- the reminder ----------------------------------------------------------
@@ -2393,7 +2640,7 @@ def test_the_full_report_records_the_actions_for_the_reminder(tmp_path):
         for out, bought in zip(record["transfers_out"], record["transfers_in"])
     ]
     assert stored["captain"] == record["captain"] == FERRER
-    assert stored["chip"] == "none"
+    assert stored["chip"] == record["chip"] == "triple_captain"
     assert stored["formation"] == record["formation"]
     assert record["solver_actions"] == stored, "no manager: his verdict is the solver's"
 
@@ -2475,7 +2722,7 @@ def test_the_news_moving_the_solver_is_shouted_about(tmp_path):
         f"- Captain moved from {NAMES[record['vice']]}"
         f" to {NAMES[record['captain']]}" in alert
     )
-    assert "- Chip changed from bench boost to none" in alert
+    assert "- Chip changed from bench boost to triple captain" in alert
     assert render.GAFFER_VERDICT in alert and render.FRESH_SOLVE in alert
     assert alert.index(render.GAFFER_VERDICT) < alert.index(render.FRESH_SOLVE)
     # The verdict block still carries the gaffer's own stored moves.
@@ -2486,7 +2733,47 @@ def test_the_news_moving_the_solver_is_shouted_about(tmp_path):
     changes = store.decision(2, "reminder")["changes"]
     assert changes["sells_added"] == [out] and changes["buys_added"] == [bought]
     assert changes["captain"] == [record["vice"], record["captain"]]
-    assert changes["chip"] == ["bench_boost", "none"]
+    assert changes["chip"] == ["bench_boost", "triple_captain"]
+
+
+def test_the_reminder_resolves_with_a_fresh_calendar_and_still_diffs_chips(
+    monkeypatch, tmp_path
+):
+    # Three hours out the solve is run again, and so is the calendar it is
+    # judged against: built afresh for this run, handed to the solve, kept in
+    # the reminder's record. The chip is still a kind on both sides of the
+    # diff, so a solver-then of "none" against a solver-now that plays the
+    # triple captain is a chip change like any other.
+    cfg = Config(team_id=TEAM_ID, state_dir=tmp_path / "state")
+    store = Store(cfg.state_dir / "aigaffer.db")
+    client = make_client(halves_routes())
+    run_pipeline(cfg, client, store, "deadline", send=False)
+    record = store.decision(2, "deadline")
+    store.save_run(
+        2, "deadline", "the yardstick",
+        dict(record, solver_actions=dict(record["solver_actions"], chip="none")),
+    )
+
+    calls = calendar_spy(monkeypatch)
+    given = []
+    real = orchestrator.solve
+
+    def triple_captain_now(inputs, projections, cfg, selling_prices=None, calendar=None):
+        given.append(calendar)
+        solved = real(inputs, projections, cfg, selling_prices, calendar)
+        path = replace(solved.choice.path, week1_chip=TRIPLE_CAPTAIN)
+        return replace(solved, choice=replace(solved.choice, path=path))
+
+    monkeypatch.setattr(orchestrator, "solve", triple_captain_now)
+
+    alert = run_pipeline(cfg, client, store, "reminder", send=False)
+    reminder = store.decision(2, "reminder")
+
+    assert len(calls) == 1 and len(given) == 1
+    assert given[0] is not None and given[0].fell_back is False
+    assert reminder["chip_calendar"] == given[0].record()
+    assert reminder["changes"]["chip"] == ["none", TRIPLE_CAPTAIN]
+    assert "- Chip changed from none to triple captain" in alert
 
 
 def test_a_record_from_before_solver_actions_were_kept_stays_calm(tmp_path):

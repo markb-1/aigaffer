@@ -46,11 +46,11 @@ A fourth stage hangs off it: :func:`_consult`, which puts the solved week to
 the manager (:mod:`aigaffer.manager`) and takes back the week to actually
 enter. It is optional in the strongest sense — no key, the kill switch, a
 draft, a rate limit, a refusal, a conversation that reaches no decision, or a
-chip he has already spent all end with the solver's own recommendation and a
-line in the report saying so. The rule that makes the rest of this module
-readable is that the decision it comes back with, whoever made it, is the one
-that goes into the report, the store and the phone. There is never a second
-opinion further down.
+chip we do not hold for the gameweek all end with the solver's own
+recommendation and a line in the report saying so. The rule that makes the
+rest of this module readable is that the decision it comes back with, whoever
+made it, is the one that goes into the report, the store and the phone. There
+is never a second opinion further down.
 
 One judgement sits on top of that rule. A manager who was asked and did not
 decide is a week the solver decided under his name, and while the window has
@@ -70,7 +70,7 @@ from typing import TYPE_CHECKING
 
 import httpx
 
-from aigaffer.chips import HeldChip, whole_season
+from aigaffer.chips import HeldChip, chip_windows, held_chips, held_for
 from aigaffer.config import (
     DEADLINE_ANCHOR_HOURS,
     EARLY_SCOUT_HOUR_UTC,
@@ -95,7 +95,7 @@ from aigaffer.data.models import (
 )
 from aigaffer.ledger import Observation, observe
 from aigaffer.model.minutes import expected_minutes, season_prior
-from aigaffer.model.strength import build_team_strengths
+from aigaffer.model.strength import TeamStrengths, build_team_strengths
 from aigaffer.model.xp import PlayerProjection, project_all, projected_events
 from aigaffer.report.render import (
     # ``agent.MANAGER``, reached without importing the manager package at
@@ -111,6 +111,12 @@ from aigaffer.report.render import (
     render_withheld,
 )
 from aigaffer.report.telegram import send_report
+from aigaffer.solver.calendar import (
+    ChipCalendar,
+    build_calendar,
+    fallback_calendar,
+    horizon_end,
+)
 from aigaffer.solver.lineup import (
     ChipEvs,
     Lineup,
@@ -118,13 +124,7 @@ from aigaffer.solver.lineup import (
     chip_evs,
     pick_lineup,
 )
-from aigaffer.solver.multiweek import (
-    BENCH_BOOST,
-    FREE_HIT,
-    TRIPLE_CAPTAIN,
-    WILDCARD,
-    PlannedMove,
-)
+from aigaffer.solver.multiweek import FREE_HIT, PlannedMove
 from aigaffer.solver.optimizer import (
     AVAILABLE,
     CANDIDATES_PER_POSITION,
@@ -236,9 +236,17 @@ RETRY_FLOORS = {
     EARLY_MODE: SCOUT_HORIZON_HOURS,
 }
 
-# And why a decision of his was not used: he played a chip that is gone. It is
-# the one refusal that happens outside his own loop.
-CHIP_SPENT = "chip already played"
+# And why a decision of his was not used: he played a chip we do not hold for
+# this gameweek — spent, expired, or the next set's, which is in hand from the
+# start of the season and playable only from its own start. It is the one
+# refusal that happens outside his own loop.
+CHIP_SPENT = "chip not held for this gameweek"
+
+# The line a run prints when the chip calendar could not be built. The calendar
+# is advice to the window's bars and never the week, so the run carries on, on
+# the fallback bars; this is how the log says so. A class name follows it,
+# never the exception's own words.
+CALENDAR_FAILED = "chip calendar failed"
 
 # A manager with no squad has the whole board and the opening budget: fifteen
 # moves from nothing, £100.0m to make them with, and no hit for any of them.
@@ -247,12 +255,6 @@ DRAFT_TRANSFERS = SQUAD_SIZE
 DRAFT_LABEL = "initial squad draft"
 
 NO_CHIPS = ChipEvs(bench_boost=0.0, triple_captain=0.0, free_hit=0.0, wildcard=0.0)
-
-# The four chips the window can plan. What is still in hand is this minus the
-# ones the season's history says are spent; the derivation lives in one place
-# (:func:`_available_chips`) so the solver and the "chip already played" belt
-# read the same chip history the same way.
-ALL_CHIPS = frozenset({BENCH_BOOST, TRIPLE_CAPTAIN, WILDCARD, FREE_HIT})
 
 # Which solver answered, for the record and for the report. It is read off the
 # recommendation rather than off the configuration, because asking for the
@@ -324,6 +326,11 @@ class SolveResult:
     not choosing between transfers — he is buying fifteen players — so the
     shortlist is one plan long, the chips are all worth nothing, and the
     report has to say so rather than read as this week's transfer advice.
+
+    ``calendar`` is the chip calendar the window's bars were read off, carried
+    so a reader of the solve — the record, the report, the gaffer's re-solves —
+    sees the one it was judged against. None when no chip is held: the switch
+    off, a draft, or a season whose chips are all gone.
     """
 
     plans: list[Plan]
@@ -331,6 +338,7 @@ class SolveResult:
     lineup: Lineup
     chips: ChipEvs
     draft_mode: bool
+    calendar: ChipCalendar | None = None
 
 
 def decide_mode(
@@ -468,9 +476,20 @@ def run_pipeline(
     ledger = observe(
         store, inputs.squad, inputs.players, inputs.chips_used, persist=False
     )
-    xmins, projections = build_projections(inputs, cfg)
-    solved = solve(inputs, projections, cfg, ledger.selling_prices)
-    gaffer = _consult(cfg, inputs, solved, projections, xmins, ledger.selling_prices)
+    # One fit of the team strengths a run, read by every projection the run
+    # makes: the week's, the calendar's and each of the gaffer's re-solves.
+    strengths = _strengths(inputs, cfg)
+    xmins, projections = build_projections(inputs, cfg, strengths=strengths)
+    # The chip calendar, once a run and before the solve it shapes; the
+    # gaffer's re-solves are judged against this same one (see _calendar).
+    calendar = _calendar(
+        inputs, cfg, projections, ledger.selling_prices, strengths=strengths
+    )
+    solved = solve(inputs, projections, cfg, ledger.selling_prices, calendar)
+    gaffer = _consult(
+        cfg, inputs, solved, projections, xmins, ledger.selling_prices,
+        calendar=calendar, strengths=strengths,
+    )
 
     # From here down the week is his, if there was a him: the plan he chose and
     # the eleven that goes with it, in every place the solver's own would have
@@ -557,6 +576,10 @@ def run_pipeline(
         # that play none. Recorded here so the diary reads the same as the phone.
         "chip": chip,
         "chip_evs": asdict(solved.chips),
+        # What each chip in hand was being saved for, and the bars the window
+        # was given — or None when no chip is held. Kept beside the panel so a
+        # later reader can see why a chip went, or did not, in this week.
+        "chip_calendar": calendar.record() if calendar is not None else None,
         "chip_baseline": _baseline_label(solved),
         "engine": _engine(choice),
         "solver_actions": plan_actions(
@@ -750,8 +773,15 @@ def _run_reminder(
     ledger = observe(
         store, inputs.squad, inputs.players, inputs.chips_used, persist=False
     )
-    _, projections = build_projections(inputs, cfg)
-    solved = solve(inputs, projections, cfg, ledger.selling_prices)
+    # A fresh calendar for a fresh solve: the deadline run's was built on the
+    # board as it stood a day ago, and the yardstick here is solver-then
+    # against solver-now, each on its own day's calendar. One fit, as ever.
+    strengths = _strengths(inputs, cfg)
+    _, projections = build_projections(inputs, cfg, strengths=strengths)
+    calendar = _calendar(
+        inputs, cfg, projections, ledger.selling_prices, strengths=strengths
+    )
+    solved = solve(inputs, projections, cfg, ledger.selling_prices, calendar)
     event = inputs.event
 
     # The same reading of the solve the full report would make without a
@@ -793,6 +823,7 @@ def _run_reminder(
         "full_report_plan": stored,
         "full_report_solver_plan": solver_then,
         "changes": changes,
+        "chip_calendar": calendar.record() if calendar is not None else None,
     }
     # Deliver before saving — see the docstring: a buzz that failed must
     # leave has_run false so the next tick retries, and the history file
@@ -994,10 +1025,38 @@ def fetch_inputs(cfg: Config, client: FplClient) -> PipelineInputs:
     )
 
 
+# What ``build_projections`` is handed when nobody fitted the team strengths
+# for it: fit them here. Not None, because None is an answer — the switch off,
+# or a fit that failed and said so — and a caller who already has it must not
+# pay for a second fit, or print a second failure line, to be told it again.
+_UNFITTED = object()
+
+
+def _strengths(inputs: PipelineInputs, cfg: Config) -> TeamStrengths | None:
+    """The fitted team strengths, when the switch is on: the vendored seasons
+    plus whatever this one has finished, refit on every run so the ratings
+    sharpen weekly for free. A failed fit already said so on stdout and hands
+    back None, which is the editorial columns.
+
+    Fitted once a run and handed to every projection the run makes — the
+    week's, the calendar's, each re-solve's — so all of them price fixtures
+    the same way. It is cheap (a few hundredths of a second on the live
+    board), but one fit a run is also one answer a run.
+    """
+    if not cfg.strength_enabled:
+        return None
+    return build_team_strengths(
+        inputs.bootstrap, inputs.fixtures, datetime.now(UTC).date()
+    )
+
+
 def build_projections(
     inputs: PipelineInputs,
     cfg: Config,
     minute_overrides: dict[int, float] | None = None,
+    *,
+    horizon: int | None = None,
+    strengths: "TeamStrengths | None | object" = _UNFITTED,
 ) -> tuple[dict[int, float], dict[int, PlayerProjection]]:
     """Expected minutes, and the expected points that follow from them.
 
@@ -1026,6 +1085,13 @@ def build_projections(
     A player nobody fetched a history for has no entry here at all, which
     projects him at zero: not a player the solver will buy, which is the
     point of leaving him out.
+
+    ``horizon`` is how many gameweeks to project, from the coming one, when
+    the caller needs other than ``cfg.horizon``: the chip calendar, which
+    looks past the window to the expiry of the chips it plans. ``strengths``
+    is the run's fit (:func:`_strengths`), passed by a caller that already
+    has it — None included, which means the editorial columns — and fitted
+    here only when nobody passed one.
     """
     xmins = {
         pid: expected_minutes(
@@ -1038,23 +1104,14 @@ def build_projections(
         for pid, minutes in (minute_overrides or {}).items()
     }
 
-    # The fitted team strengths, when the switch is on: the vendored
-    # seasons plus whatever this one has finished, refit on every run so
-    # the ratings sharpen weekly for free. A failed fit already said so
-    # on stdout and hands back None, which is the editorial columns.
-    strengths = (
-        build_team_strengths(
-            inputs.bootstrap, inputs.fixtures, datetime.now(UTC).date()
-        )
-        if cfg.strength_enabled
-        else None
-    )
+    if strengths is _UNFITTED:
+        strengths = _strengths(inputs, cfg)
     projections = project_all(
         inputs.bootstrap,
         inputs.fixtures,
         xmins,
         inputs.event.id,
-        cfg.horizon,
+        horizon or cfg.horizon,
         cfg.decay,
         strengths=strengths,
         overrides=overrides,
@@ -1067,6 +1124,7 @@ def solve(
     projections: dict[int, PlayerProjection],
     cfg: Config,
     selling_prices: dict[int, int] | None = None,
+    calendar: ChipCalendar | None = None,
 ) -> SolveResult:
     """The shortlist, the plan to recommend, the eleven and the chip panel.
 
@@ -1088,15 +1146,24 @@ def solve(
     shortlist's engines and the chip panel's rebuild boards. None — what a
     caller without a ledger passes, tests included — sells everyone at his
     listed price, which is the pre-ledger behaviour to the byte.
+
+    ``calendar`` is the run's chip calendar (:func:`_calendar`), built once
+    outside this function because it is not a function of these projections:
+    a re-solve on the gaffer's minutes is judged against the same bars as the
+    solve before it. Its bars are what each held chip must beat in each week
+    of the window. None — no chip held, or a caller with no calendar — leaves
+    the window its fallback bars.
     """
-    available_chips = _available_chips(cfg, inputs)
+    held = _held(cfg, inputs)
+    bars = calendar.bars if calendar is not None else None
     plans, choice = _plans(
         inputs.players,
         projections,
         inputs.squad,
         inputs.free_transfers,
         cfg,
-        available_chips,
+        held,
+        bars,
         selling_prices,
     )
     positions = {pid: player.element_type for pid, player in inputs.players.items()}
@@ -1132,6 +1199,7 @@ def solve(
         lineup=lineup,
         chips=chips,
         draft_mode=inputs.squad is None,
+        calendar=calendar,
     )
 
 
@@ -1142,6 +1210,9 @@ def _consult(
     projections: dict[int, PlayerProjection],
     xmins: dict[int, float],
     selling_prices: dict[int, int] | None = None,
+    *,
+    calendar: ChipCalendar | None = None,
+    strengths: "TeamStrengths | None | object" = _UNFITTED,
 ) -> "ManagerDecision | None":
     """Put the week to the manager, and come back with the week to enter.
 
@@ -1161,6 +1232,12 @@ def _consult(
     module's types to do its job, so the dependency runs one way at module
     scope and is closed inside a function, which also keeps the Anthropic SDK
     off the import path of every run that never asks for a manager.
+
+    ``calendar`` and ``strengths`` are the run's own, and his re-solves reuse
+    both rather than make their own: the calendar is built on the model's
+    minutes, not his — his are for the coming gameweek and must not reach a
+    week months out — and a re-solve judged against bars of its own would be
+    a different question, not the same one on better news.
     """
     if solved.draft_mode or not cfg.manager_enabled:
         return None
@@ -1182,7 +1259,7 @@ def _consult(
             ManagerDecision,
             run_manager,
         )
-        from aigaffer.manager.tools import NO_CHIP, played_chips
+        from aigaffer.manager.tools import NO_CHIP
     except Exception as error:  # a broken install, and still not a lost week
         print(f"{STOOD_DOWN}: {type(error).__name__}")
         return None
@@ -1209,9 +1286,13 @@ def _consult(
         seam. The projections that come back are the ones the solve was run
         on, because the eleven he ends up with is picked from them. The
         ledger's selling prices ride along: a re-solve on fresh minutes is
-        still spending the same money."""
-        _, adjusted = build_projections(inputs, cfg, overrides)
-        return solve(inputs, adjusted, cfg, selling_prices), adjusted
+        still spending the same money. So do the run's calendar and its fit
+        of the team strengths: never recomputed here, so his minutes move
+        the week and never the bars it is judged against."""
+        _, adjusted = build_projections(
+            inputs, cfg, overrides, strengths=strengths
+        )
+        return solve(inputs, adjusted, cfg, selling_prices, calendar), adjusted
 
     try:
         # The second group: what asking him needs, imported where it is used,
@@ -1257,12 +1338,15 @@ def _consult(
     except Exception as error:  # the gaffer is a luxury; the report is not
         decision = solver_view(f"unexpected {type(error).__name__}")
 
-    # The briefing tells him which chips are gone; this is the belt under that
-    # brace, and it is checked here rather than in the loop because the loop
-    # has no business knowing what our chip history looks like. A week built
-    # on a chip we cannot play is not a week anybody can enter, so the whole
-    # decision goes back to the solver rather than just the chip.
-    if decision.chip != NO_CHIP and decision.chip in played_chips(inputs.chips_used):
+    # The briefing tells him which chips he cannot play; this is the belt under
+    # that brace, for a chip not held for this gameweek — spent, expired, or
+    # the next set's, in hand but not yet playable — and it is checked here
+    # rather than in the loop because the loop has no business knowing what
+    # our chip history looks like. A week built on a chip we cannot play is
+    # not a week anybody can enter, so the whole decision goes back to the
+    # solver rather than just the chip.
+    held = _held(cfg, inputs)
+    if decision.chip != NO_CHIP and held_for(held, decision.chip, inputs.event.id) is None:
         decision = solver_view(CHIP_SPENT, decision.searches)
 
     # One line a run, on stdout, for the log nobody is watching live: either
@@ -1519,25 +1603,64 @@ def history_pool(players: dict[int, Player], held: list[int]) -> list[int]:
     return sorted(pool)
 
 
-def _available_chips(cfg: Config, inputs: PipelineInputs) -> tuple[HeldChip, ...]:
-    """Which chips the window may plan this run.
+def _held(cfg: Config, inputs: PipelineInputs) -> tuple[HeldChip, ...]:
+    """The chips in hand this run, each with the window it must be played in.
 
     Empty when the switch is off — chips advisory only, Phase 2.5 to the byte —
     and empty for a draft, because a chip is played against a squad and there
-    is not one yet. Otherwise the four the window plans, less the ones the
-    season's chip history says are already spent: a spent chip is simply absent
-    from the decision space, which is where the "chip already played" belt gets
-    its half of the guarantee.
-
-    ``played_chips`` is imported here rather than at module scope: the manager
-    package is the orchestrator's downstream, so the dependency runs one way and
-    is closed inside the one function that needs the chip-name mapping.
+    is not one yet. Otherwise every chip the bootstrap's rules hand out that the
+    season's history has not spent and whose window has not closed: the first
+    set's and, from the start of the season, the second's, which the window
+    may not play before GW20 (:mod:`aigaffer.chips` has the rules). A chip not
+    held is simply absent from the decision space, which is where the "not held
+    for this gameweek" belt in :func:`_consult` gets its half of the guarantee.
+    The derivation lives here, in one place, so the solver, the calendar and
+    the belt read the same chip history the same way.
     """
     if not cfg.chips or inputs.squad is None:
         return ()
-    from aigaffer.manager.tools import played_chips
+    return held_chips(
+        chip_windows(inputs.bootstrap.chips), inputs.chips_used, inputs.event.id
+    )
 
-    return whole_season(*(ALL_CHIPS - played_chips(inputs.chips_used)))
+
+def _calendar(
+    inputs: PipelineInputs,
+    cfg: Config,
+    projections: dict[int, PlayerProjection],
+    selling_prices: dict[int, int] | None,
+    strengths: "TeamStrengths | None | object" = _UNFITTED,
+) -> ChipCalendar | None:
+    """The chip calendar for this run, or None when no chip is held.
+
+    Built once, here, from projections of its own: base minutes (the gaffer's
+    are for the coming gameweek and must not reach GW17) and a horizon running
+    to the furthest expiry the window can reach. The resolver closes over the
+    result, so a re-solve on his minutes is judged against the same calendar.
+    A failure costs the calendar, never the week: one line on stdout and the
+    fallback bars, which still play a chip with no later week inside the
+    window.
+
+    ``strengths`` is the run's fit, handed on so the calendar never refits;
+    the window is the one ``projections`` covers, which is the one the solve
+    plans over.
+    """
+    held = _held(cfg, inputs)
+    if not held:
+        return None
+    window = projected_events(projections)
+    try:
+        end = horizon_end(held, window)
+        xmins, base = build_projections(
+            inputs, cfg, horizon=end - inputs.event.id + 1, strengths=strengths
+        )
+        return build_calendar(
+            held, window, inputs.players, base, xmins,
+            inputs.squad.player_ids, inputs.squad.bank, selling_prices,
+        )
+    except Exception as error:  # the calendar is advice to the bars, not the week
+        print(f"{CALENDAR_FAILED}: {type(error).__name__}")
+        return fallback_calendar(held, window)
 
 
 def _fielded_lineup(
@@ -1580,7 +1703,8 @@ def _plans(
     squad: Squad | None,
     free_transfers: int | None,
     cfg: Config,
-    available_chips: tuple[HeldChip, ...] = (),
+    held_chips: tuple[HeldChip, ...] = (),
+    bars: dict[str, dict[int, float]] | None = None,
     selling_prices: dict[int, int] | None = None,
 ) -> tuple[list[Plan], Plan]:
     """The shortlist, and the plan to recommend from it.
@@ -1590,8 +1714,10 @@ def _plans(
     recommendation. A draft is also the one week the window is never asked
     about — fifteen signings will not fit under a gameweek's transfer ceiling
     — which is why the drafting branch below does not pass one, and is also
-    the one week ``available_chips`` is always empty for, and the one week
-    ``selling_prices`` has nobody to price: a draft only buys.
+    the one week ``held_chips`` is always empty for, and the one week
+    ``selling_prices`` has nobody to price: a draft only buys. ``bars`` are
+    the calendar's, keyed by held chip and gameweek, and ride with the chips
+    they price.
     """
     if squad is None:
         draft = optimize(
@@ -1615,7 +1741,8 @@ def _plans(
         projections_events=projected_events(xp),
         decay=cfg.decay,
         planner=cfg.planner,
-        held_chips=available_chips,
+        held_chips=held_chips,
+        bars=bars,
         selling_prices=selling_prices,
     )
     if not plans:
