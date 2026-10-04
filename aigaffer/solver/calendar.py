@@ -43,7 +43,6 @@ from aigaffer.solver.multiweek import (
     FALLBACK_BARS,
     best_one_week_squads,
     squad_one_week,
-    squad_one_week_score,
 )
 from aigaffer.solver.optimizer import AVAILABLE, BENCH_WEIGHT
 
@@ -209,6 +208,8 @@ def _values(
                 continue
             fifteen = answer[1]
             _, _, xi = squad_one_week(players, projections, fifteen, w)
+            if not xi:  # no eleven, so no bench to tell from the rest: not priced
+                continue
             bench = set(fifteen) - set(xi)
             values[w] = scale * (1 - BENCH_WEIGHT) * sum(
                 projections[p].per_gw.get(w, 0.0) for p in bench
@@ -217,10 +218,15 @@ def _values(
     priced = best_one_week_squads(
         players, projections, current_squad, bank, weeks, selling_prices=selling_prices,
     )
-    return {
-        w: scale * (answer[0] - squad_one_week_score(players, projections, current_squad, w))
-        for w, answer in priced.items() if answer is not None
-    }
+    values = {}
+    for w, answer in priced.items():
+        if answer is None:
+            continue
+        held_score, _, xi = squad_one_week(players, projections, current_squad, w)
+        if not xi:  # the squad held lines up no eleven, so its 0.0 is no baseline: not priced
+            continue
+        values[w] = scale * (answer[0] - held_score)
+    return values
 
 
 def build_calendar(

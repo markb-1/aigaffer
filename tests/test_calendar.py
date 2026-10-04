@@ -394,6 +394,39 @@ def test_a_week_that_cannot_be_priced_is_skipped(board_beyond_window, monkeypatc
     assert fh.bars == {6: OPTION_FLOOR[FREE_HIT], 7: OPTION_FLOOR[FREE_HIT]}
 
 
+def _cannot_line_up(week, monkeypatch):
+    """Make ``squad_one_week`` find no eleven in ``week``, as it does for a
+    squad with too few players at some position."""
+    real = calendar.squad_one_week
+
+    def empty_in_week(players, projections, squad, event):
+        if event == week:
+            return 0.0, squad, []
+        return real(players, projections, squad, event)
+
+    monkeypatch.setattr(calendar, "squad_one_week", empty_in_week)
+
+
+def test_a_bench_boost_week_the_fifteen_cannot_line_up_is_skipped(board_beyond_window, monkeypatch):
+    # No eleven means no bench: counting all fifteen would be a huge, silent
+    # value, and the one week the boost would be saved for.
+    _cannot_line_up(9, monkeypatch)
+    b = board_beyond_window
+    values = _values(BENCH_BOOST, [8, 9, 10], b.players, b.projections, b.xmins, b.squad, b.bank, None)
+    assert values == {8: pytest.approx(BB_VALUE, abs=1e-6), 10: pytest.approx(BB_VALUE, abs=1e-6)}
+    cal = _build(b, held=(BB10,))
+    assert cal.entries[0].saved_for == 8
+
+
+def test_a_free_hit_week_the_squad_cannot_line_up_is_skipped(board_beyond_window, monkeypatch):
+    # No eleven for the squad held scores 0, so the free hit would be worth
+    # the whole best squad: the week is left out, the others still price.
+    _cannot_line_up(10, monkeypatch)
+    b = board_beyond_window
+    values = _values(FREE_HIT, [8, 9, 10], b.players, b.projections, b.xmins, b.squad, b.bank, None)
+    assert values == {8: pytest.approx(FH_VALUES[8], abs=1e-6), 9: pytest.approx(FH_VALUES[9], abs=1e-6)}
+
+
 def test_the_free_hit_is_the_best_squad_less_the_one_held(board_beyond_window):
     # Both sides on the window's basis: 0.85 × (62.04 - 61.54) in GW8 and 9,
     # 0.85 × (80.44 - 61.54) in GW10.
