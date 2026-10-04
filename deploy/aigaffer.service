@@ -1,0 +1,14 @@
+# Copy to /etc/systemd/system/ and replace the two placeholders: the user
+# that owns the clone, and the clone's path.
+[Unit]
+Description=AI Gaffer tick (pull, auto, commit, push)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=YOUR_USER
+ExecStart=/path/to/aigaffer/scripts/run-tick.sh
+# A manager run is minutes long, and a slow one is cut off at twelve
+# minutes inside Python; forty leaves the pull and push plenty of room.
+TimeoutStartSec=2400

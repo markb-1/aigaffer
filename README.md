@@ -492,7 +492,8 @@ the schedule's gate entirely).
 The schedule fires hourly at `50 * * * *` as a **backup**: the primary
 tick is best run from a machine of your own — any always-on box with the
 repo cloned, running `python -m aigaffer auto` on an hourly timer at :35
-and pushing the state back (FPL deadlines sit on the half hour, so a :35
+and pushing the state back, which is what `scripts/run-tick.sh` and the
+units in `deploy/` do (setup below; FPL deadlines sit on the half hour, so a :35
 tick lands each report about five minutes after its window opens; the
 store then stands GitHub's :50 tick down, and carries the report if your
 box misses). The Actions workflow does nothing at all most of the week:
@@ -542,6 +543,40 @@ activity**, and emails the owner first. That will happen over the
 off-season, when nothing is being committed and the bot is standing down
 anyway; re-enable it from the Actions tab (or push any commit) before the
 first deadline of the new season.
+
+### Your own box
+
+Any always-on Linux machine will do — a free-tier cloud VM is plenty. On
+it:
+
+```sh
+git clone git@github.com:YOU/aigaffer.git && cd aigaffer
+python3 -m venv .venv && .venv/bin/pip install .
+cp .env.example .env && chmod 600 .env   # then fill it in
+```
+
+- **Push access.** The tick commits `state/` and the `GW{n}.md` verdicts
+  back, so the clone needs write access: a deploy key with *Allow write
+  access* (repo **Settings → Deploy keys**) is the narrowest way to give it.
+- **The solver binary.** PuLP bundles CBC for x86-64; on ARM (Oracle's free
+  Ampere boxes, a Raspberry Pi) install it from the distribution —
+  `sudo apt install coinor-cbc` — or every solve fails.
+- **Check the key before trusting it.** A rejected Anthropic key does not
+  fail the tick, it withholds the report and alerts you, so prove it once by
+  hand from the box itself:
+  `.venv/bin/python -c "import anthropic; print(anthropic.Anthropic().models.list().data[0].id)"`
+  with the `.env` exported. Then a dry run: `set -a; . ./.env; set +a;
+  .venv/bin/python -m aigaffer scout --dry-run`.
+- **The timer.** Copy `deploy/aigaffer.service` and `deploy/aigaffer.timer`
+  to `/etc/systemd/system/`, fill in the user and path in the service, then
+  `sudo systemctl enable --now aigaffer.timer`. `systemctl list-timers
+  aigaffer.timer` shows the next tick and `journalctl -u aigaffer` what the
+  last one said.
+
+`run-tick.sh` stands down while `.env` is missing or still holds a
+`FILL_ME`, pulls before it runs so a fix pushed from your laptop is live
+on the next tick, and commits only when the run changed something — an
+out-of-window tick costs one `git pull` and a few seconds of Python.
 
 ### What it costs
 

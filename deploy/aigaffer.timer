@@ -1,0 +1,13 @@
+# Copy to /etc/systemd/system/, then: systemctl enable --now aigaffer.timer
+[Unit]
+Description=Hourly gaffer tick at :35 — the primary scheduler; GitHub cron at :50 is the backup
+
+[Timer]
+# FPL deadlines sit on the half hour, so :35 lands each report about five
+# minutes after its window opens. Persistent catches up a tick the box slept
+# through.
+OnCalendar=*-*-* *:35:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
