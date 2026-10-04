@@ -674,7 +674,10 @@ These are deliberate. Do not "fix" them without revisiting the design:
    A brand-new signing, a promoted club's player or a teenager has no Premier
    League season to read, so he still falls back on `starts`, which is zero for
    everybody in GW1, and he is still projected at a substitute's twenty
-   minutes. The gaffer's own minute overrides remain the mitigation for those.
+   minutes. The gaffer's own minute overrides remain the mitigation for those,
+   for the coming gameweek: an override does not reach the weeks after it, so
+   his eleven and armband are corrected but the window still undervalues him
+   further out until his own history takes over.
 
    Three edges of the prior are worth knowing. A January signing's half-season
    of minutes is spread over a whole one, so he is understated — the payload
@@ -688,8 +691,10 @@ These are deliberate. Do not "fix" them without revisiting the design:
    That last one is understatement, and understatement is not free. For a
    player you do not own it costs a transfer you would have made. For a player
    already in your fifteen it can leave him out of the eleven or put him on the
-   sell side — which is the case to watch in the first three gameweeks, and
-   what the gaffer's own minute overrides are there to correct.
+   sell side — which is the case to watch in the first three gameweeks. The
+   gaffer's own minute overrides correct the eleven he is left out of; they
+   are for the coming gameweek only, so a sale the window recommends on his
+   later weeks is the gaffer's to argue down, not the override's to fix.
 
 ### The backtest is a sanity check, not a backtest
 
