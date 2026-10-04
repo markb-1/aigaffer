@@ -625,6 +625,14 @@ def test_the_briefing_carries_the_chip_calendar_after_the_chip_panel():
     assert "## Chip calendar" not in briefing()
 
 
+def test_an_entryless_calendar_adds_no_section_to_the_briefing():
+    from aigaffer.solver.calendar import ChipCalendar
+
+    empty = ChipCalendar(entries=(), discount=0.97, proxy_scale={}, horizon_end=19)
+    text = briefing(solve=replace(solved(), calendar=empty))
+    assert headings(text) == HEADINGS
+
+
 def test_a_chip_already_played_is_priced_and_marked_gone():
     # The EV is still worth reading — it says what the chip would have been
     # worth — but the manager may not play it, and the panel is where he finds

@@ -1417,3 +1417,11 @@ def test_a_fallen_back_calendar_says_it_is_unavailable():
 
     cal = fallback_calendar((HeldChip(TRIPLE_CAPTAIN, 1, 19),), [6, 7, 8, 9, 10, 11])
     assert "calendar unavailable" in render_chip_calendar(cal, 6)
+
+
+def test_a_calendar_with_no_entries_renders_no_section():
+    from aigaffer.report.render import render_chip_calendar
+    from aigaffer.solver.calendar import ChipCalendar
+
+    empty = ChipCalendar(entries=(), discount=0.97, proxy_scale={}, horizon_end=19)
+    assert render_chip_calendar(empty, 6) is None

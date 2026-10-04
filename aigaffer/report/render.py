@@ -1398,8 +1398,9 @@ def render_chip_calendar(calendar: "ChipCalendar | None", event: int) -> str | N
     """The chip calendar as a section: each chip's window, the week it is saved
     for and what it is worth there, and the bar it must clear this gameweek.
     Shared by the gaffer's briefing and the owner's report, so the two read
-    the same chips the same way. None when no chip is held."""
-    if calendar is None:
+    the same chips the same way. None when no chip is held, or none is playable
+    within the window (an entryless calendar has nothing to say)."""
+    if calendar is None or not calendar.entries:
         return None
     lines = ["## Chip calendar", ""]
     if calendar.fell_back:
