@@ -1002,9 +1002,20 @@ def build_projections(
 
     ``minute_overrides`` replaces what the minutes model made of a player's
     history with what the caller knows about him — the manager who has read
-    that he trained alone on Friday — as expected minutes for the gameweek,
-    not as a multiplier, and clamped to a match. Everyone else is projected
-    exactly as he would have been.
+    that he trained alone on Friday — as expected minutes for the coming
+    gameweek, not as a multiplier, and clamped to a match. For the coming
+    gameweek only: the weeks after it in the window are projected on the
+    model's own minutes, because Friday's team news is about Saturday and the
+    multi-week planner reads every week it is given
+    (:func:`aigaffer.model.xp.project_all` has the whole argument). Everyone
+    else is projected exactly as he would have been.
+
+    The minutes handed back are the coming gameweek's — the model's, with
+    the overrides on top — because that is the one week anybody reads them
+    for: the briefing's xMins column is the number ``adjust_players``
+    overwrites, and it is the coming week's number that he overwrites. The
+    weeks after it are on the model's minutes, which are the same numbers
+    with no override in them.
 
     Each player's prior goes in beside his history: last season is what holds
     a returning player up when this one is a gameweek or two old, and a player
@@ -1021,8 +1032,10 @@ def build_projections(
         )
         for pid, history in inputs.histories.items()
     }
-    for pid, minutes in (minute_overrides or {}).items():
-        xmins[pid] = min(FULL_MATCH, max(NO_MINUTES, float(minutes)))
+    overrides = {
+        pid: min(FULL_MATCH, max(NO_MINUTES, float(minutes)))
+        for pid, minutes in (minute_overrides or {}).items()
+    }
 
     # The fitted team strengths, when the switch is on: the vendored
     # seasons plus whatever this one has finished, refit on every run so
@@ -1043,8 +1056,9 @@ def build_projections(
         cfg.horizon,
         cfg.decay,
         strengths=strengths,
+        overrides=overrides,
     )
-    return xmins, projections
+    return {**xmins, **overrides}, projections
 
 
 def solve(

@@ -345,7 +345,13 @@ with four things it may do and nothing else:
    expected minutes for the coming gameweek absolutely — 0 for a player who
    is out, 20 for a substitute, 90 for a starter — and `resolve` re-projects
    and re-solves with those in force, coming back with fresh plans under
-   fresh ids.
+   fresh ids. The coming gameweek only: every later week in the planner's
+   window keeps the model's own minutes, so "out this week" does not sell a
+   player for the month or price his later bench boost and armband at
+   nothing. The model's minutes already carry the FPL injury flag across the
+   whole window, so a flagged long-term absence stays at zero regardless;
+   the cost is an absence the gaffer has read about and the API has not
+   flagged yet, which reads as back after the coming week.
 4. **Finalize** one plan, a captain and vice from that plan's eleven, a chip
    or none, and the rationale.
 

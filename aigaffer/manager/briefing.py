@@ -394,7 +394,8 @@ def _situation(
         if board.xmins is None
         else (
             ' "xMins" is the expected minutes the projection was built on, and'
-            " the one number adjust_players overwrites;"
+            " the one number adjust_players overwrites, for the coming"
+            " gameweek;"
         )
     )
 

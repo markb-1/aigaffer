@@ -688,6 +688,136 @@ def test_a_fixture_is_scored_against_the_right_opponent_and_venue():
     assert projections[6].per_gw[2] == approx(fixture_points(grant, 90.0, att_factor, lam))
 
 
+# --- minute overrides: the coming gameweek only ------------------------
+#
+# An override is what somebody who has read the team news says about the
+# gameweek that news is about — the next one — and not a verdict on the whole
+# window the planner plans over. Three weeks of Lions v Bears, alternating
+# venue, so every gameweek in the window has something in it to change.
+
+THREE_WEEKS = [
+    HOME_FIXTURE,
+    Fixture(id=2, event=3, team_h=2, team_a=1),
+    Fixture(id=3, event=4, team_h=1, team_a=2),
+]
+
+
+def overridden(
+    subject: Player, minutes: float, coming: float, **kwargs
+) -> PlayerProjection:
+    """``subject`` on ``minutes`` a week, overridden to ``coming`` in GW2."""
+    projections = project_all(
+        bootstrap(subject),
+        THREE_WEEKS,
+        {subject.id: minutes},
+        start_event=2,
+        horizon=3,
+        overrides={subject.id: coming},
+        **kwargs,
+    )
+    return projections[subject.id]
+
+
+def test_an_override_is_for_the_coming_gameweek_only():
+    mid = player(id=10)
+    base = project(mid, THREE_WEEKS, minutes=90.0, horizon=3)
+    as_a_sub = project(mid, THREE_WEEKS, minutes=30.0, horizon=3)
+
+    projection = overridden(mid, minutes=90.0, coming=30.0)
+
+    # The coming week is the substitute's, fixture by fixture...
+    assert projection.per_gw[2] == as_a_sub.per_gw[2]
+    assert projection.attacking_per_gw[2] == as_a_sub.attacking_per_gw[2]
+    # ...and every week after it is exactly what it was with no override.
+    for gw in (3, 4):
+        assert projection.per_gw[gw] == base.per_gw[gw]
+        assert projection.attacking_per_gw[gw] == base.attacking_per_gw[gw]
+    # The total the solver maximises is the decayed sum of the new weeks, not
+    # the old total with something taken off it.
+    assert projection.total == decayed_total(projection.per_gw, 0.85)
+
+
+def test_a_player_ruled_out_this_week_is_back_the_week_after():
+    mid = player(id=10)
+    base = project(mid, THREE_WEEKS, minutes=90.0, horizon=3)
+
+    projection = overridden(mid, minutes=90.0, coming=0.0)
+
+    assert projection.per_gw[2] == 0.0
+    assert projection.attacking_per_gw[2] == 0.0
+    assert projection.per_gw[3] == base.per_gw[3] > 0
+    assert projection.per_gw[4] == base.per_gw[4] > 0
+    # GW2 is worth nothing, so the total is GW3 and GW4 at their usual discount.
+    assert projection.total == approx(0.85 * base.per_gw[3] + 0.85**2 * base.per_gw[4])
+
+
+def test_half_the_minutes_is_not_half_the_points():
+    # The override has to be projected, not applied as a ratio to the
+    # projection it replaces: appearance points are not linear in minutes.
+    # Forty-five minutes is a certain appearance (45/60 = 0.75 of one, capped
+    # at an hour) and half a chance of the hour — 1.25 points against the
+    # 1.0 that halving a ninety-minute week's 2.0 would give. Everything else
+    # a midfielder scores is a rate times minutes and does halve, so the
+    # whole of the gap is the appearance's 0.25.
+    mid = player(id=10)
+    full = project(mid, THREE_WEEKS, minutes=90.0, horizon=3)
+
+    projection = overridden(mid, minutes=90.0, coming=45.0)
+
+    assert appearance_points(45.0) == approx(1.25)
+    assert projection.per_gw[2] - full.per_gw[2] / 2 == approx(0.25)
+    # The attacking slice is a rate times minutes, so that one does halve.
+    assert projection.attacking_per_gw[2] == approx(full.attacking_per_gw[2] / 2)
+
+
+def test_an_override_reaches_a_player_the_minutes_model_never_saw():
+    # A player with no xmins entry projects at zero — and an override for him
+    # is the minutes of the coming week and nothing more: the weeks after it
+    # go back to the zero he had.
+    mid = player(id=10)
+    projections = project_all(
+        bootstrap(mid), THREE_WEEKS, {}, start_event=2, horizon=3,
+        overrides={10: 90.0},
+    )
+    played_out = project(mid, THREE_WEEKS, minutes=90.0, horizon=3)
+
+    assert projections[10].per_gw == {2: played_out.per_gw[2], 3: 0.0, 4: 0.0}
+
+
+def test_an_override_of_the_minutes_he_already_had_changes_nothing():
+    mid = player(id=10)
+    assert overridden(mid, minutes=72.0, coming=72.0) == project(
+        mid, THREE_WEEKS, minutes=72.0, horizon=3
+    )
+
+
+@pytest.mark.parametrize("none", [None, {}])
+def test_no_overrides_is_the_projection_without_them_to_the_byte(none):
+    # Every caller that predates overrides — the backtest, these tests — gets
+    # exactly what it got before, and so does a manager who adjusted nobody.
+    squad = bootstrap(player(id=10), player(id=11, team=2, element_type=2))
+    xmins = {10: 90.0, 11: 60.0}
+
+    without = project_all(squad, THREE_WEEKS, xmins, start_event=2, horizon=3)
+    explicit = project_all(
+        squad, THREE_WEEKS, xmins, start_event=2, horizon=3, overrides=none
+    )
+
+    assert explicit == without
+
+
+def test_an_override_touches_nobody_else():
+    squad = bootstrap(player(id=10), player(id=11, team=2, element_type=2))
+    xmins = {10: 90.0, 11: 60.0}
+
+    before = project_all(squad, THREE_WEEKS, xmins, start_event=2, horizon=3)
+    after = project_all(
+        squad, THREE_WEEKS, xmins, start_event=2, horizon=3, overrides={10: 0.0}
+    )
+
+    assert after[11] == before[11]
+
+
 # --- the prior season, pooled -----------------------------------------
 
 LAST_SEASON = SeasonPrior(

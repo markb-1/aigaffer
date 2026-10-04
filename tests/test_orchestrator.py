@@ -951,18 +951,68 @@ def test_the_stages_compose_to_the_report_the_pipeline_wrote(seam, scout_run):
     assert solved.draft_mode is False
 
 
-def test_an_override_of_no_minutes_writes_a_player_out(seam):
+def test_an_override_of_no_minutes_writes_a_player_out_of_the_coming_week(seam):
+    event = seam.inputs.event.id
     _, before = build_projections(seam.inputs, seam.cfg)
 
     xmins, after = build_projections(seam.inputs, seam.cfg, {FERRER: 0.0})
 
-    assert before[FERRER].total > 0  # there was something to take away
-    assert xmins[FERRER] == 0.0
-    assert after[FERRER].total == 0.0
+    assert before[FERRER].per_gw[event] > 0  # there was something to take away
+    assert xmins[FERRER] == 0.0, "the minutes handed back are the coming week's"
+    assert after[FERRER].per_gw[event] == 0.0
+    assert after[FERRER].attacking_per_gw[event] == 0.0
+    # Out this week is not out for the window: the week after, he is back on
+    # the minutes the model gave him, so his total is that week's and no more.
+    later = [gw for gw in after[FERRER].per_gw if gw > event]
+    assert later and all(
+        after[FERRER].per_gw[gw] == before[FERRER].per_gw[gw] for gw in later
+    )
+    assert 0 < after[FERRER].total < before[FERRER].total
     # Nobody else moved: an override is about one player's minutes.
-    assert {pid: p.total for pid, p in after.items() if pid != FERRER} == {
-        pid: p.total for pid, p in before.items() if pid != FERRER
+    assert {pid: p for pid, p in after.items() if pid != FERRER} == {
+        pid: p for pid, p in before.items() if pid != FERRER
     }
+
+
+def test_an_adjustment_leaves_the_road_ahead_as_the_model_saw_it(seam):
+    # The window the multi-week solver plans over is every gameweek in the
+    # projections, so an override that leaked past the coming week would
+    # re-plan weeks the team news said nothing about — a player ruled out on
+    # Friday sold for the month, his bench boost and his armband in the
+    # weeks after priced at nothing. Several players adjusted at once, up and
+    # down, and from the coming week on nothing the solver is fed has moved.
+    event = seam.inputs.event.id
+    dodd = 4  # a 75% doubt, so the model had him on 67.5 minutes
+    overrides = {FERRER: 0.0, REYES: 20.0, dodd: 90.0}
+    _, before = build_projections(seam.inputs, seam.cfg)
+
+    _, after = build_projections(seam.inputs, seam.cfg, overrides)
+
+    assert after.keys() == before.keys()
+    for pid in after:
+        for gw, points in before[pid].per_gw.items():
+            if gw > event:
+                assert after[pid].per_gw[gw] == points, (pid, gw)
+                assert (
+                    after[pid].attacking_per_gw[gw]
+                    == before[pid].attacking_per_gw[gw]
+                ), (pid, gw)
+    assert all(after[pid].per_gw[event] != before[pid].per_gw[event] for pid in overrides)
+
+
+def test_a_player_the_api_rules_out_stays_out_beyond_the_coming_week(seam):
+    # The other half of the trade. Ito is injured on the API's own flag, which
+    # the minutes model reads for every gameweek in the window, so his zero
+    # beyond the coming week never came from an override and an override does
+    # not lift it: told he is fit for this one, he plays this one.
+    ito = 8
+    event = seam.inputs.event.id
+
+    xmins, after = build_projections(seam.inputs, seam.cfg, {ito: 90.0})
+
+    assert xmins[ito] == 90.0
+    assert after[ito].per_gw[event] > 0
+    assert all(points == 0.0 for gw, points in after[ito].per_gw.items() if gw > event)
 
 
 @pytest.mark.parametrize(
@@ -1787,13 +1837,16 @@ def test_the_resolver_reprojects_and_resolves_on_his_minutes(monkeypatch, tmp_pa
     def re_solve(consult: Consult) -> ManagerDecision:
         solved, projections = consult.resolver({FERRER: 0.0})
         seen["xi"] = solved.lineup.xi
-        seen["ferrer"] = projections[FERRER].total
-        seen["before"] = consult.projections[FERRER].total
+        seen["ferrer"] = projections[FERRER].per_gw
+        seen["before"] = consult.projections[FERRER].per_gw
         return decided(consult, plan=solved.choice)
 
     report, store, _ = gaffer_run(monkeypatch, tmp_path, decide=re_solve, send=False)
 
-    assert seen["before"] > 0 and seen["ferrer"] == 0.0
+    # Out for the coming week, and only the coming week: the weeks after it
+    # are what the solver was fed before he said a word.
+    assert seen["before"][2] > 0 and seen["ferrer"][2] == 0.0
+    assert seen["ferrer"][3] == seen["before"][3] > 0
     assert FERRER not in seen["xi"], "told he is not playing, the solver drops him"
     assert store.has_run(2, "scout") is True
     assert "## The Gaffer's view" in report

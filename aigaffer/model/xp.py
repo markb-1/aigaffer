@@ -373,12 +373,34 @@ def project_all(
     horizon: int = 6,
     decay: float = 0.85,
     strengths: TeamStrengths | None = None,
+    overrides: dict[int, float] | None = None,
 ) -> dict[int, PlayerProjection]:
     """Project every bootstrap player over ``horizon`` gameweeks from
     ``start_event``, keyed by player id.
 
     A player with no entry in ``xmins`` is treated as expecting no minutes,
     which projects to zero rather than to a guess.
+
+    ``overrides`` are expected minutes for ``start_event`` alone — what
+    somebody who has read the team news says about the gameweek the news is
+    about — and every other gameweek in the horizon is projected on ``xmins``
+    as if nobody had said anything. A press conference is evidence about
+    Saturday, not about the month: "out this week" written into the one
+    number every gameweek reads would zero the player for the whole window,
+    sell him for it, and price his bench boost and his armband in the weeks
+    after at nothing. Where the absence really is longer, the API usually
+    says so first, and its flag is already in ``xmins`` for every gameweek
+    (:func:`aigaffer.model.minutes.expected_minutes`); what an override
+    cannot do is rule a player out of a later week the API has not.
+
+    The coming gameweek is projected again, fixture by fixture, on the
+    overriding minutes — not the old projection scaled by a ratio of the two,
+    because appearance points and the hour that clean sheets pay on are not
+    linear in minutes (:func:`played`, :func:`p60`): forty-five minutes is a
+    certain appearance and half a chance of the hour, which is more than half
+    of what ninety is worth. None, or a player with no entry, is ``xmins``
+    throughout, which is every projection this function made before
+    overrides existed, to the byte.
 
     ``strengths`` is the fitted team-strength model
     (:func:`aigaffer.model.strength.build_team_strengths`) and replaces the
@@ -402,13 +424,17 @@ def project_all(
     # projection a test constructs byte-for-byte on the code-free model.
     priors = prior_rates()
 
+    overrides = overrides or {}
+
     projections = {}
     for player in bootstrap.elements:
-        minutes = xmins.get(player.id, 0.0)
+        base = xmins.get(player.id, 0.0)
+        coming = overrides.get(player.id, base)
         prior = priors.get(player.code) if player.code else None
         per_gw = {}
         attacking_per_gw = {}
         for gw in gameweeks:
+            minutes = coming if gw == start_event else base
             points = 0.0
             attacking = 0.0
             for opponent_id, opponent_at_home in schedule.get((gw, player.team), ()):

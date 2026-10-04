@@ -75,7 +75,8 @@ the players the plan turns on, not on another round-up.
 3. Where you have learned something the projection does not know, call \
 adjust_players. It sets a player's expected minutes for the coming gameweek \
 absolutely — 0 for a player who is out, 20 for a substitute, 90 for a starter — \
-and the briefing shows you the number you are overwriting. Say why, in the \
+and the briefing shows you the number you are overwriting. It is the coming \
+gameweek only: the weeks after it keep the model's minutes. Say why, in the \
 reason: it goes into the written record.
 4. Call resolve to re-run the projection and the solver with your adjustments. \
 It comes back with fresh plans and fresh ids. The old ids stay valid.
@@ -205,8 +206,12 @@ TOOLS: list[dict] = [
         "name": "adjust_players",
         "description": (
             "Overwrite the expected minutes the projection assumed for one or"
-            " more players, for the coming gameweek. Minutes are absolute, not"
-            " a nudge: 0 for a player who is out, 90 for a nailed starter. The"
+            " more players, for the coming gameweek only. Minutes are absolute,"
+            " not a nudge: 0 for a player who is out, 90 for a nailed starter."
+            " Every later gameweek in the plans' window keeps the model's own"
+            " minutes, which already rule out a player the FPL injury flag"
+            " has ruled out, so a player out for a month who is not flagged"
+            " reads as back after this week; weigh that in your rationale. The"
             " adjustments accumulate and change nothing until you call resolve."
             " A player id that is not in the briefing is rejected, and one bad"
             " id voids the whole call."
