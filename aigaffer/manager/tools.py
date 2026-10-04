@@ -41,6 +41,7 @@ from collections.abc import Callable, Container
 from dataclasses import dataclass
 from math import isfinite
 
+from aigaffer.chips import CHIP_API_NAMES
 from aigaffer.solver.optimizer import Plan
 
 # The gaffer, as he is briefed once and cached. Byte-stable by contract: the
@@ -160,17 +161,6 @@ MAX_SEARCHES = 8
 
 CHIPS = ["none", "bench_boost", "triple_captain", "free_hit", "wildcard"]
 NO_CHIP = CHIPS[0]
-
-# What the FPL API calls each chip, against what we call it. The two
-# vocabularies were never going to agree — "3xc" is somebody else's spelling of
-# a triple captain — and the translation lives here, beside :data:`CHIPS`, so
-# that the briefing and the pipeline read a chip history the same way.
-CHIP_API_NAMES = {
-    "bench_boost": "bboost",
-    "triple_captain": "3xc",
-    "free_hit": "freehit",
-    "wildcard": "wildcard",
-}
 
 # What an argument for a chip has to be, at the very least. Neither number is
 # clever: they are the two vacuous answers — the one-liner, and the essay about

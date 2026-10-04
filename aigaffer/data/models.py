@@ -135,10 +135,20 @@ class Fixture(BaseModel):
         return self.finished or self.finished_provisional
 
 
+class ChipRule(BaseModel):
+    """One chip the rules hand out: its API name and the gameweeks it may be
+    played in (inclusive). The bootstrap carries one per chip per half."""
+
+    name: str
+    start_event: int
+    stop_event: int
+
+
 class Bootstrap(BaseModel):
     events: list[Event]
     teams: list[Team]
     elements: list[Player]
+    chips: list[ChipRule] = []
 
     def next_event(self) -> Event | None:
         return next((e for e in self.events if e.is_next), None)

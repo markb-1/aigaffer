@@ -167,6 +167,7 @@ from dataclasses import dataclass
 
 import pulp
 
+from aigaffer.chips import BENCH_BOOST, FREE_HIT, TRIPLE_CAPTAIN, WILDCARD
 from aigaffer.data.free_transfers import MAX_FREE_TRANSFERS
 from aigaffer.data.models import Player
 from aigaffer.model.xp import PlayerProjection
@@ -217,22 +218,19 @@ CHURN_EPSILON = 0.01
 # ``BENCH_WEIGHT`` — and a triple captain adds one more armband multiple to the
 # week it is played. Both are free to play, so the only brake on either is that
 # the game gives one of each a season and this window sees at most one of them.
-# The strings are the game's own, shared with the rest of the codebase.
-BENCH_BOOST = "bench_boost"
-TRIPLE_CAPTAIN = "triple_captain"
+# The strings are the game's own, shared with the rest of the codebase, and
+# live in :mod:`aigaffer.chips`; the wildcard and free hit are explained here.
 # A wildcard turns one gameweek's transfers free and uncapped: the squad can be
 # rebuilt from scratch that week for no hit and with no ceiling on the moves.
 # Unlike the bench boost and the triple captain it changes no player's score —
 # it changes the transfer rules — so its value is entirely the squad the free
 # rebuild reaches and the hits it does not pay, weighed against holding it.
-WILDCARD = "wildcard"
 # A free hit fields a whole one-week squad chosen fresh from the pool and then
 # reverts: the gameweek after it owns exactly the fifteen the gameweek before it
 # did. Unlike the other three it neither scores the standing squad differently
 # nor changes its transfer rules — it replaces the standing squad for one week
 # with the best legal one the budget can field, and takes it back. See the
 # module docstring for how that revert is made structural rather than modelled.
-FREE_HIT = "free_hit"
 NO_CHIP = "none"
 _PLANNABLE_CHIPS = (BENCH_BOOST, TRIPLE_CAPTAIN, WILDCARD, FREE_HIT)
 

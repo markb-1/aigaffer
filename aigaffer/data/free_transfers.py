@@ -9,8 +9,10 @@ the bank.
 
 from collections import Counter
 
+from aigaffer.chips import CHIP_API_NAMES, FREE_HIT, WILDCARD
+
 MAX_FREE_TRANSFERS = 5
-FREE_TRANSFER_CHIPS = ("wildcard", "freehit")
+FREE_TRANSFER_CHIPS = (CHIP_API_NAMES[WILDCARD], CHIP_API_NAMES[FREE_HIT])
 
 
 def compute_free_transfers(

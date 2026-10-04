@@ -1,0 +1,136 @@
+"""Which chips are in hand, and when each may be played.
+
+FPL hands out chips in two sets: one to play by the GW19 deadline and a fresh
+one from GW20 (the bootstrap's ``chips`` list says exactly which gameweeks each
+chip may go in). A first-set chip not played by its stop_event is gone. So a
+chip is not a name but a name *and a window*: this module turns the rules and
+the season's chip history into the chips actually held, each with the
+gameweeks it may still be played in.
+
+It sits below the solver, the orchestrator, the manager and the report — all
+four ask it the same questions — and depends on nothing but the data models,
+so the dependency always runs towards it.
+"""
+
+from dataclasses import dataclass
+
+from aigaffer.data.models import ChipRule
+
+BENCH_BOOST = "bench_boost"
+TRIPLE_CAPTAIN = "triple_captain"
+WILDCARD = "wildcard"
+FREE_HIT = "free_hit"
+# The order chips are listed, compared and tie-broken in, everywhere.
+CHIP_ORDER = (BENCH_BOOST, TRIPLE_CAPTAIN, WILDCARD, FREE_HIT)
+
+# What the FPL API calls each chip, against what we call it.
+CHIP_API_NAMES = {
+    BENCH_BOOST: "bboost",
+    TRIPLE_CAPTAIN: "3xc",
+    FREE_HIT: "freehit",
+    WILDCARD: "wildcard",
+}
+_FROM_API = {api: chip for chip, api in CHIP_API_NAMES.items()}
+
+FIRST_GW, LAST_GW = 1, 38
+
+
+@dataclass(frozen=True)
+class ChipWindow:
+    """One chip the rules hand out, and the gameweeks it may be played in."""
+
+    chip: str
+    start_event: int
+    stop_event: int
+
+
+@dataclass(frozen=True)
+class HeldChip:
+    """A chip in hand: its kind and the window it must be played inside.
+
+    Two of a kind can be held at once — the first set's bench boost and the
+    second's — so anything keyed downstream is keyed by :attr:`id`, never by
+    the kind.
+    """
+
+    chip: str
+    start_event: int
+    stop_event: int
+
+    @property
+    def id(self) -> str:
+        return f"{self.chip}@{self.stop_event}"
+
+    def allows(self, event: int) -> bool:
+        return self.start_event <= event <= self.stop_event
+
+
+def chip_windows(rules: list[ChipRule]) -> tuple[ChipWindow, ...]:
+    """The bootstrap's chip rules in our names, unknown chips dropped.
+
+    No rules at all — a payload recorded before the field was read, a board a
+    test built by hand — is one window per chip over the whole season: the
+    model the bot had before it knew about halves.
+    """
+    windows = tuple(
+        ChipWindow(_FROM_API[rule.name], rule.start_event, rule.stop_event)
+        for rule in rules
+        if rule.name in _FROM_API
+    )
+    if windows:
+        return windows
+    return tuple(ChipWindow(chip, FIRST_GW, LAST_GW) for chip in CHIP_ORDER)
+
+
+def held_chips(
+    windows: tuple[ChipWindow, ...], chips_used: list[dict], event: int
+) -> tuple[HeldChip, ...]:
+    """Every chip still in hand at ``event``, soonest to expire first.
+
+    A window is spent when the history has that chip played on a gameweek
+    inside it, and closed once ``event`` is past its stop_event. History we
+    cannot place — a chip we do not plan, an entry with no gameweek — marks
+    nothing: it is somebody else's payload, and guessing would cost a chip.
+    """
+    played = [
+        (_FROM_API.get(str(entry.get("name", "")).strip().lower()), entry.get("event"))
+        for entry in chips_used
+    ]
+    held = [
+        HeldChip(window.chip, window.start_event, window.stop_event)
+        for window in windows
+        if window.stop_event >= event
+        and not any(
+            chip == window.chip
+            and isinstance(played_at, int)
+            and window.start_event <= played_at <= window.stop_event
+            for chip, played_at in played
+        )
+    ]
+    return tuple(
+        sorted(held, key=lambda chip: (chip.stop_event, CHIP_ORDER.index(chip.chip)))
+    )
+
+
+def held_for(held: tuple[HeldChip, ...], chip: str, event: int) -> HeldChip | None:
+    """The held chip of that kind playable at ``event``, if any — at most one
+    can be, since a kind's windows do not overlap."""
+    return next(
+        (candidate for candidate in held if candidate.chip == chip and candidate.allows(event)),
+        None,
+    )
+
+
+def whole_season(*chips: str) -> tuple[HeldChip, ...]:
+    """Held chips with one GW1–38 window each — the no-rules fallback, and a
+    convenience for tests that predate halves."""
+    return tuple(
+        HeldChip(chip, FIRST_GW, LAST_GW)
+        for chip in CHIP_ORDER
+        if chip in chips
+    )
+
+
+def playable_in(held: tuple[HeldChip, ...], events: list[int]) -> tuple[HeldChip, ...]:
+    """The held chips at least one of ``events`` may play."""
+    return tuple(chip for chip in held if any(chip.allows(event) for event in events))
