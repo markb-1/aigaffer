@@ -12,6 +12,7 @@ asked the same questions instead, and the plans that come back say which
 engine ran by whether they carry a path.
 """
 
+from aigaffer.chips import BENCH_BOOST, FREE_HIT, HeldChip, whole_season
 from aigaffer.solver import plans as plans_module
 from aigaffer.solver.multiweek import PlannedMove, PlannedPath
 from aigaffer.solver.optimizer import Plan
@@ -108,9 +109,10 @@ def stub_optimize_path(monkeypatch, answers: dict[int, Plan | None]) -> list[dic
         decay,
         forced_first_transfers=None,
         time_limit=None,
-        available_chips=frozenset(),
+        held_chips=(),
         freehit_prices=None,
         selling_prices=None,
+        bars=None,
     ):
         calls.append(
             {
@@ -123,9 +125,10 @@ def stub_optimize_path(monkeypatch, answers: dict[int, Plan | None]) -> list[dic
                 "decay": decay,
                 "forced_first_transfers": forced_first_transfers,
                 "time_limit": time_limit,
-                "available_chips": available_chips,
+                "held_chips": held_chips,
                 "freehit_prices": freehit_prices,
                 "selling_prices": selling_prices,
+                "bars": bars,
             }
         )
         plan = answers[forced_first_transfers]
@@ -272,19 +275,19 @@ def test_the_window_is_solved_at_every_opening_count(monkeypatch):
     assert single == []
 
 
-def test_the_available_chips_ride_through_to_every_windowed_solve(monkeypatch):
+def test_the_held_chips_ride_through_to_every_windowed_solve(monkeypatch):
     # The chips the window may schedule are handed to it on every opening count,
     # unchanged: one place derives them and the sweep only carries them.
-    chips = frozenset({"bench_boost", "free_hit"})
+    chips = whole_season(BENCH_BOOST, FREE_HIT)
     calls = stub_optimize_path(monkeypatch, windows(range(4)))
     stub_free_hit_prices(monkeypatch, {1: (0.0, [], [])})
 
     generate_plans(
         PLAYERS, XP, SQUAD, bank=0, free_transfers=1,
-        projections_events=EVENTS, available_chips=chips,
+        projections_events=EVENTS, held_chips=chips,
     )
 
-    assert [call["available_chips"] for call in calls] == [chips] * 4
+    assert [call["held_chips"] for call in calls] == [chips] * 4
 
 
 def test_the_selling_prices_ride_through_to_every_solve(monkeypatch):
@@ -298,7 +301,7 @@ def test_the_selling_prices_ride_through_to_every_solve(monkeypatch):
 
     generate_plans(
         PLAYERS, XP, SQUAD, bank=0, free_transfers=1,
-        projections_events=EVENTS, available_chips=frozenset({"free_hit"}),
+        projections_events=EVENTS, held_chips=whole_season(FREE_HIT),
         selling_prices=sales,
     )
 
@@ -325,7 +328,7 @@ def test_the_free_hit_price_is_computed_once_and_rides_the_whole_sweep(monkeypat
 
     generate_plans(
         PLAYERS, XP, SQUAD, bank=25, free_transfers=1,
-        projections_events=EVENTS, available_chips=frozenset({"free_hit"}),
+        projections_events=EVENTS, held_chips=whole_season(FREE_HIT),
     )
 
     # Priced exactly once, off the real inputs and the sweep's own time budget.
@@ -350,7 +353,7 @@ def test_a_free_hit_that_cannot_be_priced_falls_back_to_the_single_week_solver(m
 
     result = generate_plans(
         PLAYERS, XP, SQUAD, bank=0, free_transfers=1,
-        projections_events=EVENTS, available_chips=frozenset({"free_hit"}),
+        projections_events=EVENTS, held_chips=whole_season(FREE_HIT),
     )
 
     assert window == []
@@ -359,15 +362,17 @@ def test_a_free_hit_that_cannot_be_priced_falls_back_to_the_single_week_solver(m
     assert all(plan.path is None for plan in result)
 
 
-def test_no_available_chips_is_the_default_and_reaches_the_solve(monkeypatch):
-    # The gate closed: the sweep asks for the pre-chip model, empty set and all.
+def test_no_held_chips_is_the_default_and_reaches_the_solve(monkeypatch):
+    # The gate closed: the sweep asks for the pre-chip model, empty and all,
+    # and with no calendar bars behind it.
     calls = stub_optimize_path(monkeypatch, windows(range(4)))
 
     generate_plans(
         PLAYERS, XP, SQUAD, bank=0, free_transfers=1, projections_events=EVENTS
     )
 
-    assert all(call["available_chips"] == frozenset() for call in calls)
+    assert all(call["held_chips"] == () for call in calls)
+    assert all(call["bars"] is None for call in calls)
 
 
 def test_the_openings_asked_for_stop_where_the_free_transfer_bank_does(monkeypatch):
@@ -520,3 +525,40 @@ def test_recommend_breaks_a_tie_on_fewer_transfers():
     still = canned(0, 100.0)
 
     assert recommend([canned(2, 100.0), still, canned(1, 100.0)]) is still
+
+
+def test_the_bars_ride_through_to_every_windowed_solve(monkeypatch):
+    # The calendar's per-week bars are priced in one place and only carried
+    # here: the very same dict reaches every opening count, beside the held
+    # chips it is keyed by.
+    chips = whole_season(BENCH_BOOST)
+    bars = {"bench_boost@38": {10: 4.0, 11: 9.0, 12: 0.0}}
+    calls = stub_optimize_path(monkeypatch, windows(range(4)))
+
+    generate_plans(
+        PLAYERS, XP, SQUAD, bank=0, free_transfers=1,
+        projections_events=EVENTS, held_chips=chips, bars=bars,
+    )
+
+    assert len(calls) == 4
+    assert all(call["bars"] is bars for call in calls)
+    assert all(call["held_chips"] == chips for call in calls)
+
+
+def test_a_free_hit_held_only_outside_the_window_is_never_priced(monkeypatch):
+    # A second-half free hit seen from GW10-12: it is in hand but no week of
+    # this window may play it, so the window builds no free-hit binary and the
+    # sweep has no price to hoist. The sub-solves are not run, and the solves
+    # are handed no prices.
+    chips = (HeldChip(FREE_HIT, 20, 38),)
+    calls = stub_optimize_path(monkeypatch, windows(range(4)))
+    priced = stub_free_hit_prices(monkeypatch, {1: (0.0, [], [])})
+
+    generate_plans(
+        PLAYERS, XP, SQUAD, bank=0, free_transfers=1,
+        projections_events=EVENTS, held_chips=chips,
+    )
+
+    assert priced == []
+    assert len(calls) == 4
+    assert all(call["freehit_prices"] is None for call in calls)

@@ -33,6 +33,7 @@ import pytest
 
 from aigaffer import __main__ as cli
 from aigaffer import orchestrator
+from aigaffer.chips import whole_season
 from aigaffer.config import Config
 from aigaffer.data.fpl_api import FplClient
 from aigaffer.data.models import GwHistory, Player
@@ -310,9 +311,7 @@ def test_the_window_the_projections_cover_is_the_window_the_planner_plans(
             "projections_events": covered,
             "decay": seam.cfg.decay,
             "planner": "multi",
-            "available_chips": frozenset(
-                {"bench_boost", "triple_captain", "free_hit"}
-            ),
+            "held_chips": whole_season("bench_boost", "triple_captain", "free_hit"),
             "selling_prices": None,
         }
     ]
@@ -1103,7 +1102,7 @@ def test_available_chips_are_the_four_less_the_ones_spent(seam):
     # Nothing played: all four are in hand.
     inputs = replace(seam.inputs, chips_used=[])
 
-    assert _available_chips(Config(team_id=TEAM_ID), inputs) == ALL_CHIPS
+    assert _available_chips(Config(team_id=TEAM_ID), inputs) == whole_season(*ALL_CHIPS)
 
 
 def test_available_chips_drop_a_chip_already_played(seam):
@@ -1113,14 +1112,14 @@ def test_available_chips_drop_a_chip_already_played(seam):
 
     available = _available_chips(Config(team_id=TEAM_ID), inputs)
 
-    assert "wildcard" not in available
-    assert available == ALL_CHIPS - {"wildcard"}
+    assert "wildcard" not in {chip.chip for chip in available}
+    assert available == whole_season(*(ALL_CHIPS - {"wildcard"}))
 
 
 def test_the_chip_switch_off_leaves_no_chips_available(seam):
     inputs = replace(seam.inputs, chips_used=[])
 
-    assert _available_chips(Config(team_id=TEAM_ID, chips=False), inputs) == frozenset()
+    assert _available_chips(Config(team_id=TEAM_ID, chips=False), inputs) == ()
 
 
 def test_a_draft_has_no_chips_to_plan(seam):
@@ -1128,7 +1127,7 @@ def test_a_draft_has_no_chips_to_plan(seam):
     # reads as "advisory only", which is the pre-chip model.
     inputs = replace(seam.inputs, squad=None)
 
-    assert _available_chips(Config(team_id=TEAM_ID), inputs) == frozenset()
+    assert _available_chips(Config(team_id=TEAM_ID), inputs) == ()
 
 
 def test_the_fielded_lineup_is_the_free_hit_team_on_a_free_hit_week(seam):

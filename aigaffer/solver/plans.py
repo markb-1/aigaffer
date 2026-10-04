@@ -29,6 +29,7 @@ to label a report reads that.
 
 from collections.abc import Iterable
 
+from aigaffer.chips import HeldChip, playable_in
 from aigaffer.data.free_transfers import MAX_FREE_TRANSFERS
 from aigaffer.data.models import Player
 from aigaffer.model.xp import PlayerProjection
@@ -62,7 +63,8 @@ def generate_plans(
     projections_events: list[int] | None = None,
     decay: float = 0.85,
     planner: str = "multi",
-    available_chips: frozenset[str] = frozenset(),
+    held_chips: tuple[HeldChip, ...] = (),
+    bars: dict[str, dict[int, float]] | None = None,
     selling_prices: dict[int, int] | None = None,
 ) -> list[Plan]:
     """Candidate plans, best objective first.
@@ -75,12 +77,14 @@ def generate_plans(
     else at all means the window, since a misspelling should not be able to
     quietly turn the better engine off.
 
-    ``available_chips`` are the chips the window may schedule — the four
-    :mod:`~aigaffer.solver.multiweek` plans, minus the ones already spent, or
-    empty when the chip planner is switched off. It rides straight through to
-    every windowed solve; empty, which is the default, builds the pre-chip
-    model to the byte and leaves the single-week fallback untouched (it never
-    saw a chip in the first place).
+    ``held_chips`` are the chips in hand, each with the window of gameweeks
+    it may still be played in, or empty when the chip planner is switched off;
+    ``bars`` is what each must clear a gameweek, keyed by the held chip's id
+    and then by gameweek id (None reads the solver's flat fallback constants).
+    Both ride straight through to every windowed solve, unchanged: one place
+    derives them and the sweep only carries them. Empty chips, the default,
+    build the pre-chip model to the byte and leave the single-week fallback
+    untouched (it never saw a chip in the first place).
 
     ``selling_prices`` is the purchase ledger's answer for the squad we hold —
     what each sale would actually raise, against the ``now_cost`` every buy
@@ -98,6 +102,13 @@ def generate_plans(
     real window beats a shortlist of four guesses at the wrong question.
     """
     if planner != "single" and projections_events:
+        # Only a free hit some week of this window may play is priced: one held
+        # for the other half of the season builds no binary here, and has no
+        # price to hoist.
+        fh_playable = any(
+            chip.chip == FREE_HIT
+            for chip in playable_in(held_chips, projections_events)
+        )
         # The free hit is the one chip priced by a solve of its own — a CBC
         # sub-solve a gameweek — and its price depends on the board, not on the
         # opening move a sweep pins: the pool, the budget and each week's points
@@ -111,10 +122,10 @@ def generate_plans(
                 players, xp, current_squad, bank, projections_events,
                 SWEEP_TIME_LIMIT, selling_prices=selling_prices,
             )
-            if FREE_HIT in available_chips
+            if fh_playable
             else None
         )
-        if FREE_HIT not in available_chips or freehit_prices is not None:
+        if not fh_playable or freehit_prices is not None:
             # The window reads a free-transfer bank as five at the most, so a
             # sixth forced opening move is a question about a board it does not
             # believe in. Below that the counts are the single-week solver's own.
@@ -130,9 +141,10 @@ def generate_plans(
                     decay,
                     forced_first_transfers=count,
                     time_limit=SWEEP_TIME_LIMIT,
-                    available_chips=available_chips,
+                    held_chips=held_chips,
                     freehit_prices=freehit_prices,
                     selling_prices=selling_prices,
+                    bars=bars,
                 )
                 # The path comes back beside the plan and is already on it, so
                 # the second half of the pair is nothing the shortlist carries.

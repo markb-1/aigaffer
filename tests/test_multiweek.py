@@ -54,6 +54,7 @@ from collections import Counter
 
 import pytest
 
+from aigaffer.chips import HeldChip, whole_season
 from aigaffer.data.free_transfers import MAX_FREE_TRANSFERS
 from aigaffer.data.models import Player
 from aigaffer.model.xp import PlayerProjection, decayed_total
@@ -1009,8 +1010,8 @@ def test_a_gameweek_a_player_has_no_projection_for_is_a_blank():
 
 
 def test_no_chips_available_is_byte_for_byte_the_old_solve():
-    # The fallback guarantee. An empty ``available_chips`` — the default, and
-    # what every pre-chip caller passes without knowing it — must leave the
+    # The fallback guarantee. An empty ``held_chips`` — the default, and what
+    # every pre-chip caller passes without knowing it — must leave the
     # objective exactly where it was: the spine's 158.31165 do-nothing, whether
     # the argument is omitted or handed in empty. No chip is planned, and the
     # path's weeks carry no chip.
@@ -1022,7 +1023,7 @@ def test_no_chips_available_is_byte_for_byte_the_old_solve():
     )
     empty = optimize_path(
         players, projections, SQUAD, bank=0, free_transfers=1, events=[5, 6, 7],
-        decay=DECAY, available_chips=frozenset(),
+        decay=DECAY, held_chips=(),
     )
 
     assert default[0].objective == empty[0].objective
@@ -1031,73 +1032,9 @@ def test_no_chips_available_is_byte_for_byte_the_old_solve():
     assert all(move.chip == "none" for move in empty[1].moves)
 
 
-# --------------------------------------------------------------------------
-# The early-season chip floor: no chip is played before CHIP_FLOOR_GW
-# --------------------------------------------------------------------------
-
-
-def test_a_chip_before_the_floor_is_held_however_good():
-    # The floor, and the live GW2 free hit it exists to stop, reproduced offline.
-    # GW2 is lopsided — a current fifteen flat at 4.0 and a fifteen of heroes
-    # worth 8.0 there and nothing after — so a free hit's best one-week squad is
-    # 12.4 x 8.0 = 99.2 against a 12.4 x 4.0 = 49.6 do-nothing week, a gain of
-    # 49.6 that clears the 25.0 reservation with room to spare. Left to the bar
-    # alone the free hit would be played in GW2 (the RED half of this test before
-    # the floor existed). But every gameweek in the window is before
-    # CHIP_FLOOR_GW, so no chip may be played at all: the free hit is held, and
-    # with its play binary pinned to zero the whole solve collapses onto the
-    # no-chip one — the same feasible region and the same objective to the point,
-    # whatever permanent moves each makes.
-    players, projections = flat_with_heroes(
-        [2, 3], spike_event=2, base=4.0, hero_value=8.0
-    )
-
-    plan, path = optimize_path(
-        players, projections, SQUAD, bank=0, free_transfers=0, events=[2, 3],
-        decay=DECAY, available_chips=frozenset({FREE_HIT}),
-    )
-    no_chip, _ = optimize_path(
-        players, projections, SQUAD, bank=0, free_transfers=0, events=[2, 3],
-        decay=DECAY, available_chips=frozenset(),
-    )
-
-    assert path.week1_chip == "none"
-    assert all(move.chip == "none" for move in path.moves)
-    assert path.week1_freehit_squad is None
-    # The floor removes the chip, so the chip-available objective is exactly the
-    # no-chip solve's — the whole point of "held".
-    assert plan.objective == pytest.approx(no_chip.objective, abs=1e-4)
-
-
-def test_the_floor_lets_the_first_eligible_week_play():
-    # The floor's edge. Two flat gameweeks worth 6.0 a man and a bench boost in
-    # hand: the boost clears its bar in both weeks (0.9 x 24.0 = 21.6, over the
-    # 20.0 reservation). GW9 is the week the model would want — earlier, so the
-    # decay bites least — but GW9 is before CHIP_FLOOR_GW and blocked; GW10 is
-    # the first eligible week, so the boost lands there and nowhere earlier.
-    # The two weeks are identical, so the floor is the whole of why it is GW10.
-    players, projections = flat([9, 10], 6.0)
-
-    plan, path = optimize_path(
-        players, projections, SQUAD, bank=0, free_transfers=1, events=[9, 10],
-        decay=DECAY, available_chips=frozenset({BENCH_BOOST}),
-    )
-
-    assert path.week1_chip == "none"
-    assert path.moves == [
-        PlannedMove(
-            event=10, transfers_in=[], transfers_out=[], hits=0, chip=BENCH_BOOST
-        )
-    ]
-    # do-nothing 12.4 x 6.0 x (1 + 0.85) = 137.64, plus the boost in GW10 decayed
-    # 0.85 x (0.9 x 24.0 - 20.0) = 0.85 x 1.6 = 1.36: 139.0.
-    assert plan.objective == pytest.approx(139.0, abs=1e-4)
-    assert_legal_path(players, SQUAD, 0, 1, [9, 10], plan, path)
-
-
 def test_a_bench_boost_between_the_old_and_new_bar_is_held():
-    # The raised reservation, the second line of defence past the floor. A flat
-    # board at 4.0 a man in two eligible weeks: the boosted bench is worth 0.9 x
+    # The raised fallback bar. A flat board at 4.0 a man in two weeks and no
+    # calendar bars, so the fallback constants: the boosted bench is worth 0.9 x
     # 16.0 = 14.4, which cleared the old 12.0 bar but sits under the raised 20.0
     # one. So the boost is held and the objective is exactly the no-chip solve:
     # 12.4 x 4.0 x (1 + 0.85) = 91.76.
@@ -1105,11 +1042,11 @@ def test_a_bench_boost_between_the_old_and_new_bar_is_held():
 
     plan, path = optimize_path(
         players, projections, SQUAD, bank=0, free_transfers=1, events=[10, 11],
-        decay=DECAY, available_chips=frozenset({BENCH_BOOST}),
+        decay=DECAY, held_chips=whole_season(BENCH_BOOST),
     )
     held = optimize_path(
         players, projections, SQUAD, bank=0, free_transfers=1, events=[10, 11],
-        decay=DECAY, available_chips=frozenset(),
+        decay=DECAY, held_chips=(),
     )
 
     assert path.week1_chip == "none"
@@ -1142,7 +1079,7 @@ def flat(events: list[int], value: float) -> tuple[dict, dict]:
 
 
 def test_bench_boost_below_its_bar_is_held():
-    # Two eligible weeks (past the floor) at 3.0 a man: the four-man bench is
+    # Two weeks at 3.0 a man: the four-man bench is
     # worth 12.0, boosted 0.9 x 12.0 = 10.8, which does not clear the 20.0
     # reservation. So the chip is held — not played in any week — and the
     # objective is exactly the no-bench-boost solve: 12.4 x 3.0 = 37.2 a week,
@@ -1151,11 +1088,11 @@ def test_bench_boost_below_its_bar_is_held():
 
     plan, path = optimize_path(
         players, projections, SQUAD, bank=0, free_transfers=1, events=[10, 11],
-        decay=DECAY, available_chips=frozenset({BENCH_BOOST}),
+        decay=DECAY, held_chips=whole_season(BENCH_BOOST),
     )
     held = optimize_path(
         players, projections, SQUAD, bank=0, free_transfers=1, events=[10, 11],
-        decay=DECAY, available_chips=frozenset(),
+        decay=DECAY, held_chips=(),
     )
 
     assert path.week1_chip == "none"
@@ -1177,7 +1114,7 @@ def test_bench_boost_above_its_bar_is_played():
 
     plan, path = optimize_path(
         players, projections, SQUAD, bank=0, free_transfers=1, events=[10, 11],
-        decay=DECAY, available_chips=frozenset({BENCH_BOOST}),
+        decay=DECAY, held_chips=whole_season(BENCH_BOOST),
     )
 
     assert path.week1_chip == BENCH_BOOST
@@ -1197,11 +1134,11 @@ def test_triple_captain_below_its_bar_is_held():
 
     plan, path = optimize_path(
         players, projections, SQUAD, bank=0, free_transfers=1, events=[10, 11],
-        decay=DECAY, available_chips=frozenset({TRIPLE_CAPTAIN}),
+        decay=DECAY, held_chips=whole_season(TRIPLE_CAPTAIN),
     )
     held = optimize_path(
         players, projections, SQUAD, bank=0, free_transfers=1, events=[10, 11],
-        decay=DECAY, available_chips=frozenset(),
+        decay=DECAY, held_chips=(),
     )
 
     assert path.week1_chip == "none"
@@ -1226,7 +1163,7 @@ def test_triple_captain_above_its_bar_lands_on_the_monster_week():
 
     plan, path = optimize_path(
         players, projections, SQUAD, bank=0, free_transfers=1, events=[10, 11],
-        decay=DECAY, available_chips=frozenset({TRIPLE_CAPTAIN}),
+        decay=DECAY, held_chips=whole_season(TRIPLE_CAPTAIN),
     )
 
     assert path.week1_chip == "none"
@@ -1258,7 +1195,7 @@ def test_a_single_gameweek_holds_at_most_one_chip():
 
     plan, path = optimize_path(
         players, projections, SQUAD, bank=0, free_transfers=1, events=[10],
-        decay=DECAY, available_chips=frozenset({BENCH_BOOST, TRIPLE_CAPTAIN}),
+        decay=DECAY, held_chips=whole_season(BENCH_BOOST, TRIPLE_CAPTAIN),
     )
 
     assert path.week1_chip == BENCH_BOOST
@@ -1300,7 +1237,7 @@ def test_two_chips_find_their_two_best_weeks():
 
     plan, path = optimize_path(
         players, projections, SQUAD, bank=0, free_transfers=1, events=[10, 11],
-        decay=DECAY, available_chips=frozenset({BENCH_BOOST, TRIPLE_CAPTAIN}),
+        decay=DECAY, held_chips=whole_season(BENCH_BOOST, TRIPLE_CAPTAIN),
     )
 
     assert path.week1_chip == BENCH_BOOST
@@ -1326,13 +1263,271 @@ def test_a_chip_is_played_at_most_once_across_the_horizon():
 
     plan, path = optimize_path(
         players, projections, SQUAD, bank=0, free_transfers=1, events=[10, 11, 12],
-        decay=DECAY, available_chips=frozenset({BENCH_BOOST}),
+        decay=DECAY, held_chips=whole_season(BENCH_BOOST),
     )
 
     assert path.week1_chip == BENCH_BOOST
     assert all(move.chip == "none" for move in path.moves)
     assert plan.objective == pytest.approx(192.994, abs=1e-4)
     assert_legal_path(players, SQUAD, 0, 1, [10, 11, 12], plan, path)
+
+
+# --------------------------------------------------------------------------
+# Held chips: each inside its own window, against per-week bars
+# --------------------------------------------------------------------------
+#
+# A chip is a kind and a window — FPL's first set runs to GW19 and its second
+# from GW20 — and what it has to clear is no longer one constant but a bar a
+# gameweek, the calendar's price of the better week it would be spent instead
+# of. Most of the boards below are the spine with its captain (12) moved: with
+# the XI and bench otherwise as the module docstring draws them, a week whose
+# captain is worth c starts 55.0 - 6.0 + c, wears the armband for c more and
+# benches the same 5.4 at a tenth, 0.54 — and a triple captain adds one more c.
+
+
+def spine_captained(
+    events: list[int], captain: dict[int, float]
+) -> tuple[dict[int, Player], dict[int, PlayerProjection]]:
+    """The spine, with its captain (12) worth ``captain[event]`` instead of 6.0.
+
+    Nothing joins: 12 is a midfielder and every midfielder already starts, so
+    the only number that moves is the armband's, which is the triple captain's
+    whole gain.
+    """
+    players, projections = spine(events)
+    projections[12] = PlayerProjection(
+        player_id=12, per_gw=dict(captain), total=decayed_total(captain, DECAY)
+    )
+    return players, projections
+
+
+def chips_played(events: list[int], path: PlannedPath) -> dict[int, str]:
+    """Each window gameweek's chip — the first rides the path's ``week1_chip``,
+    the rest their moves, and a gameweek with no move played none."""
+    played = {event: "none" for event in events}
+    played[events[0]] = path.week1_chip
+    played.update({move.event: move.chip for move in path.moves})
+    return played
+
+
+def test_a_chip_clears_its_bar_at_gw6_now_the_floor_is_gone():
+    # The old floor held every chip before GW10 whatever it was worth. A
+    # captain worth 12.0 in GW6 makes the triple captain worth 12.0 there,
+    # clearing its calendar bar of 8.0 by 4.0; in GW7 he is back to 6.0, under
+    # the same bar. So it is played in GW6.
+    #
+    # GW6 is 61.0 started + 12.0 armband + 0.54 bench = 73.54, tripled +4.0
+    # net; GW7 is the plain 61.54 decayed 0.85, 52.309. 77.54 + 52.309 =
+    # 129.849. The week shows its third armband: 61.0 + 12.0 + 12.0 = 85.0.
+    players, projections = spine_captained([6, 7], {6: 12.0, 7: 6.0})
+
+    plan, path = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[6, 7],
+        decay=DECAY, held_chips=whole_season(TRIPLE_CAPTAIN),
+        bars={"triple_captain@38": {6: 8.0, 7: 8.0}},
+    )
+
+    assert path.week1_chip == TRIPLE_CAPTAIN
+    assert path.moves == []
+    assert plan.objective == pytest.approx(129.849, abs=1e-4)
+    assert path.weekly_xp[6] == pytest.approx(85.0, abs=1e-4)
+    assert_legal_path(players, SQUAD, 0, 1, [6, 7], plan, path)
+
+
+def test_a_chip_is_held_when_the_week_is_below_its_bar():
+    # "Not burned early": the triple captain is worth 8.0 in GW6 and 6.0 in
+    # GW7, and the calendar's bar is 16.0 in both — a better week beyond the
+    # window, discounted. Neither clears it, so the chip is held and played
+    # nowhere in the window, and the solve is the chip-less one: GW6 is 57.0
+    # started + 8.0 armband + 0.54 = 65.54, GW7 the plain 61.54 decayed 0.85,
+    # 52.309. 117.849.
+    players, projections = spine_captained([6, 7], {6: 8.0, 7: 6.0})
+
+    plan, path = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[6, 7],
+        decay=DECAY, held_chips=whole_season(TRIPLE_CAPTAIN),
+        bars={"triple_captain@38": {6: 16.0, 7: 16.0}},
+    )
+    plain, _ = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[6, 7],
+        decay=DECAY,
+    )
+
+    assert path.week1_chip == "none"
+    assert all(move.chip == "none" for move in path.moves)
+    assert plan.objective == pytest.approx(plain.objective, abs=1e-4)
+    assert plan.objective == pytest.approx(117.849, abs=1e-4)
+
+
+def test_a_zero_bar_plays_the_chip_inside_the_window():
+    # A first-set triple captain at GW18-19: its window closes at GW19, so the
+    # calendar has no week beyond this window to save it for and its bars are
+    # 0. The spine's own captain is worth 6.0, a gain no constant bar would let
+    # through, but anything positive clears 0 — and GW18 is where the decay
+    # bites least. 61.54 + 6.0 + 0.85 x 61.54 = 67.54 + 52.309 = 119.849.
+    players, projections = spine([18, 19])
+
+    plan, path = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[18, 19],
+        decay=DECAY, held_chips=(HeldChip(TRIPLE_CAPTAIN, 1, 19),),
+        bars={"triple_captain@19": {18: 0.0, 19: 0.0}},
+    )
+
+    assert chips_played([18, 19], path) == {18: TRIPLE_CAPTAIN, 19: "none"}
+    assert plan.objective == pytest.approx(119.849, abs=1e-4)
+
+
+def test_each_half_plays_only_inside_its_own_window():
+    # A window across the halves, GW18-21, holding both bench boosts — the
+    # first set's (to GW19) and the second's (from GW20) — with bars of 0
+    # wherever each may go. A flat board at 6.0 a man: every week's boosted
+    # bench is 0.9 x 24.0 = 21.6, so each boost wants its window's earliest
+    # week. The first lands in GW18, the second in GW20; two of a kind, never
+    # in one week and each played once.
+    #
+    # The do-nothing week is 66.0 + 6.0 + 2.4 = 74.4, over decays 1 + 0.85 +
+    # 0.7225 + 0.614125 = 3.186625: 237.0849. The boosts add 21.6 undecayed in
+    # GW18 and 21.6 x 0.7225 = 15.606 in GW20: 274.2909. A boosted week shows
+    # its whole fifteen, 66.0 + 6.0 + 24.0 = 96.0; the others 72.0.
+    events = [18, 19, 20, 21]
+    players, projections = flat(events, 6.0)
+    held = (HeldChip(BENCH_BOOST, 1, 19), HeldChip(BENCH_BOOST, 20, 38))
+
+    plan, path = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=events,
+        decay=DECAY, held_chips=held,
+        bars={
+            "bench_boost@19": {18: 0.0, 19: 0.0},
+            "bench_boost@38": {20: 0.0, 21: 0.0},
+        },
+    )
+
+    played = chips_played(events, path)
+    boosted = sorted(event for event, chip in played.items() if chip == BENCH_BOOST)
+    assert len(boosted) == 2 and boosted[0] <= 19 < boosted[1]
+    assert played == {18: BENCH_BOOST, 19: "none", 20: BENCH_BOOST, 21: "none"}
+    assert plan.objective == pytest.approx(274.2909, abs=1e-4)
+    assert path.weekly_xp == pytest.approx({18: 96.0, 19: 72.0, 20: 96.0, 21: 72.0})
+    assert_legal_path(players, SQUAD, 0, 1, events, plan, path)
+
+
+def test_a_chip_whose_window_misses_the_window_gets_no_variables(monkeypatch):
+    # A second-set triple captain seen from GW6-8: in hand, but no week of this
+    # window may play it, so it builds nothing — no binary, no auxiliary, no
+    # row — and the model is the plain one to the variable. Counted at the
+    # solve, and the answers are the same to the byte.
+    sizes: list[tuple[int, int]] = []
+    solve = multiweek.pulp.LpProblem.solve
+
+    def counted(problem, *args, **kwargs):
+        if problem.name == "aigaffer_transfer_path":
+            sizes.append((problem.numVariables(), problem.numConstraints()))
+        return solve(problem, *args, **kwargs)
+
+    monkeypatch.setattr(multiweek.pulp.LpProblem, "solve", counted)
+    players, projections = spine_captained([6, 7, 8], {6: 40.0, 7: 40.0, 8: 40.0})
+    held = (HeldChip(TRIPLE_CAPTAIN, 20, 38),)
+
+    with_chip = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[6, 7, 8],
+        decay=DECAY, held_chips=held,
+    )
+    plain = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[6, 7, 8],
+        decay=DECAY,
+    )
+
+    assert sizes[0] == sizes[1]
+    assert with_chip[0].objective == plain[0].objective
+    assert with_chip[1] == plain[1]
+    assert with_chip[1].week1_chip == "none"
+
+
+def test_bars_are_read_week_by_week():
+    # The captain is worth 10.0 in both weeks, so the triple captain gains 10.0
+    # in either; the bar is 12.0 in GW6 and 5.0 in GW7. Under the flat
+    # constants the chip would go in GW6, where the decay bites least; read
+    # week by week, GW6 is -2.0 and GW7 is 0.85 x 5.0 = +4.25, so it waits.
+    #
+    # A week is 59.0 started + 10.0 armband + 0.54 = 69.54, over 1 + 0.85:
+    # 128.649, and the chip's 4.25 makes 132.899. GW7 shows 59 + 10 + 10 = 79.
+    players, projections = spine_captained([6, 7], {6: 10.0, 7: 10.0})
+
+    plan, path = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[6, 7],
+        decay=DECAY, held_chips=whole_season(TRIPLE_CAPTAIN),
+        bars={"triple_captain@38": {6: 12.0, 7: 5.0}},
+    )
+
+    assert path.week1_chip == "none"
+    assert [m.chip for m in path.moves if m.event == 7] == [TRIPLE_CAPTAIN]
+    assert plan.objective == pytest.approx(132.899, abs=1e-4)
+    assert path.weekly_xp[7] == pytest.approx(79.0, abs=1e-4)
+
+
+def test_no_bars_reads_the_fallback_constants():
+    # bars=None is the pre-calendar solver: every held chip's bar is its
+    # FALLBACK_BARS constant in every week — 18.0 for a triple captain. The
+    # captain is worth 17.0 in GW6, a point under it, and 20.0 in GW7, two
+    # over, so the chip is held through GW6 and played in GW7, exactly as an
+    # explicit bar of 18.0 in both weeks plays it.
+    #
+    # GW6 is 66.0 started + 17.0 armband + 0.54 = 83.54; GW7 is 69.0 + 20.0 +
+    # 0.54 = 89.54 and tripled +2.0, decayed 0.85: 77.809. 161.349.
+    assert multiweek.FALLBACK_BARS[TRIPLE_CAPTAIN] == 18.0
+    players, projections = spine_captained([6, 7], {6: 17.0, 7: 20.0})
+
+    plan, path = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[6, 7],
+        decay=DECAY, held_chips=whole_season(TRIPLE_CAPTAIN),
+    )
+    explicit, explicit_path = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[6, 7],
+        decay=DECAY, held_chips=whole_season(TRIPLE_CAPTAIN),
+        bars={"triple_captain@38": {6: 18.0, 7: 18.0}},
+    )
+
+    assert chips_played([6, 7], path) == {6: "none", 7: TRIPLE_CAPTAIN}
+    assert plan.objective == pytest.approx(161.349, abs=1e-4)
+    assert plan.objective == explicit.objective
+    assert path == explicit_path
+
+
+def test_a_week_missing_from_the_bars_reads_the_fallback_constant():
+    # bars={"triple_captain@38": {7: 0.0}} over GW6-7: GW7 has a bar of 0 and
+    # GW6 has none, so it reads FALLBACK_BARS[triple_captain], 18.0. The
+    # triple captain gains 12.0 in either week: 12.0 - 18.0 is under water in
+    # GW6, while GW7 clears 0 by 0.85 x 12.0 = 10.2. Were a missing week read
+    # as 0, GW6's undecayed 12.0 would beat it — so GW7 is the fallback's doing.
+    #
+    # A week is 61.0 started + 12.0 armband + 0.54 = 73.54, over 1 + 0.85:
+    # 136.049, and the chip's 10.2 makes 146.249.
+    players, projections = spine_captained([6, 7], {6: 12.0, 7: 12.0})
+
+    plan, path = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[6, 7],
+        decay=DECAY, held_chips=whole_season(TRIPLE_CAPTAIN),
+        bars={"triple_captain@38": {7: 0.0}},
+    )
+
+    assert chips_played([6, 7], path) == {6: "none", 7: TRIPLE_CAPTAIN}
+    assert plan.objective == pytest.approx(146.249, abs=1e-4)
+
+
+def test_a_held_chip_missing_from_the_bars_reads_the_fallback_constant():
+    # The bars price a bench boost the window does not hold and say nothing of
+    # the triple captain it does, so the triple captain reads 18.0 in both
+    # weeks — and a 12.0 gain is held, the solve the chip-less one: 136.049.
+    players, projections = spine_captained([6, 7], {6: 12.0, 7: 12.0})
+
+    plan, path = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[6, 7],
+        decay=DECAY, held_chips=whole_season(TRIPLE_CAPTAIN),
+        bars={"bench_boost@38": {6: 0.0, 7: 0.0}},
+    )
+
+    assert chips_played([6, 7], path) == {6: "none", 7: "none"}
+    assert plan.objective == pytest.approx(136.049, abs=1e-4)
 
 
 # --------------------------------------------------------------------------
@@ -1376,11 +1571,11 @@ def test_a_wildcard_rebuilds_the_whole_squad_in_one_week():
 
     plan, path = optimize_path(
         players, projections, SQUAD, bank=0, free_transfers=1, events=[10],
-        decay=DECAY, available_chips=frozenset({WILDCARD}),
+        decay=DECAY, held_chips=whole_season(WILDCARD),
     )
     no_chip, _ = optimize_path(
         players, projections, SQUAD, bank=0, free_transfers=1, events=[10],
-        decay=DECAY, available_chips=frozenset(),
+        decay=DECAY, held_chips=(),
     )
 
     assert path.week1_chip == WILDCARD
@@ -1402,11 +1597,11 @@ def test_a_wildcard_uncaps_the_gameweek():
 
     on, _ = optimize_path(
         players, projections, SQUAD, bank=0, free_transfers=1, events=[10],
-        decay=DECAY, available_chips=frozenset({WILDCARD}),
+        decay=DECAY, held_chips=whole_season(WILDCARD),
     )
     off, _ = optimize_path(
         players, projections, SQUAD, bank=0, free_transfers=1, events=[10],
-        decay=DECAY, available_chips=frozenset(),
+        decay=DECAY, held_chips=(),
     )
 
     assert len(on.transfers_in) == 7
@@ -1425,7 +1620,7 @@ def test_a_wildcard_week_spends_no_free_transfers_and_no_hits():
 
     plan, path = optimize_path(
         players, projections, SQUAD, bank=0, free_transfers=1, events=[10, 11, 12],
-        decay=DECAY, available_chips=frozenset({WILDCARD}),
+        decay=DECAY, held_chips=whole_season(WILDCARD),
     )
 
     assert path.week1_chip == WILDCARD
@@ -1450,11 +1645,11 @@ def test_a_wildcard_and_a_bench_boost_cannot_share_a_gameweek():
 
     both, path = optimize_path(
         players, projections, SQUAD, bank=0, free_transfers=1, events=[10],
-        decay=DECAY, available_chips=frozenset({WILDCARD, BENCH_BOOST}),
+        decay=DECAY, held_chips=whole_season(WILDCARD, BENCH_BOOST),
     )
     boost_only, boost_path = optimize_path(
         players, projections, SQUAD, bank=0, free_transfers=1, events=[10],
-        decay=DECAY, available_chips=frozenset({BENCH_BOOST}),
+        decay=DECAY, held_chips=whole_season(BENCH_BOOST),
     )
 
     # The bench boost is worth playing on this board — it is played when it has
@@ -1481,7 +1676,7 @@ def test_a_wildcard_is_played_at_most_once_across_the_horizon():
 
     plan, path = optimize_path(
         players, projections, SQUAD, bank=0, free_transfers=1, events=[10, 11],
-        decay=DECAY, available_chips=frozenset({WILDCARD}),
+        decay=DECAY, held_chips=whole_season(WILDCARD),
     )
 
     played = (1 if path.week1_chip == WILDCARD else 0) + sum(
@@ -1506,11 +1701,11 @@ def test_a_rebuild_worth_less_than_the_bar_holds_the_wildcard():
 
     with_wc, wc_path = optimize_path(
         players, projections, SQUAD, bank=0, free_transfers=1, events=[10],
-        decay=DECAY, available_chips=frozenset({WILDCARD}),
+        decay=DECAY, held_chips=whole_season(WILDCARD),
     )
     without, _ = optimize_path(
         players, projections, SQUAD, bank=0, free_transfers=1, events=[10],
-        decay=DECAY, available_chips=frozenset(),
+        decay=DECAY, held_chips=(),
     )
 
     assert wc_path.week1_chip == "none"
@@ -1520,19 +1715,18 @@ def test_a_rebuild_worth_less_than_the_bar_holds_the_wildcard():
 
 
 def test_a_wildcard_in_hand_but_unused_matches_the_plain_solve():
-    # The byte-for-byte guarantee at the wildcard's own reservation, in eligible
-    # weeks so the hold is the value's doing and not the floor's. The spine has
+    # The byte-for-byte guarantee at the wildcard's own reservation. The spine has
     # nothing worth buying, so a wildcard buys nothing and is held; the objective
     # is exactly the do-nothing solve, whether the chip is offered or withheld.
     players, projections = spine([10, 11, 12])
 
     offered, path = optimize_path(
         players, projections, SQUAD, bank=0, free_transfers=1, events=[10, 11, 12],
-        decay=DECAY, available_chips=frozenset({WILDCARD}),
+        decay=DECAY, held_chips=whole_season(WILDCARD),
     )
     withheld, _ = optimize_path(
         players, projections, SQUAD, bank=0, free_transfers=1, events=[10, 11, 12],
-        decay=DECAY, available_chips=frozenset(),
+        decay=DECAY, held_chips=(),
     )
 
     assert path.week1_chip == "none"
@@ -1669,7 +1863,7 @@ def test_free_hit_fields_a_temp_squad_that_reverts():
 
     plan, path = optimize_path(
         players, projections, SQUAD, bank=0, free_transfers=0, events=[10, 11, 12],
-        decay=DECAY, available_chips=frozenset({FREE_HIT}),
+        decay=DECAY, held_chips=whole_season(FREE_HIT),
     )
 
     assert path.week1_chip == FREE_HIT
@@ -1710,7 +1904,7 @@ def test_a_played_chip_that_is_not_a_free_hit_surfaces_no_temp_squad():
 
     _, path = optimize_path(
         players, projections, SQUAD, bank=0, free_transfers=1, events=[10, 11],
-        decay=DECAY, available_chips=frozenset({BENCH_BOOST, FREE_HIT}),
+        decay=DECAY, held_chips=whole_season(BENCH_BOOST, FREE_HIT),
     )
 
     assert path.week1_chip == BENCH_BOOST
@@ -1719,8 +1913,7 @@ def test_a_played_chip_that_is_not_a_free_hit_surfaces_no_temp_squad():
 
 
 def test_a_free_hit_below_its_bar_is_held():
-    # The reservation brake, in an eligible week so it is the bar and not the
-    # floor doing the holding. Heroes worth 6.4 in GW10 against a spine topping
+    # The reservation brake. Heroes worth 6.4 in GW10 against a spine topping
     # out at 6.0: the best one-week squad is 12.4 x 6.4 = 79.36, a gain of
     # 79.36 - 61.54 = 17.82 over the do-nothing week, which is under the raised
     # 25.0 bar. So the chip is held and the week is the plain 61.54 do-nothing.
@@ -1729,11 +1922,11 @@ def test_a_free_hit_below_its_bar_is_held():
     plan, path = optimize_path(
         players, projections, SQUAD, bank=0, free_transfers=1, events=[10],
         decay=DECAY, forced_first_transfers=0,
-        available_chips=frozenset({FREE_HIT}),
+        held_chips=whole_season(FREE_HIT),
     )
     held = optimize_path(
         players, projections, SQUAD, bank=0, free_transfers=1, events=[10],
-        decay=DECAY, forced_first_transfers=0, available_chips=frozenset(),
+        decay=DECAY, forced_first_transfers=0, held_chips=(),
     )
 
     assert path.week1_chip == "none"
@@ -1742,8 +1935,7 @@ def test_a_free_hit_below_its_bar_is_held():
 
 
 def test_a_free_hit_in_hand_but_unused_matches_the_plain_solve():
-    # The byte-for-byte guarantee at free hit's own reservation, in eligible
-    # weeks so the hold is the value's doing and not the floor's. The spine has
+    # The byte-for-byte guarantee at free hit's own reservation. The spine has
     # nothing worth signing, so the best one-week squad is the spine itself and a
     # free hit gains exactly nothing over holding — it is held, and the objective
     # is the do-nothing solve whether the chip is offered or withheld.
@@ -1751,11 +1943,11 @@ def test_a_free_hit_in_hand_but_unused_matches_the_plain_solve():
 
     offered, path = optimize_path(
         players, projections, SQUAD, bank=0, free_transfers=1, events=[10, 11, 12],
-        decay=DECAY, available_chips=frozenset({FREE_HIT}),
+        decay=DECAY, held_chips=whole_season(FREE_HIT),
     )
     withheld, _ = optimize_path(
         players, projections, SQUAD, bank=0, free_transfers=1, events=[10, 11, 12],
-        decay=DECAY, available_chips=frozenset(),
+        decay=DECAY, held_chips=(),
     )
 
     assert path.week1_chip == "none"
@@ -1783,7 +1975,7 @@ def test_a_free_hit_is_played_at_most_once_across_the_horizon():
 
     plan, path = optimize_path(
         players, projections, SQUAD, bank=0, free_transfers=0, events=[10, 11],
-        decay=DECAY, available_chips=frozenset({FREE_HIT}),
+        decay=DECAY, held_chips=whole_season(FREE_HIT),
     )
 
     played = (1 if path.week1_chip == FREE_HIT else 0) + sum(
@@ -1809,12 +2001,12 @@ def test_a_free_hit_and_a_bench_boost_cannot_share_a_gameweek():
     both, path = optimize_path(
         players, projections, SQUAD, bank=0, free_transfers=1, events=[10],
         decay=DECAY, forced_first_transfers=0,
-        available_chips=frozenset({FREE_HIT, BENCH_BOOST}),
+        held_chips=whole_season(FREE_HIT, BENCH_BOOST),
     )
     boost_only, boost_path = optimize_path(
         players, projections, SQUAD, bank=0, free_transfers=1, events=[10],
         decay=DECAY, forced_first_transfers=0,
-        available_chips=frozenset({BENCH_BOOST}),
+        held_chips=whole_season(BENCH_BOOST),
     )
 
     # The bench boost is worth playing here — it is played when it has the week
@@ -1835,11 +2027,11 @@ def test_adding_free_hit_to_the_set_changes_nothing_when_it_is_held():
 
     without_fh, _ = optimize_path(
         players, projections, SQUAD, bank=0, free_transfers=1, events=[10, 11, 12],
-        decay=DECAY, available_chips=frozenset({TRIPLE_CAPTAIN}),
+        decay=DECAY, held_chips=whole_season(TRIPLE_CAPTAIN),
     )
     with_fh, path = optimize_path(
         players, projections, SQUAD, bank=0, free_transfers=1, events=[10, 11, 12],
-        decay=DECAY, available_chips=frozenset({TRIPLE_CAPTAIN, FREE_HIT}),
+        decay=DECAY, held_chips=whole_season(TRIPLE_CAPTAIN, FREE_HIT),
     )
 
     assert path.week1_chip == "none"
@@ -1892,11 +2084,11 @@ def test_hoisted_free_hit_prices_give_a_byte_identical_plan():
 
     inline_plan, inline_path = optimize_path(
         players, projections, SQUAD, bank=0, free_transfers=0, events=[10, 11, 12],
-        decay=DECAY, available_chips=frozenset({FREE_HIT}),
+        decay=DECAY, held_chips=whole_season(FREE_HIT),
     )
     hoisted_plan, hoisted_path = optimize_path(
         players, projections, SQUAD, bank=0, free_transfers=0, events=[10, 11, 12],
-        decay=DECAY, available_chips=frozenset({FREE_HIT}), freehit_prices=prices,
+        decay=DECAY, held_chips=whole_season(FREE_HIT), freehit_prices=prices,
     )
 
     assert inline_path.week1_chip == FREE_HIT
@@ -1919,17 +2111,17 @@ def test_generate_plans_hoists_the_free_hit_without_changing_the_shortlist():
     players, projections = flat_with_heroes(
         [10, 11, 12], spike_event=10, base=4.0, hero_value=8.0
     )
-    chips = frozenset({FREE_HIT})
+    chips = whole_season(FREE_HIT)
 
     hoisted = generate_plans(
         players, projections, SQUAD, bank=0, free_transfers=1,
-        projections_events=[10, 11, 12], decay=DECAY, available_chips=chips,
+        projections_events=[10, 11, 12], decay=DECAY, held_chips=chips,
     )
     inline_answers = [
         optimize_path(
             players, projections, SQUAD, 0, 1, [10, 11, 12], DECAY,
             forced_first_transfers=count, time_limit=SWEEP_TIME_LIMIT,
-            available_chips=chips,
+            held_chips=chips,
         )
         for count in transfer_counts(1)
     ]
@@ -1939,6 +2131,87 @@ def test_generate_plans_hoists_the_free_hit_without_changing_the_shortlist():
     assert [p.squad for p in hoisted] == [p.squad for p in inline]
     assert [p.path.week1_chip for p in hoisted] == [p.path.week1_chip for p in inline]
     assert hoisted[0].path.week1_chip == FREE_HIT
+
+
+def test_hoisted_free_hit_prices_under_calendar_bars_give_a_byte_identical_plan():
+    # The hoist again, with the calendar's bars in play. The bars change what
+    # the free hit has to clear, never its price, so a hoisted and an inline
+    # pricing still land on the same plan to the byte. GW10's free hit is worth
+    # 99.2 against the do-nothing 49.6 and its bar there is 10.0, so it is
+    # played: 99.2 - 10.0 + (0.85 + 0.7225) x 49.6 = 89.2 + 77.996 = 167.196.
+    players, projections = flat_with_heroes(
+        [10, 11, 12], spike_event=10, base=4.0, hero_value=8.0
+    )
+    chips = whole_season(FREE_HIT)
+    bars = {"free_hit@38": {10: 10.0, 11: 25.0, 12: 25.0}}
+    prices = _free_hit_prices(players, projections, SQUAD, 0, [10, 11, 12], None)
+
+    inline_plan, inline_path = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=0, events=[10, 11, 12],
+        decay=DECAY, held_chips=chips, bars=bars,
+    )
+    hoisted_plan, hoisted_path = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=0, events=[10, 11, 12],
+        decay=DECAY, held_chips=chips, bars=bars, freehit_prices=prices,
+    )
+
+    assert inline_path.week1_chip == FREE_HIT
+    assert inline_plan.objective == pytest.approx(167.196, abs=1e-4)
+    assert hoisted_plan.objective == inline_plan.objective
+    assert hoisted_plan.squad == inline_plan.squad
+    assert hoisted_plan.xi == inline_plan.xi
+    assert hoisted_path == inline_path
+
+    # And through the sweep: generate_plans hoists the same price and hands the
+    # same bars to every count, so its shortlist is the inline one's.
+    hoisted = generate_plans(
+        players, projections, SQUAD, bank=0, free_transfers=1,
+        projections_events=[10, 11, 12], decay=DECAY, held_chips=chips, bars=bars,
+    )
+    inline_answers = [
+        optimize_path(
+            players, projections, SQUAD, 0, 1, [10, 11, 12], DECAY,
+            forced_first_transfers=count, time_limit=SWEEP_TIME_LIMIT,
+            held_chips=chips, bars=bars,
+        )
+        for count in transfer_counts(1)
+    ]
+    inline = _shortlist(a[0] if a is not None else None for a in inline_answers)
+
+    assert [p.objective for p in hoisted] == [p.objective for p in inline]
+    assert [p.squad for p in hoisted] == [p.squad for p in inline]
+    assert hoisted[0].path.week1_chip == FREE_HIT
+
+
+def test_generate_plans_with_no_held_chips_is_the_pre_calendar_shortlist():
+    # The chip switch off, end to end: no held chips build the pre-chip model,
+    # so the shortlist is the one the solver drew up before chips had windows,
+    # recorded off it on this board. The best of it, worked: one free move buys
+    # a hero midfielder (26, worth 8.0) for 11 in GW10, where he starts and
+    # takes the armband — 10 x 4.0 + 8.0 + 8.0 armband + 1.6 bench = 57.6 — and
+    # sells him back for nothing in GW11 off the free transfer that carries.
+    # 57.6 + (0.85 + 0.7225) x 49.6 - 2 x 0.01 churn = 135.576.
+    players, projections = flat_with_heroes(
+        [10, 11, 12], spike_event=10, base=4.0, hero_value=8.0
+    )
+
+    empty = generate_plans(
+        players, projections, SQUAD, bank=0, free_transfers=1,
+        projections_events=[10, 11, 12], decay=DECAY, held_chips=(),
+    )
+    default = generate_plans(
+        players, projections, SQUAD, bank=0, free_transfers=1,
+        projections_events=[10, 11, 12], decay=DECAY,
+    )
+
+    assert [p.objective for p in empty] == pytest.approx(
+        [135.576, 135.216, 134.577, 127.596], abs=1e-4
+    )
+    assert [p.objective for p in empty] == [p.objective for p in default]
+    assert [p.squad for p in empty] == [p.squad for p in default]
+    assert all(p.path.week1_chip == "none" for p in empty)
+    assert empty[0].transfers_out == [11]
+    assert len(empty[0].transfers_in) == 1
 
 
 # --------------------------------------------------------------------------

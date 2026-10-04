@@ -70,6 +70,7 @@ from typing import TYPE_CHECKING
 
 import httpx
 
+from aigaffer.chips import HeldChip, whole_season
 from aigaffer.config import (
     DEADLINE_ANCHOR_HOURS,
     EARLY_SCOUT_HOUR_UTC,
@@ -1518,7 +1519,7 @@ def history_pool(players: dict[int, Player], held: list[int]) -> list[int]:
     return sorted(pool)
 
 
-def _available_chips(cfg: Config, inputs: PipelineInputs) -> frozenset[str]:
+def _available_chips(cfg: Config, inputs: PipelineInputs) -> tuple[HeldChip, ...]:
     """Which chips the window may plan this run.
 
     Empty when the switch is off — chips advisory only, Phase 2.5 to the byte —
@@ -1533,10 +1534,10 @@ def _available_chips(cfg: Config, inputs: PipelineInputs) -> frozenset[str]:
     is closed inside the one function that needs the chip-name mapping.
     """
     if not cfg.chips or inputs.squad is None:
-        return frozenset()
+        return ()
     from aigaffer.manager.tools import played_chips
 
-    return ALL_CHIPS - played_chips(inputs.chips_used)
+    return whole_season(*(ALL_CHIPS - played_chips(inputs.chips_used)))
 
 
 def _fielded_lineup(
@@ -1579,7 +1580,7 @@ def _plans(
     squad: Squad | None,
     free_transfers: int | None,
     cfg: Config,
-    available_chips: frozenset[str] = frozenset(),
+    available_chips: tuple[HeldChip, ...] = (),
     selling_prices: dict[int, int] | None = None,
 ) -> tuple[list[Plan], Plan]:
     """The shortlist, and the plan to recommend from it.
@@ -1614,7 +1615,7 @@ def _plans(
         projections_events=projected_events(xp),
         decay=cfg.decay,
         planner=cfg.planner,
-        available_chips=available_chips,
+        held_chips=available_chips,
         selling_prices=selling_prices,
     )
     if not plans:

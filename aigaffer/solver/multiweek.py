@@ -115,9 +115,9 @@ So the revert needs no machinery of its own — a free-hit gameweek is a hold
 gameweek as far as the squad, the bank and the free transfers are concerned. And
 it *replaces that gameweek's score*: the objective already counts
 ``decay**(w−1)·normal_score[w]`` for the standing squad, and the free hit adds
-``decay**(w−1)·(best_oneweek[w]·fh[w] − y[w] − reservation·fh[w])`` where ``y[w]``
+``decay**(w−1)·(best_oneweek[w]·fh[w] − y[w] − bar[w]·fh[w])`` where ``y[w]``
 stands for ``fh[w]·normal_score[w]``. When ``fh[w] = 1`` the standing score and
-``y[w]`` cancel and the gameweek is worth ``best_oneweek[w] − reservation``; when
+``y[w]`` cancel and the gameweek is worth ``best_oneweek[w] − bar[w]``; when
 ``fh[w] = 0`` both new terms vanish and the gameweek is the standing squad's
 unchanged.
 
@@ -128,7 +128,7 @@ big-M is not a guessed bound but ``best_oneweek[w]`` itself, which is genuinely
 an upper bound on ``normal_score[w]``: the standing squad is a legal fifteen
 inside the same budget drawn from the same pool, so its one-week score cannot
 beat the best such squad's. Because ``best_oneweek[w] ≥ normal_score[w]`` always,
-the free-hit gain is never negative before its reservation, and at ``fh = 1`` the
+the free-hit gain is never negative before its bar, and at ``fh = 1`` the
 three rows pin ``y = normal_score`` exactly whatever eleven the model names for
 that gameweek — the choice of a free-hit gameweek's standing XI cannot change the
 objective, which is right, since that XI is the one that does not play.
@@ -167,7 +167,14 @@ from dataclasses import dataclass
 
 import pulp
 
-from aigaffer.chips import BENCH_BOOST, FREE_HIT, TRIPLE_CAPTAIN, WILDCARD
+from aigaffer.chips import (
+    BENCH_BOOST,
+    FREE_HIT,
+    TRIPLE_CAPTAIN,
+    WILDCARD,
+    HeldChip,
+    playable_in,
+)
 from aigaffer.data.free_transfers import MAX_FREE_TRANSFERS
 from aigaffer.data.models import Player
 from aigaffer.model.xp import PlayerProjection
@@ -219,8 +226,10 @@ CHURN_EPSILON = 0.01
 # The two chips this solver plans. A bench boost turns the whole fifteen loose
 # for one week — the four benched men score in full rather than at
 # ``BENCH_WEIGHT`` — and a triple captain adds one more armband multiple to the
-# week it is played. Both are free to play, so the only brake on either is that
-# the game gives one of each a season and this window sees at most one of them.
+# week it is played. Both are free to play, so the only brakes on either are
+# that the game hands out one of each a set — a set to play by GW19 and a fresh
+# one from GW20, each held chip played at most once inside its own window — and
+# the bar it has to clear.
 # The strings are the game's own, shared with the rest of the codebase, and
 # live in :mod:`aigaffer.chips`; the wildcard and free hit are explained here.
 # A wildcard turns one gameweek's transfers free and uncapped: the squad can be
@@ -237,24 +246,13 @@ CHURN_EPSILON = 0.01
 NO_CHIP = "none"
 _PLANNABLE_CHIPS = (BENCH_BOOST, TRIPLE_CAPTAIN, WILDCARD, FREE_HIT)
 
-# No chip is played before this gameweek. The reservation bars below are the
-# opportunity cost of spending a chip inside the window rather than saving it,
-# but early in the season that cost is one the six-gameweek horizon cannot
-# price: the real doubles and blanks a chip is worth holding for lie months
-# past the horizon's edge, and projection noise alone can push an ordinary week
-# past a bar it does not deserve — the live GW2 that recommended a free hit off
-# nothing but early-season noise. So chips are held outright before this floor,
-# whatever their EV; a week in the window earlier than the floor may play no
-# chip and schedule none, and the chips become eligible only once the horizon
-# reaches a gameweek that is not before it. A conservative first guess — chips
-# are late-season weapons, and ten is early enough to keep them in hand through
-# the noisy opening without giving away a genuinely early double gameweek.
-# Tunable, and a constant like the bars: one place, moved under review.
-CHIP_FLOOR_GW = 10
-
-# The reservation is what stops the model burning a chip in the best week of the
-# next six when a far better week waits later in the season the horizon cannot
-# see. A chip is free to play, so without a bar the model would spend it at the
+# The bars a chip is held against when no calendar priced it — the constants
+# the solver used before the calendar, kept as its failure fallback and as the
+# default for callers that pass no bars.
+#
+# A bar is what stops the model burning a chip in the best week of the next
+# six when a far better week waits later in the season the horizon cannot see.
+# A chip is free to play, so without a bar the model would spend it at the
 # first positive opportunity; the bar is the opportunity cost of not saving it.
 # A chip is planned only where its marginal xP for the week clears the bar, and
 # held — played nowhere — when it does not. The value is applied decayed, the
@@ -262,15 +260,16 @@ CHIP_FLOOR_GW = 10
 # the model still chooses the best week and the bar only decides play-or-hold.
 #
 # These are undecayed points, tuned to FPL norms and raised from a first pass
-# once the live run showed weeks clearing them on projection noise alone: past
-# the early-season floor above, only a genuinely exceptional gameweek should
-# spend a chip the horizon cannot see the season's real opportunity for. A bench
-# boost or a triple captain earns its keep on a double gameweek, and twenty-odd
-# points is about what a strong one clears an ordinary week by. Meant to be
-# refined against live seasons, not treated as exact. A constant, deliberately:
-# there is no env override, so the number lives in one place and moves under
-# review.
-CHIP_RESERVATION: dict[str, float] = {
+# once the live run showed weeks clearing them on projection noise alone: only
+# a genuinely exceptional gameweek should spend a chip the horizon cannot see
+# the season's real opportunity for. A bench boost or a triple captain earns
+# its keep on a double gameweek, and twenty-odd points is about what a strong
+# one clears an ordinary week by. Flat across the season, which is exactly what
+# the calendar's per-week bars improve on: these do not know that a first-set
+# chip a week from its expiry has nothing left to be saved for. A constant,
+# deliberately: there is no env override, so the number lives in one place and
+# moves under review.
+FALLBACK_BARS: dict[str, float] = {
     BENCH_BOOST: 20.0,
     TRIPLE_CAPTAIN: 18.0,
     # A wildcard is a whole free rebuild, so its bar sits far higher than a
@@ -366,9 +365,10 @@ def optimize_path(
     decay: float,
     forced_first_transfers: int | None = None,
     time_limit: int | None = None,
-    available_chips: frozenset[str] = frozenset(),
+    held_chips: tuple[HeldChip, ...] = (),
     freehit_prices: dict[int, tuple[float, list[int], list[int]]] | None = None,
     selling_prices: dict[int, int] | None = None,
+    bars: dict[str, dict[int, float]] | None = None,
 ) -> tuple[Plan, PlannedPath] | None:
     """The best sequence of squads over ``events``, or None.
 
@@ -379,26 +379,39 @@ def optimize_path(
     :data:`~aigaffer.data.free_transfers.MAX_FREE_TRANSFERS`: the fifteen with
     which :mod:`aigaffer.solver.lineup` prices a wildcard is not a bank, and a
     window planned as though it were would be a window of illegal gameweeks.
-    Chips are not this solver's business and drafting from an empty squad is
-    not either — fifteen signings will not fit under a gameweek's move ceiling.
+    Drafting from an empty squad is not this solver's business — fifteen
+    signings will not fit under a gameweek's move ceiling.
     A player with no projection for a gameweek is worth nothing in it, which is
     what a blank is.
 
-    ``available_chips`` are the chips still in hand — a subset of
-    :data:`BENCH_BOOST`, :data:`TRIPLE_CAPTAIN`, :data:`WILDCARD` and
-    :data:`FREE_HIT`, the four this solver plans; any other name is ignored.
-    Empty, which is the default, is the fallback
-    guarantee: the model built is the pre-chip one to the last variable, so a
-    caller who wants chips advisory-only need only withhold them. A chip in the
-    set becomes a per-week binary the window may play, at most one chip a
-    gameweek and each chip at most once across the horizon, never in a gameweek
-    before :data:`CHIP_FLOOR_GW`, and only where its marginal xP beats
-    :data:`CHIP_RESERVATION` — else it is held and played nowhere. The floor
-    holds every chip through the noisy opening weeks whatever their EV; the bar
-    decides play-or-hold in the eligible weeks past it. The window plans the
-    chip in the best week of the next few, which
-    is not the best week of the season: it cannot see past its own horizon, and
-    a chip it plays here is one it is not saving for a double gameweek beyond.
+    ``held_chips`` are the chips in hand, each a :class:`~aigaffer.chips.HeldChip`
+    — a kind and the window of gameweeks it may still be played in, since FPL
+    hands out one set to play by GW19 and a fresh one from GW20 and a first-set
+    chip not played by its stop_event is gone. Two of a kind can be held at
+    once, the first set's and the second's, so everything here is keyed by the
+    held chip's ``id`` and never by its kind. Only the four kinds this solver
+    plans — :data:`BENCH_BOOST`, :data:`TRIPLE_CAPTAIN`, :data:`WILDCARD` and
+    :data:`FREE_HIT` — are read; any other is ignored. Empty, which is the
+    default, is the fallback guarantee: the model built is the pre-chip one to
+    the last variable, so a caller who wants chips advisory-only need only
+    withhold them. A held chip becomes one binary for each window week inside
+    its own window — a chip whose window misses the window entirely builds
+    nothing — with at most one chip a gameweek and each held chip played at
+    most once.
+
+    ``bars`` is what each of those plays has to clear: keyed by the held
+    chip's ``id``, then by gameweek id, the chip calendar's price of the better
+    week a chip played here would be spent instead of. A chip is played in a
+    week only where its marginal xP there beats that week's bar, and held —
+    played nowhere — when no week's does. Because the bar moves week by week,
+    it decides not only play-or-hold but which week: a chip a week from expiry
+    has nothing beyond the window left to wait for and a bar near nothing, while
+    the same chip with a double gameweek ahead of it is held. None, the default,
+    reads :data:`FALLBACK_BARS` for every held chip in every week — the flat
+    constants the solver used before the calendar — and so does a held chip the
+    dict has no entry for, or a week its entry is missing. Even with the
+    calendar the window cannot see the season whole: the bars are its only
+    window onto what lies past the horizon.
 
     ``forced_first_transfers`` pins the opening gameweek's moves; left alone,
     the opening gameweek moves at most ``max(MAX_TRANSFERS, ft)`` times, which
@@ -420,8 +433,9 @@ def optimize_path(
     a standalone solve passes — the prices are computed here from the same inputs
     and the same helper, so the answer is identical to the point either way; the
     lever only moves where the work happens, never the result. It is read only
-    when :data:`FREE_HIT` is in ``available_chips``, and is the week-index →
-    ``(value, fifteen, eleven)`` mapping :func:`_free_hit_prices` returns.
+    when a held free hit may be played in some week of the window, and is the
+    week-index → ``(value, fifteen, eleven)`` mapping :func:`_free_hit_prices`
+    returns.
 
     ``selling_prices`` is what each of ``current_squad``'s sales would
     actually raise, from the purchase ledger; a squad member absent from it
@@ -464,6 +478,25 @@ def optimize_path(
     by_position = _grouped(pool, lambda p: players[p].element_type)
     by_club = _grouped(pool, lambda p: players[p].team)
 
+    # The chips this window may play: the held ones of a kind this solver plans
+    # that at least one window week may play, each with the window weeks inside
+    # its own window. Two of a kind can be held (each set's), so from here on
+    # everything chip-shaped is keyed by the held chip's id; ``chips`` is only
+    # the kinds among them, which is what decides the auxiliaries each kind
+    # needs. A held chip no window week may play builds nothing, and an empty
+    # ``held_chips`` builds exactly the pre-chip model.
+    held = [
+        chip
+        for chip in playable_in(held_chips, events)
+        if chip.chip in _PLANNABLE_CHIPS
+    ]
+    eligible = {
+        chip.id: [w for w in weeks if chip.allows(events[w - 1])] for chip in held
+    }
+    chips = [
+        kind for kind in _PLANNABLE_CHIPS if any(chip.chip == kind for chip in held)
+    ]
+
     # A free hit's value each gameweek is priced to one side, as a constant, so
     # its squad is never a variable of this program and cannot reach the next
     # gameweek's fifteen — the revert is structural, not a constraint. The budget
@@ -477,7 +510,7 @@ def optimize_path(
     # was scored for rather than a re-derivation of it. Only the objective needs
     # the value; only the report needs the squad, and only for the played week.
     best_oneweek_squad: dict[int, tuple[list[int], list[int]]] = {}
-    if FREE_HIT in available_chips:
+    if FREE_HIT in chips:
         # Priced here only when a caller has not priced it already: a sweep hands
         # the same dict to every opening count so the sub-solves run once, and a
         # standalone solve computes it from the very same inputs. Either way None
@@ -540,15 +573,48 @@ def optimize_path(
     cash = {w: problem.add_variable(f"bank{w}", lowBound=0) for w in weeks}
     moves = {w: pulp.lpSum(buy[w][p] for p in pool) for w in weeks}
 
-    # Chips are per-week binaries, and only those the caller still holds get one
-    # — an empty ``available_chips`` builds exactly the pre-chip model, variable
-    # for variable. A chip name this solver does not yet plan is dropped rather
-    # than trusted, so the caller may hand in the whole available set.
-    chips = [chip for chip in _PLANNABLE_CHIPS if chip in available_chips]
+    # Chips: one binary per held chip per window week inside its window — two
+    # of a kind can be held (each half's), so everything here is keyed by the
+    # held chip's id. A held chip no window week may play builds nothing, and
+    # an empty ``held_chips`` builds exactly the pre-chip model.
     play = {
-        chip: {w: problem.add_variable(f"{chip}{w}", cat=pulp.LpBinary) for w in weeks}
-        for chip in chips
+        chip.id: {
+            w: problem.add_variable(
+                f"{chip.chip}{chip.stop_event}_{w}", cat=pulp.LpBinary
+            )
+            for w in eligible[chip.id]
+        }
+        for chip in held
     }
+
+    def on(kind: str, w: int):
+        """Whether ``kind`` is played in week ``w``: the sum of its held chips'
+        binaries there. A kind's windows do not overlap, so at most one term —
+        and none at all in a week no held chip of the kind may play, where the
+        sum is a constant zero and every row it pins reads as it would without
+        the chip."""
+        return pulp.lpSum(
+            play[chip.id][w]
+            for chip in held
+            if chip.chip == kind and w in play[chip.id]
+        )
+
+    def bar(chip: HeldChip, w: int) -> float:
+        """What playing ``chip`` in week ``w`` must clear — the calendar's
+        per-week opportunity cost, or the fallback constant where the calendar
+        has no word for this chip or this week."""
+        priced = (bars or {}).get(chip.id, {})
+        return priced.get(events[w - 1], FALLBACK_BARS[chip.chip])
+
+    def bars_paid(kind: str, w: int):
+        """The bar ``kind`` pays in week ``w``: its held chip's bar there,
+        times the binary that says it was played."""
+        return pulp.lpSum(
+            bar(chip, w) * play[chip.id][w]
+            for chip in held
+            if chip.chip == kind and w in play[chip.id]
+        )
+
     # The bilinear terms a chip adds are linearized by an auxiliary pinned to
     # the product with the big-M pair added in the gameweek loop: ``z_bb`` is
     # ``(squad - xi)·bb``, the bench at full weight for the boosted week, and
@@ -594,14 +660,14 @@ def optimize_path(
         - CHURN_EPSILON * pulp.lpSum(moves[w] for w in weeks)
     )
     if BENCH_BOOST in chips:
-        # The 0.9 the bench was not already scoring, less the reservation the
-        # boosted week has to clear before the chip is worth playing at all.
+        # The 0.9 the bench was not already scoring, less the bar the boosted
+        # week has to clear before the chip is worth playing at all.
         objective += pulp.lpSum(
             decay ** (w - 1)
             * (
                 (1 - BENCH_WEIGHT)
                 * pulp.lpSum(points[p, w] * z_bb[w][p] for p in pool)
-                - CHIP_RESERVATION[BENCH_BOOST] * play[BENCH_BOOST][w]
+                - bars_paid(BENCH_BOOST, w)
             )
             for w in weeks
         )
@@ -611,7 +677,7 @@ def optimize_path(
             decay ** (w - 1)
             * (
                 pulp.lpSum(points[p, w] * z_tc[w][p] for p in pool)
-                - CHIP_RESERVATION[TRIPLE_CAPTAIN] * play[TRIPLE_CAPTAIN][w]
+                - bars_paid(TRIPLE_CAPTAIN, w)
             )
             for w in weeks
         )
@@ -621,8 +687,7 @@ def optimize_path(
         # which the objective already counts. So only its bar goes in, and the
         # chip is played only where that endogenous gain clears it.
         objective -= pulp.lpSum(
-            decay ** (w - 1) * CHIP_RESERVATION[WILDCARD] * play[WILDCARD][w]
-            for w in weeks
+            decay ** (w - 1) * bars_paid(WILDCARD, w) for w in weeks
         )
     if FREE_HIT in chips:
         # The free-hit gameweek is worth its best one-week squad in place of the
@@ -634,16 +699,16 @@ def optimize_path(
         objective += pulp.lpSum(
             decay ** (w - 1)
             * (
-                best_oneweek[w] * play[FREE_HIT][w]
+                best_oneweek[w] * on(FREE_HIT, w)
                 - y_fh[w]
-                - CHIP_RESERVATION[FREE_HIT] * play[FREE_HIT][w]
+                - bars_paid(FREE_HIT, w)
             )
             for w in weeks
         )
     problem += objective
 
     for w in weeks:
-        held = {p: owned[p] if w == 1 else squad[w - 1][p] for p in pool}
+        before = {p: owned[p] if w == 1 else squad[w - 1][p] for p in pool}
 
         problem += pulp.lpSum(squad[w][p] for p in pool) == SQUAD_SIZE
         for position, quota in SQUAD_QUOTAS.items():
@@ -669,15 +734,15 @@ def optimize_path(
         problem += pulp.lpSum(captain[w][p] for p in pool) == 1
 
         for p in pool:
-            problem += squad[w][p] == held[p] + buy[w][p] - sell[w][p]
+            problem += squad[w][p] == before[p] + buy[w][p] - sell[w][p]
             # Nobody is bought who is already here and nobody sold who is not,
             # which between them already imply that nobody is both, fractions
             # included — so the third row is redundant and stays anyway: it is
             # worth a third off the solve time, which a five-gameweek window
             # has no business turning down.
             problem += buy[w][p] + sell[w][p] <= 1
-            problem += buy[w][p] <= 1 - held[p]
-            problem += sell[w][p] <= held[p]
+            problem += buy[w][p] <= 1 - before[p]
+            problem += sell[w][p] <= before[p]
 
         problem += cash[w] == (bank if w == 1 else cash[w - 1]) + pulp.lpSum(
             proceeds[p] * sell[w][p] - players[p].now_cost * buy[w][p] for p in pool
@@ -690,8 +755,8 @@ def optimize_path(
         # hits however many men it moves — free transfers, made linear.
         floor = moves[w] - banked[w]
         if WILDCARD in chips:
-            floor = floor - SQUAD_SIZE * play[WILDCARD][w]
-            problem += paid[w] <= MAX_HITS * (1 - play[WILDCARD][w])
+            floor = floor - SQUAD_SIZE * on(WILDCARD, w)
+            problem += paid[w] <= MAX_HITS * (1 - on(WILDCARD, w))
         problem += paid[w] >= floor
         problem += paid[w] <= moves[w] - banked[w] + big_m * (1 - owing[w])
         problem += paid[w] <= big_m * owing[w]
@@ -703,19 +768,20 @@ def optimize_path(
                 carry = carry + z_wc[w - 1]
             problem += banked[w] <= carry
 
-        # At most one chip a gameweek (a single chip cannot break its own binary,
-        # so the row is only worth writing when two could clash).
-        if len(chips) > 1:
-            problem += pulp.lpSum(play[chip][w] for chip in chips) <= 1
+        # At most one chip a gameweek, written only where two could clash (a
+        # single chip cannot break its own binary).
+        here = [play[chip.id][w] for chip in held if w in play[chip.id]]
+        if len(here) > 1:
+            problem += pulp.lpSum(here) <= 1
         if BENCH_BOOST in chips:
-            bb = play[BENCH_BOOST][w]
+            bb = on(BENCH_BOOST, w)
             for p in pool:
                 diff = squad[w][p] - starting[w][p]
                 problem += z_bb[w][p] <= diff
                 problem += z_bb[w][p] <= bb
                 problem += z_bb[w][p] >= diff - (1 - bb)
         if TRIPLE_CAPTAIN in chips:
-            tc = play[TRIPLE_CAPTAIN][w]
+            tc = on(TRIPLE_CAPTAIN, w)
             for p in pool:
                 problem += z_tc[w][p] <= captain[w][p]
                 problem += z_tc[w][p] <= tc
@@ -725,9 +791,9 @@ def optimize_path(
             # gameweek's moves and it vanishes off a non-wildcarded gameweek. No
             # floor — the carry pushes it to whichever is smaller on its own.
             problem += z_wc[w] <= moves[w]
-            problem += z_wc[w] <= SQUAD_SIZE * play[WILDCARD][w]
+            problem += z_wc[w] <= SQUAD_SIZE * on(WILDCARD, w)
         if FREE_HIT in chips:
-            fh = play[FREE_HIT][w]
+            fh = on(FREE_HIT, w)
             # A free hit makes no permanent transfers — that is the game's rule
             # and the whole of the revert: with the gameweek's moves pinned to
             # zero the standing squad carries through untouched, the hit pin
@@ -751,29 +817,18 @@ def optimize_path(
             problem += y_fh[w] <= best_oneweek[w] * fh
             problem += y_fh[w] >= normal_score - best_oneweek[w] * (1 - fh)
 
-    # Each chip is the game's once-a-season, so once across the horizon too.
-    for chip in chips:
-        problem += pulp.lpSum(play[chip][w] for w in weeks) <= 1
-
-    # The early-season floor: no chip is played before CHIP_FLOOR_GW. A week in
-    # the window whose gameweek is earlier than the floor has every chip's play
-    # binary pinned to zero, so the chip is neither played there nor scheduled
-    # there — it is held until the horizon reaches an eligible gameweek. This is
-    # the hard brake behind the reservation bar: it holds the noise-driven early
-    # chip the bar alone let through, whatever the EV. It binds only when chips
-    # are in hand — an empty ``available_chips`` leaves ``chips`` empty and adds
-    # no row, so the pre-chip model is untouched to the last variable.
-    for w in weeks:
-        if events[w - 1] < CHIP_FLOOR_GW:
-            for chip in chips:
-                problem += play[chip][w] == 0
+    # Each held chip is the game's once-a-set, so once across the window too
+    # (a chip with a single eligible week cannot be played twice there).
+    for chip in held:
+        if len(play[chip.id]) > 1:
+            problem += pulp.lpSum(play[chip.id].values()) <= 1
 
     if forced_first_transfers is None:
         # The opening cap, lifted for a wildcarded first gameweek: fifteen is the
         # most any gameweek can move, so the term uncaps it without unbounding it.
         cap = max(MAX_TRANSFERS, opening_bank)
         if WILDCARD in chips:
-            problem += moves[1] <= cap + SQUAD_SIZE * play[WILDCARD][1]
+            problem += moves[1] <= cap + SQUAD_SIZE * on(WILDCARD, 1)
         else:
             problem += moves[1] <= cap
     else:
@@ -815,41 +870,44 @@ def optimize_path(
         # paid is integral by declaration; round() only clears solver dust.
         taken = round(paid[w].value() or 0.0)
 
-        # Which chip this gameweek plays, if any — at most one, by construction.
-        bb_on = BENCH_BOOST in chips and (play[BENCH_BOOST][w].value() or 0) > 0.5
-        tc_on = TRIPLE_CAPTAIN in chips and (play[TRIPLE_CAPTAIN][w].value() or 0) > 0.5
-        wc_on = WILDCARD in chips and (play[WILDCARD][w].value() or 0) > 0.5
-        fh_on = FREE_HIT in chips and (play[FREE_HIT][w].value() or 0) > 0.5
-        chip = (
-            BENCH_BOOST if bb_on
-            else TRIPLE_CAPTAIN if tc_on
-            else WILDCARD if wc_on
-            else FREE_HIT if fh_on
-            else "none"
+        # Which held chip this gameweek plays, if any — at most one, by
+        # construction — and its kind, which is what the path reports.
+        played_here = next(
+            (
+                chip
+                for chip in held
+                if w in play[chip.id] and (play[chip.id][w].value() or 0) > 0.5
+            ),
+            None,
+        )
+        chip = played_here.chip if played_here else "none"
+        bb_on, tc_on, wc_on, fh_on = (
+            chip == kind for kind in (BENCH_BOOST, TRIPLE_CAPTAIN, WILDCARD, FREE_HIT)
         )
 
         # weekly_xp is the points the gameweek actually earns, chip and all: a
         # boosted week's whole bench, a tripled week's third armband. A wildcard
         # changes no score, only the transfers, so it touches weekly_xp not at
-        # all. The objective carries the same, less each chip's reservation — the
-        # number the plan was chosen by, exactly as it prices the churn below.
+        # all. The objective carries the same, less the bar the played chip
+        # cleared that week — the number the plan was chosen by, exactly as it
+        # prices the churn below.
         week_xp = started + armband
         week_score = started + armband + BENCH_WEIGHT * benched
         if bb_on:
             week_xp += benched
-            week_score += (1 - BENCH_WEIGHT) * benched - CHIP_RESERVATION[BENCH_BOOST]
+            week_score += (1 - BENCH_WEIGHT) * benched - bar(played_here, w)
         if tc_on:
             week_xp += armband
-            week_score += armband - CHIP_RESERVATION[TRIPLE_CAPTAIN]
+            week_score += armband - bar(played_here, w)
         if wc_on:
-            week_score -= CHIP_RESERVATION[WILDCARD]
+            week_score -= bar(played_here, w)
         if fh_on:
             # A free hit fields its best one-week squad in place of the standing
             # one, so the gameweek earns that squad's whole score — the standing
-            # squad's own points do not count at all — less the reservation. It
+            # squad's own points do not count at all — less the bar. It
             # made no transfers, so nothing is added to the hit or churn totals.
             week_xp = best_oneweek[w]
-            week_score = best_oneweek[w] - CHIP_RESERVATION[FREE_HIT]
+            week_score = best_oneweek[w] - bar(played_here, w)
 
         weekly_xp[event] = week_xp
         objective += decay ** (w - 1) * week_score
