@@ -57,6 +57,7 @@ import pytest
 from aigaffer.data.free_transfers import MAX_FREE_TRANSFERS
 from aigaffer.data.models import Player
 from aigaffer.model.xp import PlayerProjection, decayed_total
+from aigaffer.solver import multiweek
 from aigaffer.solver.multiweek import (
     BENCH_BOOST,
     CANDIDATES_PER_POSITION,
@@ -71,9 +72,13 @@ from aigaffer.solver.multiweek import (
     _best_one_week_squad,
     _free_hit_prices,
     _solver,
+    best_one_week_squads,
     optimize_path,
+    squad_one_week,
+    squad_one_week_score,
 )
 from aigaffer.solver.optimizer import (
+    BENCH_WEIGHT,
     MAX_PER_CLUB,
     MAX_TRANSFERS,
     SQUAD_QUOTAS,
@@ -2091,3 +2096,158 @@ def test_a_riser_held_two_weeks_still_sells_at_the_ledger_price_in_week_three():
     assert plan.transfers_in == []
     assert path.moves == []
     assert 17 not in set(plan.squad)
+
+
+# --------------------------------------------------------------------------
+# One-week squads at any bench weight, for the chip calendar
+# --------------------------------------------------------------------------
+
+
+def test_the_default_bench_weight_prices_the_free_hit_exactly_as_before():
+    # Threading a bench weight through the sub-solve must not move the free
+    # hit's own price. GW5 is the lopsided week of the hoist test above:
+    # fifteen heroes at 6.0 are a one-week squad worth an XI of 11 x 6.0 = 66.0,
+    # the armband 6.0 and four benched at a tenth (0.1 x 4 x 6.0 = 2.4), 74.4.
+    # Were the default anything but BENCH_WEIGHT (at 1.0 the bench alone would
+    # be 24.0, 96.0 in all) the figure would move, and the helper's price, the
+    # default call and the explicit BENCH_WEIGHT call would stop agreeing.
+    players, projections = flat_with_heroes(
+        [5, 6, 7], spike_event=5, base=4.0, hero_value=6.0
+    )
+    pool = candidate_pool(players, projections, SQUAD, limit=CANDIDATES_PER_POSITION)
+    by_position = _grouped(pool, lambda p: players[p].element_type)
+    by_club = _grouped(pool, lambda p: players[p].team)
+    week_points = {p: projections[p].per_gw.get(5, 0.0) for p in pool}
+    budget = sum(players[p].now_cost for p in SQUAD)
+
+    before = _free_hit_prices(players, projections, SQUAD, 0, [5, 6, 7], None)
+    default = _best_one_week_squad(
+        pool, players, by_position, by_club, week_points, budget, SOLVER
+    )
+    explicit = _best_one_week_squad(
+        pool, players, by_position, by_club, week_points, budget, SOLVER,
+        bench_weight=BENCH_WEIGHT,
+    )
+
+    assert default == before[1] == explicit
+    assert before[1][0] == pytest.approx(74.4, abs=1e-4)
+
+
+BENCH_TRADE_EVENT = 5
+
+
+def bench_trade() -> tuple[dict[int, Player], dict[int, PlayerProjection]]:
+    """The spine, plus a star it costs money to sign and a bench it costs the
+    same money to upgrade — two ways to spend the same 40 and no more.
+
+    ``16`` is a midfielder at 90 worth 7.0; ``17`` and ``18`` are defenders at 70
+    worth 3.0, the spine's own bench defenders (6, 7) being at 50 and 0.5. The
+    squad's fifteen costs 750 and the bank holds 40 (a budget of 790), so
+    exactly one of the two upgrades is affordable: the star for 8 (the spine's weakest
+    midfielder, 5.6), or both defenders for 6 and 7.
+    """
+    rows = [
+        (pid, position, 50, {BENCH_TRADE_EVENT: points})
+        for pid, position, points in SPINE
+    ]
+    rows.append((16, MID, 90, {BENCH_TRADE_EVENT: 7.0}))
+    rows.append((17, DEF, 70, {BENCH_TRADE_EVENT: 3.0}))
+    rows.append((18, DEF, 70, {BENCH_TRADE_EVENT: 3.0}))
+    return _build(rows)
+
+
+def test_bench_weight_one_buys_a_bench_worth_playing():
+    # A budget of 790. The spine is worth 55.0 started and 6.0 captained, with a bench of
+    # 0.5 + 0.5 + 0.5 + 3.9 = 5.4.
+    #
+    # At the free hit's tenth the star wins. Selling 8 (5.6) for 16 (7.0) adds
+    # 1.4 to the XI and the armband moves from 6.0 to 7.0, +1.0: 2.4 in all.
+    # The defenders add only 0.1 x 2 x (3.0 - 0.5) = 0.5. Value
+    # 56.4 + 7.0 + 0.1 x 5.4 = 63.94, and the bench is still 2, 6, 7 and 15.
+    #
+    # At a full-weight bench the defenders win. They add 2 x 2.5 = 5.0 to a
+    # bench that now counts in full, against the star's 2.4: 55.0 + 6.0 +
+    # (0.5 + 3.9 + 3.0 + 3.0) = 71.4. Which four sit on the bench is no longer
+    # the solver's to care about — at full weight a started point and a
+    # benched one score alike — so what is pinned is the squad, with 17 and 18
+    # in and the star out, and the value.
+    players, projections = bench_trade()
+    event = BENCH_TRADE_EVENT
+
+    cheap = best_one_week_squads(players, projections, SQUAD, 40, [event])[event]
+    full = best_one_week_squads(
+        players, projections, SQUAD, 40, [event], bench_weight=1.0
+    )[event]
+
+    assert cheap[0] == pytest.approx(63.94, abs=1e-4)
+    assert {2, 6, 7, 15} == set(cheap[1]) - set(cheap[2])
+    assert 16 in cheap[1] and not {17, 18} & set(cheap[1])
+    assert full[0] == pytest.approx(71.4, abs=1e-4)
+    assert {17, 18} <= set(full[1]) and 16 not in full[1]
+    # The whole fifteen is worth more: 60.4 + 5.0 = 65.4 against the cheap
+    # one's 60.4 - 5.6 + 7.0 = 61.8.
+    assert sum(projections[p].per_gw[event] for p in full[1]) == pytest.approx(65.4)
+    assert sum(projections[p].per_gw[event] for p in cheap[1]) == pytest.approx(61.8)
+
+
+def test_an_unfieldable_week_is_none_and_the_others_still_price(monkeypatch):
+    # Two weeks on the spine, GW5 and GW6, worth 61.54 apiece. The sub-solve is
+    # made to fail for GW5 alone — a real infeasibility is the same for every
+    # week, so this is the only way to see the weeks priced independently —
+    # and GW6 must still come back priced, the answer not ending at the first
+    # None as the free hit's does.
+    players, projections = spine([5, 6])
+    real = multiweek._best_one_week_squad
+
+    def fail_gw5(pool, players_, by_position, by_club, week_points, *rest, **kw):
+        # In GW5 the spine's captain is 12 at 6.0 and every week_points is
+        # identical to GW6's, so tell the weeks apart by the order called.
+        fail_gw5.calls += 1
+        if fail_gw5.calls == 1:
+            return None
+        return real(pool, players_, by_position, by_club, week_points, *rest, **kw)
+
+    fail_gw5.calls = 0
+    monkeypatch.setattr(multiweek, "_best_one_week_squad", fail_gw5)
+
+    prices = best_one_week_squads(players, projections, SQUAD, 0, [5, 6])
+
+    assert set(prices) == {5, 6}
+    assert prices[5] is None
+    assert prices[6][0] == pytest.approx(61.54, abs=1e-4)
+
+
+def test_a_budget_that_cannot_field_fifteen_prices_every_week_none():
+    # The real infeasibility: ids the player table does not know sell for
+    # nothing, so a squad of fifteen strangers has a budget of 0 and no legal
+    # fifteen fits it. Every requested week is still a key, mapped to None.
+    players, projections = spine([5, 6])
+    prices = best_one_week_squads(
+        players, projections, list(range(101, 116)), 0, [5, 6]
+    )
+    assert prices == {5: None, 6: None}
+
+
+def test_the_squad_scores_itself_on_the_free_hit_basis():
+    # The spine's fifteen in GW5 at 61.54: the XI is 1 | 3 4 5 | 8 9 10 11 12 |
+    # 13 14 (55.0), the armband on 12 (6.0) and the bench (2, 6, 7, 15 =
+    # 0.5 + 0.5 + 0.5 + 3.9 = 5.4) at a tenth, 0.54. The spare midfielder, 16,
+    # is outside the squad and so outside the pool: whatever he is worth does
+    # not enter.
+    players, projections = spine([5], spare=9.0)
+
+    value, fifteen, xi = squad_one_week(players, projections, SQUAD, 5)
+
+    assert value == pytest.approx(61.54, abs=1e-4)
+    assert squad_one_week_score(players, projections, SQUAD, 5) == value
+    assert sorted(fifteen) == SQUAD
+    assert sorted(xi) == [1, 3, 4, 5, 8, 9, 10, 11, 12, 13, 14]
+
+
+def test_a_squad_that_cannot_field_an_eleven_scores_nothing():
+    # Fourteen men cannot make the fifteen the sub-solve insists on, so there
+    # is no legal eleven: the fallback is no value, the squad as given, no XI.
+    players, projections = spine([5])
+    short = SQUAD[:14]
+    assert squad_one_week(players, projections, short, 5) == (0.0, short, [])
+    assert squad_one_week_score(players, projections, short, 5) == 0.0

@@ -202,6 +202,9 @@ CANDIDATES_PER_POSITION = 30
 SOLVE_SECONDS = 60
 SOLVER = pulp.PULP_CBC_CMD(msg=0, timeLimit=SOLVE_SECONDS)
 
+# A budget no squad can reach: a squad scoring itself spends nothing.
+_UNBOUNDED = 10**9
+
 # What a buy costs over and above what it costs. This is not a model of
 # anything — it is a tiebreak, and it is set two orders of magnitude below the
 # smallest gain any real transfer is made for. No gameweek can make more than
@@ -975,6 +978,93 @@ def _free_hit_prices(
     return prices
 
 
+def best_one_week_squads(
+    players: dict[int, Player],
+    projections: dict[int, PlayerProjection],
+    current_squad: list[int],
+    bank: int,
+    events: list[int],
+    *,
+    bench_weight: float = BENCH_WEIGHT,
+    selling_prices: dict[int, int] | None = None,
+    time_limit: int | None = None,
+) -> dict[int, tuple[float, list[int], list[int]] | None]:
+    """The best legal one-week fifteen for each gameweek in ``events``.
+
+    The chip calendar's pricing, kept beside the free hit's because it is the
+    same sub-solve: the same pool, the same budget (the bank plus what the
+    squad actually sells for), the same legality. Two differences. It is keyed
+    by gameweek id, since the calendar works in gameweeks and has no window
+    index; and a week the budget cannot field is None rather than the end of
+    the answer, since one unpriceable week is a week the calendar skips, not a
+    calendar it cannot draw.
+    """
+    pool = candidate_pool(
+        players, projections, current_squad, limit=CANDIDATES_PER_POSITION
+    )
+    current = {pid for pid in current_squad if pid in players}
+    by_position = _grouped(pool, lambda p: players[p].element_type)
+    by_club = _grouped(pool, lambda p: players[p].team)
+    sale = selling_prices or {}
+    budget = bank + sum(sale.get(p, players[p].now_cost) for p in current)
+    solver = _solver(time_limit)
+    return {
+        event: _best_one_week_squad(
+            pool,
+            players,
+            by_position,
+            by_club,
+            {p: _projected(projections, p, event) for p in pool},
+            budget,
+            solver,
+            bench_weight=bench_weight,
+        )
+        for event in events
+    }
+
+
+def squad_one_week(
+    players: dict[int, Player],
+    projections: dict[int, PlayerProjection],
+    squad: list[int],
+    event: int,
+) -> tuple[float, list[int], list[int]]:
+    """How ``squad`` lines up in ``event`` on the free-hit basis: its best legal
+    eleven, the armband, and the bench at :data:`BENCH_WEIGHT` — as
+    ``(value, squad, xi)``.
+
+    The baseline a free hit is measured against when the calendar prices one.
+    It goes through :func:`_best_one_week_squad` with the pool cut to the
+    squad itself and no budget, so the fifteen is forced and only the eleven
+    and the armband are chosen — on the same basis the free-hit side was
+    priced on, which :func:`~aigaffer.solver.lineup.pick_lineup` (it captains
+    on attacking EV) is not. ``(0.0, squad, [])`` if the squad cannot field a
+    legal eleven.
+    """
+    pool = [pid for pid in squad if pid in players]
+    priced = _best_one_week_squad(
+        pool,
+        players,
+        _grouped(pool, lambda p: players[p].element_type),
+        _grouped(pool, lambda p: players[p].team),
+        {p: _projected(projections, p, event) for p in pool},
+        _UNBOUNDED,
+        SOLVER,
+    )
+    return priced if priced is not None else (0.0, list(squad), [])
+
+
+def squad_one_week_score(
+    players: dict[int, Player],
+    projections: dict[int, PlayerProjection],
+    squad: list[int],
+    event: int,
+) -> float:
+    """:func:`squad_one_week`'s score alone — the baseline a free hit is
+    measured against."""
+    return squad_one_week(players, projections, squad, event)[0]
+
+
 def _best_one_week_squad(
     pool: list[int],
     players: dict[int, Player],
@@ -983,6 +1073,7 @@ def _best_one_week_squad(
     week_points: dict[int, float],
     budget: int,
     solver: pulp.LpSolver,
+    bench_weight: float = BENCH_WEIGHT,
 ) -> tuple[float, list[int], list[int]] | None:
     """The best legal one-week fifteen the pool holds within ``budget``.
 
@@ -1000,6 +1091,10 @@ def _best_one_week_squad(
     with the armband doubled and the bench at :data:`BENCH_WEIGHT`, exactly as the
     window scores the standing squad, so the two are comparable to the point.
 
+    ``bench_weight`` is how much a bench point is worth: the window's own
+    :data:`BENCH_WEIGHT` for a free hit, and 1 when the chip calendar prices a
+    bench boost — a bench that will actually score.
+
     Returns ``(value, squad, xi)`` — the score, the fifteen and the eleven — or
     None if no legal fifteen fits the budget, which the caller treats as it
     treats any infeasible window: no plan, fall back. ``squad`` and ``xi`` are
@@ -1015,7 +1110,7 @@ def _best_one_week_squad(
 
     problem += pulp.lpSum(
         week_points[p]
-        * (starting[p] + captain[p] + BENCH_WEIGHT * (squad[p] - starting[p]))
+        * (starting[p] + captain[p] + bench_weight * (squad[p] - starting[p]))
         for p in pool
     )
 
@@ -1049,6 +1144,6 @@ def _best_one_week_squad(
     value = (
         sum(week_points[p] for p in eleven)
         + armband
-        + BENCH_WEIGHT * sum(week_points[p] for p in bench)
+        + bench_weight * sum(week_points[p] for p in bench)
     )
     return value, chosen, eleven
