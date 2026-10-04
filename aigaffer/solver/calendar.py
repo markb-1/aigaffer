@@ -10,7 +10,7 @@ for" (one chip a week), and hands the window a bar per week — the saved-for
 week's value, discounted for distance. The window plays a chip in week w only
 where its gain there beats that bar.
 
-Three consequences worth stating, so nobody files them as bugs:
+Four consequences worth stating, so nobody files them as bugs:
 
 * With nothing left beyond the window the bar is 0: the chip is played inside
   it. Every first-set bar is 0 once the window reaches GW19 — and with the
@@ -22,6 +22,12 @@ Three consequences worth stating, so nobody files them as bugs:
 * The values are proxies, haircut by :data:`PROXY_SCALE`: they price a bench
   bought for the week, a captain bought in, and a free hit against today's
   squad, while the window's gain is what the reachable squad earns.
+* On a flat board the triple captain and the bench boost may go as early as
+  GW6. With PROXY_SCALE ≤ 0.85 and ρ^9 ≈ 0.76, a chip whose in-window gain
+  equals its proxy faces a bar of about 0.65 × that gain, so the window plays
+  it. That is the owner's "lean towards now", taken as the principal's
+  decision. The free hit is held by its option floor until a week clearly
+  beats it or expiry nears; the wildcard by its ramp.
 
 The calendar is computed once per run from base-minute projections — never the
 gaffer's minutes, which are for the coming gameweek — so his re-solves cannot
