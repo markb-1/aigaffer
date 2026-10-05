@@ -19,15 +19,44 @@ No ledger has run, so every sale raises the listed price: Grant for Reyes is
 28 + 75 - 95 = 8 in the bank.
 """
 
-from datetime import UTC, datetime
+import fcntl
+import json
+import sqlite3
+from datetime import UTC, datetime, timedelta
 
+import httpx
 import pytest
 
-from aigaffer.data.models import Player
+from aigaffer.data.fpl_api import FplClient
+from aigaffer.data.models import Bootstrap, Player, Squad, Standing
 from aigaffer.executed import StaleVerdict, Verdict
-from aigaffer.recording import compose, echo
+from aigaffer.orchestrator import run_pipeline
+from aigaffer.recording import (
+    CLOSED,
+    NOTHING_YET,
+    STALE,
+    VERDICT_MODES,
+    Outcome,
+    compose,
+    echo,
+    record_transfers_made,
+    transfers_made,
+)
 from aigaffer.report.render import entered_moves
-from tests.fixtures import PICKS_15_IDS, PIPELINE_ELEMENTS_JSON, make_executed
+from aigaffer.store import Store
+from tests.fixtures import (
+    HISTORY_PATH,
+    PICKS_15_IDS,
+    PICKS_15_JSON,
+    PICKS_PATH,
+    PIPELINE_BOOTSTRAP_JSON,
+    PIPELINE_ELEMENTS_JSON,
+    CountingTransport,
+    config,
+    make_client,
+    make_executed,
+    pipeline_routes,
+)
 
 PLAYERS = {e["id"]: Player.model_validate(e) for e in PIPELINE_ELEMENTS_JSON}
 REAL = PICKS_15_IDS
@@ -376,3 +405,165 @@ def test_a_free_hit_after_moves_undoes_them():
         "Free Hit played: Tuesday's moves (Grant → Reyes) are undone for this"
         " gameweek." in echo(both, hit, PLAYERS)
     )
+
+
+# --- the handler ---------------------------------------------------------------
+
+BOOTSTRAP = Bootstrap.model_validate(PIPELINE_BOOTSTRAP_JSON)
+SQUAD = Squad(
+    picks=PICKS_15_JSON["picks"],
+    bank=PICKS_15_JSON["entry_history"]["bank"],
+    event=1,
+    standing=Standing.model_validate(PICKS_15_JSON["entry_history"]),
+)
+LATER = datetime(2025, 8, 22, 9, 0, tzinfo=UTC)
+
+
+def run_at(store: Store, gw: int, mode: str, ts: str, decision: dict) -> None:
+    with sqlite3.connect(store.db_path) as conn:
+        conn.execute(
+            "INSERT INTO runs (ts, gw, mode, report_md, decision_json)"
+            " VALUES (?, ?, ?, ?, ?)",
+            (ts, gw, mode, "# report", json.dumps(decision)),
+        )
+
+
+def test_no_verdict_yet_is_said_so(tmp_path):
+    store = Store(tmp_path / "aigaffer.db")
+
+    outcome = record_transfers_made(store, BOOTSTRAP, SQUAD, [], LATER, NOW)
+
+    assert outcome == Outcome(NOTHING_YET.format(gw=2), False)
+    assert store.executed(2) is None
+
+
+def test_a_text_after_the_gameweek_closed_says_so(tmp_path):
+    # His text was about GW1's verdict, and GW1's deadline has gone: the API
+    # shows what he entered now, and there is nothing for the inbox to add.
+    store = Store(tmp_path / "aigaffer.db")
+    run_at(store, 1, "deadline", "2025-08-14T17:35:00+00:00", verdict().decision)
+
+    outcome = record_transfers_made(store, BOOTSTRAP, SQUAD, [], LATER, NOW)
+
+    assert outcome == Outcome(CLOSED.format(gw=1), False)
+
+
+def test_a_verdict_newer_than_the_text_is_not_the_one_he_entered(tmp_path):
+    # He texted at 17:35 Thursday about Tuesday's scout. The deadline verdict
+    # landed at 17:40 — while the inbox waited on the tick's lock — and he
+    # never saw it.
+    store = Store(tmp_path / "aigaffer.db")
+    run_at(store, 2, "scout", SCOUT_TS, verdict("scout", SCOUT_TS).decision)
+    run_at(
+        store, 2, "deadline", "2025-08-21T17:40:00+00:00",
+        verdict(transfers_in=[18], transfers_out=[8]).decision,
+    )
+
+    record_transfers_made(
+        store, BOOTSTRAP, SQUAD, [], datetime(2025, 8, 21, 17, 35, tzinfo=UTC), NOW
+    )
+
+    row = store.executed(2)
+    assert row.verdicts == [["scout", SCOUT_TS]]
+    assert row.transfers_in == [17]
+
+
+def test_a_stale_verdict_is_refused_with_a_reply(tmp_path):
+    store = Store(tmp_path / "aigaffer.db")
+    store.save_executed(first())
+    run_at(
+        store, 2, "deadline", DEADLINE_TS,
+        verdict(squad_before=[1, 2, 3]).decision,
+    )
+
+    outcome = record_transfers_made(store, BOOTSTRAP, SQUAD, [], LATER, NOW)
+
+    assert outcome == Outcome(STALE.format(gw=2), False)
+    assert store.executed(2) == first()
+
+
+def test_a_re_send_changes_nothing_and_echoes_again(tmp_path):
+    store = Store(tmp_path / "aigaffer.db")
+    run_at(store, 2, "deadline", DEADLINE_TS, verdict().decision)
+
+    once = record_transfers_made(store, BOOTSTRAP, SQUAD, [], LATER, NOW)
+    twice = record_transfers_made(store, BOOTSTRAP, SQUAD, [], LATER, NOW)
+
+    assert once.changed is True and twice.changed is False
+    assert twice.reply == once.reply
+    assert store.executed(2).ft_after == 0, "one free transfer spent once"
+
+
+def held(path) -> bool:
+    """Whether someone holds the flock on ``path`` right now."""
+    with open(path, "a") as handle:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return True
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        return False
+
+
+class FakeSync:
+    """The git sync, recorded: what was called, and whether under the lock."""
+
+    def __init__(self, lock_path) -> None:
+        self.lock_path = lock_path
+        self.calls: list[tuple[str, bool]] = []
+
+    def pull(self) -> None:
+        self.calls.append(("pull", held(self.lock_path)))
+
+    def publish(self, message: str) -> None:
+        self.calls.append(("publish", held(self.lock_path)))
+
+
+@pytest.fixture
+def scouted(tmp_path):
+    """One real scout run, so the verdict on record is the pipeline's own."""
+    cfg = config(state_dir=tmp_path / "state")
+    store = Store(cfg.state_dir / "aigaffer.db")
+    run_pipeline(cfg, make_client(pipeline_routes()), store, "scout", send=False)
+    return cfg, store
+
+
+def test_transfers_made_records_the_scout_he_entered(scouted, tmp_path):
+    cfg, store = scouted
+    decision = store.latest_verdict(2, VERDICT_MODES).decision
+    assert decision["transfers_in"], "the pipeline's scout makes a move"
+    transport = CountingTransport(pipeline_routes())
+    client = FplClient(http=httpx.Client(transport=transport), sleep=lambda _: None)
+    lock = tmp_path / "inbox" / "state.lock"
+    sync = FakeSync(lock)
+
+    reply = transfers_made(
+        cfg, client, sync, lock, sent_at=datetime.now(UTC) + timedelta(seconds=1)
+    )
+
+    row = store.executed(2)
+    ins, outs = decision["transfers_in"], decision["transfers_out"]
+    assert row.transfers_in == sorted(ins) and row.transfers_out == sorted(outs)
+    # A fresh ledger sells at the listed price: bank 28 + sales - buys.
+    assert row.bank_after == (
+        28 + sum(PLAYERS[p].now_cost for p in outs) - sum(PLAYERS[p].now_cost for p in ins)
+    )
+    assert row.ft_after == max(0, 1 - len(ins))
+    assert reply.startswith("Recorded for GW2 (from ")
+    # Recording asks the API for three things, not two hundred.
+    assert set(transport.counts) == {"/api/bootstrap-static/", PICKS_PATH, HISTORY_PATH}
+    # Pull, write and push all happen under the shared lock.
+    assert sync.calls == [("pull", True), ("publish", True)]
+
+
+def test_a_second_text_publishes_nothing(scouted, tmp_path):
+    cfg, store = scouted
+    lock = tmp_path / "inbox" / "state.lock"
+    sync = FakeSync(lock)
+    sent = datetime.now(UTC) + timedelta(seconds=1)
+
+    first_reply = transfers_made(cfg, make_client(pipeline_routes()), sync, lock, sent)
+    second_reply = transfers_made(cfg, make_client(pipeline_routes()), sync, lock, sent)
+
+    assert second_reply == first_reply
+    assert [name for name, _ in sync.calls] == ["pull", "publish", "pull"]

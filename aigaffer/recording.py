@@ -22,13 +22,21 @@ nightly price move between entering and texting is the one gap, which is why
 the help text tells him to text straight away.
 """
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
+
+import httpx
 
 from aigaffer.chips import FREE_HIT, WILDCARD
-from aigaffer.data.models import Player
+from aigaffer.config import Config
+from aigaffer.data.fpl_api import FplClient
+from aigaffer.data.models import Bootstrap, Player, Squad
 from aigaffer.executed import NO_CHIP, Executed, StaleVerdict, Verdict
-from aigaffer.ledger import selling_price
+from aigaffer.ledger import observe, selling_price
 from aigaffer.report.render import POSITIONS, entered_moves, plural, price
+from aigaffer.statesync import StateSync, state_lock
+from aigaffer.store import DB_NAME, Store
 
 # The reports a person can enter. The reminder is a check on one of these,
 # never a verdict of its own.
@@ -302,3 +310,112 @@ def _by_position(pids: list[int], players: dict[int, Player]) -> str:
     if unknown:
         groups.append(", ".join(unknown))
     return " · ".join(groups)
+
+
+NO_GAMEWEEK = "Nothing to record: the API has no gameweek ahead."
+NOTHING_YET = "Nothing to record yet: no recommendation for GW{gw} has gone out."
+CLOSED = "GW{gw} has closed; the API now shows your squad."
+NO_SQUAD = "Nothing to record: the API shows no squad to work from."
+STALE = (
+    "Not recorded: GW{gw}'s latest verdict was worked out from a squad that is"
+    " neither the API's nor the one on record. Wait for the next report, enter"
+    " it, and text again."
+)
+PUBLISH_MESSAGE = "chore: record transfers made (inbox)"
+
+
+@dataclass(frozen=True)
+class Outcome:
+    """The reply to send, and whether the store changed (so state is pushed)."""
+
+    reply: str
+    changed: bool
+
+
+def record_transfers_made(
+    store: Store,
+    bootstrap: Bootstrap,
+    squad: Squad | None,
+    chips_used: list[dict],
+    sent_at: datetime,
+    now: datetime,
+) -> Outcome:
+    """Record the verdict the owner says he entered, and say what was recorded.
+
+    The verdict is the newest early, scout or deadline record for the next
+    gameweek saved at or before ``sent_at`` — the text's own time, because
+    the inbox may have waited minutes on the hourly tick's lock and a verdict
+    that landed meanwhile is one he never saw. None for the next gameweek but
+    one for the gameweek before is a text about a gameweek that has closed.
+
+    The sales are priced by the ledger read in memory (``persist=False``):
+    recording writes the row and nothing else.
+    """
+    event = bootstrap.next_event()
+    if event is None:
+        return Outcome(NO_GAMEWEEK, False)
+    verdict = store.latest_verdict(event.id, VERDICT_MODES, at_or_before=sent_at)
+    if verdict is None:
+        if store.latest_verdict(event.id - 1, VERDICT_MODES, at_or_before=sent_at):
+            return Outcome(CLOSED.format(gw=event.id - 1), False)
+        return Outcome(NOTHING_YET.format(gw=event.id), False)
+    if squad is None:
+        return Outcome(NO_SQUAD, False)
+
+    players = {player.id: player for player in bootstrap.elements}
+    row = store.executed(event.id)
+    ledger = observe(store, squad, players, chips_used, persist=False)
+    try:
+        new = compose(
+            row, verdict, squad.player_ids, squad.bank, players,
+            ledger.selling_prices, now,
+        )
+    except StaleVerdict:
+        return Outcome(STALE.format(gw=event.id), False)
+    if new is row:
+        return Outcome(echo(row, verdict, players), False)
+    store.save_executed(new)
+    return Outcome(echo(new, verdict, players), True)
+
+
+def transfers_made(
+    cfg: Config,
+    client: FplClient,
+    sync: StateSync,
+    lock_path: Path,
+    sent_at: datetime,
+    now: datetime | None = None,
+) -> str:
+    """The inbox's handler for "Transfers made": fetch, lock, record, push.
+
+    Three requests and no more — the bootstrap, the picks and the chip
+    history — because the full fetch is two hundred and the inbox runs every
+    minute. They are made before the lock is taken: the lock is shared with
+    the hourly tick and is held only for what touches the state — the pull,
+    the row (a text file, ``state/executed/gw{n}.json``), the commit and the
+    push. A push that fails is said on the log and the reply still goes; the
+    row is committed locally and the next hourly tick pushes it.
+    """
+    bootstrap = client.bootstrap()
+    current = bootstrap.current_event()
+    squad = None
+    if current is not None:
+        try:
+            squad = client.picks(cfg.team_id, current.id)
+        except httpx.HTTPStatusError:
+            squad = None
+    chips_used = [] if squad is None else client.chips_used(cfg.team_id)
+
+    with state_lock(lock_path):
+        sync.pull()
+        outcome = record_transfers_made(
+            Store(cfg.state_dir / DB_NAME),
+            bootstrap,
+            squad,
+            chips_used,
+            sent_at,
+            now or datetime.now(UTC),
+        )
+        if outcome.changed:
+            sync.publish(PUBLISH_MESSAGE)
+    return outcome.reply
