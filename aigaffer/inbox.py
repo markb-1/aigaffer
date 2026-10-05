@@ -44,7 +44,7 @@ TRANSFERS_MADE = "transfers made"
 CHIP_WORDS = frozenset({"wildcard", "wc", "free hit", "freehit", "fh"})
 
 HELP = (
-    "Text me:\n"
+    "Tap a button below, or text me:\n"
     "• Transfers made — straight after you enter the latest recommendation"
     " exactly, its transfers and its chip. Later reports this gameweek then"
     " work from that squad. Don't send it if you changed anything.\n"

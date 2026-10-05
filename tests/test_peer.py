@@ -39,7 +39,7 @@ from tests.test_orchestrator import (
 @pytest.fixture
 def phone(monkeypatch) -> list:
     sent: list = []
-    monkeypatch.setattr(orchestrator, "send_report", lambda *args: sent.append(args))
+    monkeypatch.setattr(orchestrator, "send_report", lambda *args, **kwargs: sent.append(args))
     return sent
 
 

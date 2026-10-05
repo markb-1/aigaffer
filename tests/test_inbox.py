@@ -8,6 +8,7 @@ message is retried once and then let go — across two processes, which is
 why the marker is a file.
 """
 
+import json
 from datetime import UTC, datetime
 
 import httpx
@@ -24,6 +25,8 @@ from aigaffer.inbox import (
     normalise,
     run_inbox,
 )
+
+from aigaffer.report.telegram import KEYBOARD
 
 TOKEN = "1234:super-secret-bot-token"
 CHAT = "42"
@@ -100,6 +103,7 @@ def test_transfers_made_is_handed_the_messages_own_time(tmp_path):
 
 def test_the_help_lists_the_commands():
     assert "Transfers made" in HELP and "help" in HELP and "wildcard" in HELP
+    assert HELP.startswith("Tap a button below")
 
 
 def test_another_chat_is_ignored_silently_and_passed(tmp_path):
@@ -338,3 +342,47 @@ def test_the_inbox_directory_defaults_to_the_home_dot_directory(monkeypatch, tmp
     monkeypatch.setenv("HOME", str(tmp_path))
 
     assert inbox.inbox_dir() == tmp_path / ".aigaffer"
+
+
+# The four buttons of the persistent keyboard send their labels as plain text,
+# so each must normalise to the command the dispatcher already acts on.
+@pytest.mark.parametrize(
+    ("label", "expected"),
+    [
+        ("Transfers made", "the transfers-made handler ran"),
+        ("Wildcard?", CHIPS_SOON),
+        ("Free hit?", CHIPS_SOON),
+        ("Help", HELP),
+    ],
+)
+def test_each_keyboard_button_reaches_its_command(label, expected):
+    reply = dispatch(
+        normalise(label), datetime.now(UTC), lambda sent_at: "the transfers-made handler ran"
+    )
+
+    assert reply == expected
+
+
+def test_the_keyboard_labels_are_exactly_the_buttons_tested_above():
+    labels = [button["text"] for row in KEYBOARD["keyboard"] for button in row]
+
+    assert labels == ["Transfers made", "Wildcard?", "Free hit?", "Help"]
+
+
+def test_the_inboxs_default_reply_path_sends_with_the_keyboard(monkeypatch, tmp_path):
+    # run_inbox's default ``send`` is send_message; the keyboard rides on that.
+    bodies: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return httpx.Response(200, json={})
+
+    http = httpx.Client(transport=httpx.MockTransport(handler))
+    phone = Phone([update(10, "Help")])
+    run_inbox(
+        TOKEN, CHAT, tmp_path, recorded, get=phone.get,
+        send=lambda token, chat_id, text: inbox.send_message(token, chat_id, text, http=http),
+    )
+
+    assert [body["reply_markup"] for body in bodies] == [KEYBOARD]
+    assert bodies[0]["chat_id"] == CHAT

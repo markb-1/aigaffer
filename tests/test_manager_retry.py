@@ -78,7 +78,7 @@ class Phone:
     def __init__(self) -> None:
         self.messages: list[str] = []
 
-    def __call__(self, token: str, chat_id: str, text: str) -> None:
+    def __call__(self, token: str, chat_id: str, text: str, **kwargs) -> None:
         self.messages.append(text)
 
 
@@ -342,7 +342,7 @@ def test_the_ledgers_note_survives_a_withheld_tick(monkeypatch, tmp_path, phone)
 def test_an_alert_that_failed_to_send_is_tried_again_next_tick(monkeypatch, tmp_path):
     calls: list[str] = []
 
-    def flaky(token: str, chat_id: str, text: str) -> None:
+    def flaky(token: str, chat_id: str, text: str, **kwargs) -> None:
         calls.append(text)
         if len(calls) == 1:
             raise httpx.ConnectError("boom")

@@ -608,7 +608,9 @@ so near the top, it never sells a player you have just bought or buys back
 one you have just sold, and the T-3h reminder checks your armbands, your
 shape, your bench order and the fitness of the players you signed instead
 of re-recommending the moves. If you changed anything, don't send it; the
-runs then behave exactly as before. A second "Transfers made" after a later
+runs then behave exactly as before. The chat carries four buttons under
+your message box — **Transfers made**, **Wildcard?**, **Free hit?** and
+**Help** — and tapping one sends that text, so you never have to type. A second "Transfers made" after a later
 report you also acted on adds that report's moves on top; the same one twice
 changes nothing. The reply echoes the whole position — moves, armbands,
 squad, bank, free transfers — so a mismatch shows at once. Text it straight

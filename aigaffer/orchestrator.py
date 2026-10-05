@@ -127,7 +127,7 @@ from aigaffer.report.render import (
     render_report,
     render_withheld,
 )
-from aigaffer.report.telegram import send_report
+from aigaffer.report.telegram import KEYBOARD, send_report
 from aigaffer.solver.calendar import (
     ChipCalendar,
     build_calendar,
@@ -2327,7 +2327,9 @@ def _deliver(cfg: Config, report: str, unconfigured: str = NOT_CONFIGURED) -> bo
         print(unconfigured)
         return True
     try:
-        send_report(cfg.telegram_token, cfg.telegram_chat_id, report)
+        send_report(
+            cfg.telegram_token, cfg.telegram_chat_id, report, reply_markup=KEYBOARD
+        )
     except Exception as error:  # any failure, and none of them worth the run
         print(f"telegram send failed: {type(error).__name__}")
         return False

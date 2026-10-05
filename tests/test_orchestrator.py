@@ -65,7 +65,7 @@ from aigaffer.orchestrator import (
 from aigaffer.report import render
 from aigaffer.recording import record_transfers_made
 from aigaffer.report.render import render_report, working_from
-from aigaffer.report.telegram import send_report
+from aigaffer.report.telegram import KEYBOARD, send_report
 from aigaffer.solver.calendar import CHIP_DISCOUNT
 from aigaffer.solver.lineup import Lineup, attacking_evs, pick_lineup
 from aigaffer.solver.multiweek import FALLBACK_BARS, PlannedPath
@@ -2180,7 +2180,7 @@ def test_the_manager_unavailable_notice_rides_the_digest(monkeypatch, tmp_path):
     stub_gaffer(monkeypatch, never)
     monkeypatch.setitem(sys.modules, "aigaffer.manager.agent", PoisonedModule())
     sent = []
-    monkeypatch.setattr(orchestrator, "send_report", lambda *args: sent.append(args))
+    monkeypatch.setattr(orchestrator, "send_report", lambda *args, **kwargs: sent.append(args))
     cfg = config(
         telegram_token=TOKEN,
         telegram_chat_id="42",
@@ -2207,7 +2207,7 @@ def test_the_digest_opens_with_the_standing(monkeypatch, tmp_path):
     # The phone's first screen says how the season is going before it says
     # what to do, and the figures come off the picks the run already fetched.
     sent = []
-    monkeypatch.setattr(orchestrator, "send_report", lambda *args: sent.append(args))
+    monkeypatch.setattr(orchestrator, "send_report", lambda *args, **kwargs: sent.append(args))
     cfg = config(
         telegram_token=TOKEN,
         telegram_chat_id="42",
@@ -2223,6 +2223,26 @@ def test_the_digest_opens_with_the_standing(monkeypatch, tmp_path):
     [standing] = [line for line in lines if line.startswith(STANDING_LINE)]
     assert standing == STANDING_LINE + "1 free transfer"
     assert lines[lines.index(standing) - 2].startswith("Deadline: ")
+
+
+def test_a_delivered_digest_carries_the_keyboard(monkeypatch, tmp_path):
+    # The scheduled send is what puts the four buttons under his message box
+    # even if he never types anything, so _deliver passes the keyboard on.
+    calls = []
+    monkeypatch.setattr(
+        orchestrator, "send_report", lambda *args, **kwargs: calls.append((args, kwargs))
+    )
+    cfg = config(
+        telegram_token=TOKEN, telegram_chat_id="42", state_dir=tmp_path / "state"
+    )
+
+    run_pipeline(
+        cfg, make_client(pipeline_routes()), Store(tmp_path / "aigaffer.db"), "deadline"
+    )
+
+    [(args, kwargs)] = calls
+    assert args[:2] == (TOKEN, "42")
+    assert kwargs == {"reply_markup": KEYBOARD}
 
 
 def test_the_reminder_opens_with_the_standing_too(tmp_path):
@@ -2246,7 +2266,7 @@ def test_the_audit_line_rides_the_digest_as_well_as_the_report(
     # note nobody reads on deadline day.
     monkeypatch.setattr(orchestrator, "_audit_line", lambda ledger: "\nAUDIT-MARK\n")
     sent = []
-    monkeypatch.setattr(orchestrator, "send_report", lambda *args: sent.append(args))
+    monkeypatch.setattr(orchestrator, "send_report", lambda *args, **kwargs: sent.append(args))
     cfg = config(
         telegram_token=TOKEN,
         telegram_chat_id="42",
@@ -2490,7 +2510,7 @@ def test_the_run_says_when_the_gaffer_stood_down(monkeypatch, capsys, tmp_path):
 
 def test_the_report_the_gaffer_wrote_is_the_one_that_is_sent(monkeypatch, tmp_path):
     sent = []
-    monkeypatch.setattr(orchestrator, "send_report", lambda *args: sent.append(args))
+    monkeypatch.setattr(orchestrator, "send_report", lambda *args, **kwargs: sent.append(args))
     gaffer = stub_gaffer(monkeypatch)
     cfg = config(
         telegram_token=TOKEN,
@@ -2578,7 +2598,7 @@ def test_a_failed_calendar_says_so_and_the_report_still_goes_out(
 
     monkeypatch.setattr(orchestrator, "build_calendar", broken)
     sent = []
-    monkeypatch.setattr(orchestrator, "send_report", lambda *args: sent.append(args))
+    monkeypatch.setattr(orchestrator, "send_report", lambda *args, **kwargs: sent.append(args))
     cfg = config(
         telegram_token=TOKEN,
         telegram_chat_id="42",
@@ -2997,7 +3017,7 @@ def test_the_manager_is_never_asked_for_the_reminder(monkeypatch, tmp_path):
 
 def test_the_reminder_goes_to_telegram_and_only_telegram(monkeypatch, tmp_path):
     sent = []
-    monkeypatch.setattr(orchestrator, "send_report", lambda *args: sent.append(args))
+    monkeypatch.setattr(orchestrator, "send_report", lambda *args, **kwargs: sent.append(args))
     cfg = config(
         telegram_token=TOKEN,
         telegram_chat_id="42",
@@ -3024,7 +3044,7 @@ def test_a_reminder_that_never_buzzed_is_not_marked_done(
     # not the history file, so the next tick inside the window tries again;
     # the risk taken in exchange is one duplicate buzz if a send lands and
     # the save then dies, which is the cheaper failure.
-    def explode(*args):
+    def explode(*args, **kwargs):
         raise httpx.ConnectError(f"connecting to /bot{TOKEN}/sendMessage failed")
 
     monkeypatch.setattr(orchestrator, "send_report", explode)
@@ -3047,7 +3067,7 @@ def test_a_reminder_that_never_buzzed_is_not_marked_done(
     # The next tick: the phone is reachable again, and the retry completes
     # the reminder exactly once.
     sent = []
-    monkeypatch.setattr(orchestrator, "send_report", lambda *args: sent.append(args))
+    monkeypatch.setattr(orchestrator, "send_report", lambda *args, **kwargs: sent.append(args))
     alert = run_pipeline(cfg, client, store, "reminder")
 
     assert sent == [(TOKEN, "42", alert)]
@@ -3066,7 +3086,7 @@ def test_a_reminders_failed_buzz_does_not_swallow_the_reconciliation_note(
     # snapshot written, the retrying tick would have found the gameweek
     # already reconciled and predicted nothing, and the one line saying the
     # bank was adrift would only ever have been in the alert nobody got.
-    def explode(*args):
+    def explode(*args, **kwargs):
         raise httpx.ConnectError("the phone is down")
 
     monkeypatch.setattr(orchestrator, "send_report", explode)
@@ -3093,7 +3113,7 @@ def test_a_reminders_failed_buzz_does_not_swallow_the_reconciliation_note(
     # note, and only then does the observation land — the snapshot, Quill's
     # sighting and Reyes's departure.
     sent = []
-    monkeypatch.setattr(orchestrator, "send_report", lambda *args: sent.append(args))
+    monkeypatch.setattr(orchestrator, "send_report", lambda *args, **kwargs: sent.append(args))
     alert = run_pipeline(cfg, client, store, "reminder")
 
     assert sent == [(TOKEN, "42", alert)]
@@ -3144,7 +3164,7 @@ def test_a_pool_with_no_points_to_rank_on_falls_back_to_price():
 
 def test_the_report_is_sent_to_telegram(monkeypatch, tmp_path):
     sent = []
-    monkeypatch.setattr(orchestrator, "send_report", lambda *args: sent.append(args))
+    monkeypatch.setattr(orchestrator, "send_report", lambda *args, **kwargs: sent.append(args))
     cfg = config(
         telegram_token=TOKEN,
         telegram_chat_id="42",
@@ -3172,7 +3192,7 @@ def test_nothing_is_sent_without_somewhere_to_send_it(monkeypatch, capsys, tmp_p
     # chat id — and it looks exactly like a working bot until the phone stays
     # quiet, so the run that could not deliver says so.
     sent = []
-    monkeypatch.setattr(orchestrator, "send_report", lambda *args: sent.append(args))
+    monkeypatch.setattr(orchestrator, "send_report", lambda *args, **kwargs: sent.append(args))
 
     run_pipeline(
         config(telegram_token=TOKEN, state_dir=tmp_path / "state"),
@@ -3190,7 +3210,7 @@ def test_nothing_is_sent_without_somewhere_to_send_it(monkeypatch, capsys, tmp_p
 def test_a_failed_send_keeps_the_run_and_never_prints_the_token(
     monkeypatch, capsys, tmp_path
 ):
-    def explode(*args):
+    def explode(*args, **kwargs):
         # httpx puts the request URL — and so the token — in its messages.
         raise httpx.ConnectError(f"connecting to /bot{TOKEN}/sendMessage failed")
 
@@ -3552,7 +3572,7 @@ def test_a_chips_run_carries_the_calendar_in_the_report_and_one_line_on_the_phon
     monkeypatch, tmp_path
 ):
     sent = []
-    monkeypatch.setattr(orchestrator, "send_report", lambda *args: sent.append(args))
+    monkeypatch.setattr(orchestrator, "send_report", lambda *args, **kwargs: sent.append(args))
     cfg = config(
         telegram_token=TOKEN, telegram_chat_id="42", state_dir=tmp_path / "state", chips=True
     )
@@ -4016,7 +4036,7 @@ def test_the_solve_sells_a_recorded_signing_at_half_his_rise(monkeypatch, tmp_pa
 
 def test_the_digest_on_the_phone_says_what_it_works_from(monkeypatch, tmp_path):
     sent = []
-    monkeypatch.setattr(orchestrator, "send_report", lambda *args: sent.append(args))
+    monkeypatch.setattr(orchestrator, "send_report", lambda *args, **kwargs: sent.append(args))
     store = Store(tmp_path / "aigaffer.db")
     store.save_executed(make_executed())
     cfg = config(
@@ -4031,7 +4051,7 @@ def test_the_digest_on_the_phone_says_what_it_works_from(monkeypatch, tmp_path):
 
 def test_the_withheld_alert_on_the_phone_says_it_too(monkeypatch, tmp_path):
     sent = []
-    monkeypatch.setattr(orchestrator, "send_report", lambda *args: sent.append(args))
+    monkeypatch.setattr(orchestrator, "send_report", lambda *args, **kwargs: sent.append(args))
     stub_gaffer(monkeypatch, unavailable)
     store = Store(tmp_path / "aigaffer.db")
     store.save_executed(make_executed())

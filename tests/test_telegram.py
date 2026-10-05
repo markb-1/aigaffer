@@ -23,7 +23,13 @@ import json
 import httpx
 import pytest
 
-from aigaffer.report.telegram import _utf16_len, get_updates, send_message, send_report
+from aigaffer.report.telegram import (
+    KEYBOARD,
+    _utf16_len,
+    get_updates,
+    send_message,
+    send_report,
+)
 
 TOKEN = "123456:fake-bot-token"
 CHAT_ID = "42"
@@ -308,5 +314,76 @@ def test_send_message_is_the_report_path_escaped():
             "chat_id": CHAT_ID,
             "text": "Bank &lt;£0.5m&gt; &amp; 1 free transfer",
             "parse_mode": "HTML",
+            "reply_markup": KEYBOARD,
         }
     ]
+
+
+# --- the keyboard ---------------------------------------------------------------
+
+
+def send_with_keyboard(text: str, statuses: list[int], **kwargs) -> list[dict]:
+    """Send ``text`` with each request answered by the next of ``statuses``;
+    return the JSON bodies, in order. ``kwargs`` go to :func:`send_report`."""
+    bodies: list[dict] = []
+    replies = iter(statuses)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return httpx.Response(next(replies), json={})
+
+    http = httpx.Client(transport=httpx.MockTransport(handler))
+    send_report(TOKEN, CHAT_ID, text, http=http, **kwargs)
+    return bodies
+
+
+def test_the_keyboard_is_the_four_commands_in_three_rows():
+    assert KEYBOARD == {
+        "keyboard": [
+            [{"text": "Transfers made"}],
+            [{"text": "Wildcard?"}, {"text": "Free hit?"}],
+            [{"text": "Help"}],
+        ],
+        "is_persistent": True,
+        "resize_keyboard": True,
+    }
+
+
+def test_the_keyboard_rides_the_last_chunk_only():
+    # LONG_REPORT is three chunks: only the third may carry the keyboard, or
+    # the phone would redraw it three times for one report.
+    bodies = send_with_keyboard(LONG_REPORT, [200] * 3, reply_markup=KEYBOARD)
+
+    assert len(bodies) == 3
+    assert ["reply_markup" in body for body in bodies] == [False, False, True]
+    assert bodies[-1]["reply_markup"] == KEYBOARD
+
+
+def test_the_plain_fallback_of_the_last_chunk_keeps_the_keyboard():
+    # Chunks 1 and 2 go fine; chunk 3's HTML is refused with a 400 and goes
+    # again as plain text, which must still bring the keyboard.
+    bodies = send_with_keyboard(LONG_REPORT, [200, 200, 400, 200], reply_markup=KEYBOARD)
+
+    assert len(bodies) == 4
+    assert bodies[2]["parse_mode"] == "HTML" and bodies[2]["reply_markup"] == KEYBOARD
+    assert "parse_mode" not in bodies[3]
+    assert bodies[3]["reply_markup"] == KEYBOARD
+
+
+def test_no_keyboard_means_no_key_in_any_body():
+    bodies = send_with_keyboard(LONG_REPORT, [200, 200, 400, 200])
+
+    assert not any("reply_markup" in body for body in bodies)
+
+
+def test_send_message_attaches_the_keyboard():
+    bodies: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return httpx.Response(200, json={})
+
+    http = httpx.Client(transport=httpx.MockTransport(handler))
+    send_message(TOKEN, CHAT_ID, "hello", http=http)
+
+    assert [body["reply_markup"] for body in bodies] == [KEYBOARD]

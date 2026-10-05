@@ -45,12 +45,32 @@ import httpx
 BASE_URL = "https://api.telegram.org"
 MAX_CHARS = 4000
 
+# The owner's four commands as buttons under his message box: a Telegram
+# *reply keyboard*, kept on screen (``is_persistent``) and sized to its labels
+# (``resize_keyboard``). Tapping a button sends its label as an ordinary text
+# message, which is exactly what the inbox already reads — so there is no
+# callback handling and no new update type, and the labels have to stay words
+# the inbox's dispatcher understands.
+KEYBOARD: dict = {
+    "keyboard": [
+        [{"text": "Transfers made"}],
+        [{"text": "Wildcard?"}, {"text": "Free hit?"}],
+        [{"text": "Help"}],
+    ],
+    "is_persistent": True,
+    "resize_keyboard": True,
+}
+
 _HEADINGS = ("### ", "## ", "# ")
 _ESCAPES = {"&": "&amp;", "<": "&lt;", ">": "&gt;"}
 
 
 def send_report(
-    token: str, chat_id: str, text: str, http: httpx.Client | None = None
+    token: str,
+    chat_id: str,
+    text: str,
+    http: httpx.Client | None = None,
+    reply_markup: dict | None = None,
 ) -> None:
     """Send ``text`` to ``chat_id`` as one message per chunk, in order.
 
@@ -60,15 +80,26 @@ def send_report(
     rate limiter. Raises ``httpx.HTTPStatusError`` on the first chunk Telegram
     refuses for good, which leaves the ones before it sent — a report that
     arrives truncated is more use than one that does not arrive.
+
+    ``reply_markup``, when given, rides on the last chunk only — the phone
+    redraws a keyboard each time it arrives, and one per report is enough —
+    on the HTML attempt and on its plain-text resend alike, so a chunk that
+    fell back to plain text does not lose the buttons. None leaves every
+    request body exactly as it always was.
     """
     client = http or httpx.Client(timeout=30.0)
     url = f"{BASE_URL}/bot{token}/sendMessage"
-    for plain, html in _chunks(text):
+    chunks = _chunks(text)
+    for index, (plain, html) in enumerate(chunks):
+        extra = {"reply_markup": reply_markup} if reply_markup and index == len(chunks) - 1 else {}
         response = client.post(
-            url, json={"chat_id": chat_id, "text": html, "parse_mode": "HTML"}
+            url,
+            json={"chat_id": chat_id, "text": html, "parse_mode": "HTML", **extra},
         )
         if response.status_code == 400:
-            response = client.post(url, json={"chat_id": chat_id, "text": plain})
+            response = client.post(
+                url, json={"chat_id": chat_id, "text": plain, **extra}
+            )
         response.raise_for_status()
 
 
@@ -102,9 +133,11 @@ def send_message(
 
     The inbox's replies are short, but they carry names and arrows and the
     odd ``<``, so they go through exactly the chunking, escaping and plain
-    fallback :func:`send_report` already proves — one path, not two.
+    fallback :func:`send_report` already proves — one path, not two. Every
+    reply carries the :data:`KEYBOARD`, so the buttons are there whenever he
+    has just been answered.
     """
-    send_report(token, chat_id, text, http=http)
+    send_report(token, chat_id, text, http=http, reply_markup=KEYBOARD)
 
 
 def _utf16_len(text: str) -> int:
