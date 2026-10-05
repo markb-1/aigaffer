@@ -404,10 +404,11 @@ what makes a good week for each chip, and that in a chip's last two eligible
 gameweeks it is free points — he finalizes the solver's chip unless team news
 makes the week a dud, and says so in the rationale if he declines it in the
 final week. His briefing has a `## Chip calendar` section after the Chip EV
-panel: each held chip's window, saved-for week, this week's EV and bar. Everything the solver already enforced —
-budget, club quotas, the hit cap — it still enforces, because he only ever
-picks from plans it produced. The conversation itself is bounded too: twelve
-assistant turns and twelve minutes, whichever runs out first.
+panel: each held chip's window, saved-for week, this week's EV and bar.
+Everything the solver already enforced — budget, club quotas, the hit cap — it
+still enforces, because he only ever picks from plans it produced. The
+conversation itself is bounded too: twelve assistant turns and twelve minutes,
+whichever runs out first.
 
 What comes back is printed in the report as **The Gaffer's view**: the
 rationale, the chip and its justification, the minute adjustments he settled
