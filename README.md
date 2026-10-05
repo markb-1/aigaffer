@@ -516,7 +516,7 @@ workflow and without throwing away a secret:
 | Variable | Value | Effect |
 | --- | --- | --- |
 | `AIGAFFER_MANAGER` | `0` | the solver alone, even with a key: byte-identical to the solver-only pipeline |
-| `AIGAFFER_PLANNER` | `single` | the single-week solver answers alone, no window |
+| `AIGAFFER_PLANNER` | `single` | the single-week solver answers alone: no window, and so no chip calendar and no `Chips:` line, since nothing plans a chip |
 | `AIGAFFER_CHIPS` | `off` | chips advisory only: priced in the panel, held by no calendar and planned by nobody (the gaffer may still play an unspent chip) |
 | `AIGAFFER_STRENGTH` | `off` | fixtures priced by FPL's strength columns, the fitted team-strength model asked nothing |
 
