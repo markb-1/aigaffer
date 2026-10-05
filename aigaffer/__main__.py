@@ -17,6 +17,11 @@ makes it safe against the live API.
 has already been played instead of advising on one to come, so it wants no
 team, no store and no schedule — only a gameweek and the API.
 
+``inbox`` is the VM's other timer, once a minute: it reads what the owner has
+texted the bot and answers (:mod:`aigaffer.inbox`). It wants no schedule and no
+report; it does want the team and the store, because "Transfers made" is
+written down.
+
 Failure is loud here and nowhere else. A run on a schedule has no one
 watching it, so a run that dies has to say so twice: on stdout for the log,
 and — when there is a phone configured and this was not a dry run — as one
@@ -37,6 +42,7 @@ from aigaffer.backtest import backtest_gw, finished_gameweeks
 from aigaffer.config import SCOUT_HORIZON_HOURS, Config
 from aigaffer.data.fpl_api import FplClient
 from aigaffer.data.models import Bootstrap, Event
+from aigaffer.inbox import inbox_dir, run_inbox
 from aigaffer.orchestrator import (
     DEADLINE_MODE,
     EARLY_MODE,
@@ -47,12 +53,15 @@ from aigaffer.orchestrator import (
     run_pipeline,
 )
 from aigaffer.peer import peer_has_run
+from aigaffer.recording import transfers_made
 from aigaffer.report.telegram import send_report
-from aigaffer.store import DB_NAME, Store
+from aigaffer.statesync import STATE_LOCK, GitStateSync
+from aigaffer.store import DB_NAME, EXECUTED_DIR, Store
 
 AUTO = "auto"
 BACKTEST = "backtest"
-COMMANDS = (AUTO, "early", "scout", "deadline", "reminder", BACKTEST)
+INBOX = "inbox"
+COMMANDS = (AUTO, "early", "scout", "deadline", "reminder", BACKTEST, INBOX)
 
 SCHEDULE_STAGE = "reading the schedule"
 BACKTEST_STAGE = "the backtest"
@@ -78,6 +87,8 @@ def main(argv: list[str] | None = None) -> int:
             return _backtest(client, args.gw)
         except httpx.HTTPError as error:
             return _failed(None, error, event_id=None, stage=BACKTEST_STAGE)
+    if args.command == INBOX:
+        return _inbox(client)
 
     cfg = Config.from_env()
     _manager_notice(cfg)
@@ -224,6 +235,28 @@ def _backtest(client: FplClient, gw: int | None) -> int:
 
     print(backtest_gw(client, bootstrap, client.fixtures(), gameweek))
     return 0
+
+
+def _inbox(client: FplClient) -> int:
+    """Read what the owner texted and answer it — the VM's minute timer.
+
+    The handler for "Transfers made" is bound here, with the clone that holds
+    the state (the state directory's parent, as for the peer check), the one
+    path its commits may touch — the recorded weeks' text files, never the
+    database — and the lock it shares with the hourly tick, so
+    :mod:`aigaffer.inbox` knows nothing of git or of the store.
+    """
+    cfg = Config.from_env()
+    directory = inbox_dir()
+    recordings = f"{cfg.state_dir.name}/{EXECUTED_DIR}/"
+    handler = partial(
+        transfers_made,
+        cfg,
+        client,
+        GitStateSync(cfg.state_dir.parent, (recordings,)),
+        directory / STATE_LOCK,
+    )
+    return run_inbox(cfg.telegram_token, cfg.telegram_chat_id, directory, handler)
 
 
 def _mode(
