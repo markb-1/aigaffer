@@ -99,10 +99,12 @@ PICK_MARKER = "  <- solver pick"
 
 # What a chip he cannot play this gameweek is marked with, and the line that
 # says what the mark means: spent, or the next set's. The panel has to
-# distinguish "worth nothing" from "not yours to play".
+# distinguish "worth nothing" from "not yours to play". Every guard that names
+# the mark quotes it from here, so the words he is told to look for are the
+# words the panel prints.
 NOT_HELD_MARK = " (not held this gameweek)"
 NOT_HELD_GUARD = (
-    "A chip marked (not held this gameweek) is spent or belongs to the next set,"
+    f"A chip marked{NOT_HELD_MARK} is spent or belongs to the next set,"
     " whatever it is priced at above. Finalize with chip 'none' instead."
 )
 
@@ -148,7 +150,7 @@ PLANNED_GUARD = (
     "The solver plans chip weeks now, so all four chips can be finalized: a"
     " plan that carries a chip in its path was built for that chip, and the"
     " gameweek it means to play each one shows on the path. Finalize the chip"
-    " the plan in hand recommends; a chip already marked played above is"
+    f" the plan in hand recommends; a chip marked{NOT_HELD_MARK} above is"
     " refused whatever you argue. To leave the chip to the person whose team"
     " this is, finalize with chip 'none' and argue for it in your rationale."
 )

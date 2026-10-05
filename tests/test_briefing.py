@@ -60,6 +60,9 @@ from aigaffer.data.models import Bootstrap, ChipRule, Event, Pick, Player, Squad
 from aigaffer.manager.briefing import (
     EARLY_SEASON_GWS,
     EARLY_SEASON_NOTE,
+    NOT_HELD_GUARD,
+    NOT_HELD_MARK,
+    PLANNED_GUARD,
     build_briefing,
     format_plans,
     initial_plan_ids,
@@ -680,10 +683,13 @@ def test_a_next_set_chip_is_marked_not_held_though_nothing_spent_it():
 
 def test_a_panel_with_nothing_played_says_nothing_about_it():
     # A guardrail about a chip nobody has played is a sentence about nothing.
-    # The one about which chips can be finalized is about all of them, always.
+    # The one about which chips can be finalized is about all of them, always
+    # — and it quotes the mark, so only the bullets and the not-held guard
+    # can say that something is actually marked.
     panel = section(briefing(), "Chip EV")
 
-    assert "not held this gameweek" not in " ".join(panel)
+    assert not any(line.endswith(NOT_HELD_MARK) for line in panel)
+    assert NOT_HELD_GUARD not in panel
     assert panel[-1].startswith("The solver plans chip weeks now")
 
 
@@ -710,11 +716,29 @@ def test_every_chip_the_api_names_is_recognised(api_name: str, label: str):
 def test_a_chip_the_api_has_not_invented_yet_marks_nothing():
     # The assistant-manager chip is played, priced by nobody here, and must
     # not be mistaken for one of the four this panel is about.
-    panel = briefing(
-        inputs=pipeline_inputs(chips_used=[{"name": "manager", "event": 3}])
+    panel = section(
+        briefing(
+            inputs=pipeline_inputs(chips_used=[{"name": "manager", "event": 3}])
+        ),
+        "Chip EV",
     )
 
-    assert "not held this gameweek" not in panel
+    assert not any(line.endswith(NOT_HELD_MARK) for line in panel)
+    assert NOT_HELD_GUARD not in panel
+
+
+def test_the_guards_quote_the_mark_the_panel_prints():
+    # He is told a marked chip is refused; the words he is told to look for
+    # must be the words on the bullet, or the guard points at nothing.
+    marked = briefing(
+        inputs=pipeline_inputs(chips_used=[{"name": "3xc", "event": 1}])
+    )
+    quoted = NOT_HELD_MARK.strip()
+
+    assert f"Triple captain: +8.4 {quoted}" in marked
+    assert f"a chip marked {quoted} above is refused" in PLANNED_GUARD
+    assert NOT_HELD_GUARD.startswith(f"A chip marked {quoted} is spent")
+    assert "marked played" not in marked
 
 
 def test_the_watchlist_is_the_ten_best_players_we_do_not_own():
