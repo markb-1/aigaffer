@@ -23,6 +23,7 @@ exit status and never its output — a remote URL can carry credentials.
 """
 
 import fcntl
+import os
 import subprocess
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -84,11 +85,7 @@ class GitStateSync:
     def publish(self, message: str) -> None:
         try:
             self._git("add", "--", *self.paths)
-            staged = subprocess.run(
-                ["git", "-C", str(self.repo), "diff", "--cached", "--quiet",
-                 "--", *self.paths],
-                timeout=TIMEOUT_SECONDS,
-            )
+            staged = self._run("diff", "--cached", "--quiet", "--", *self.paths)
             if staged.returncode == 0:
                 return
             name = self._config("user.name") or BOT_NAME
@@ -104,31 +101,40 @@ class GitStateSync:
             self._abort_rebase()
             print(PUSH_FAILED.format(reason=_reason(error)))
 
-    def _git(self, *args: str) -> None:
-        subprocess.run(
+    def _run(self, *args: str, **options) -> subprocess.CompletedProcess:
+        """Every git call goes through here, so none can wait for a person.
+
+        The state lock is held while git runs; a credential prompt on a
+        terminal, or an ssh password prompt, would hold it until the
+        timeout. No terminal prompt, no stdin, and ssh in batch mode (unless
+        the box already chose its own ssh command).
+        """
+        env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+        env.setdefault("GIT_SSH_COMMAND", "ssh -o BatchMode=yes")
+        return subprocess.run(
             ["git", "-C", str(self.repo), *args],
-            check=True,
-            capture_output=True,
+            env=env,
+            stdin=subprocess.DEVNULL,
             timeout=TIMEOUT_SECONDS,
+            **options,
         )
 
+    def _git(self, *args: str) -> None:
+        self._run(*args, check=True, capture_output=True)
+
     def _config(self, key: str) -> str | None:
-        done = subprocess.run(
-            ["git", "-C", str(self.repo), "config", key],
-            capture_output=True,
-            text=True,
-            timeout=TIMEOUT_SECONDS,
-        )
+        done = self._run("config", key, capture_output=True, text=True)
         return done.stdout.strip() or None
 
     def _abort_rebase(self) -> None:
         """Leave the clone as it was before a rebase that failed half-way.
-        Quiet when there is no rebase to abort, which is the usual case."""
-        subprocess.run(
-            ["git", "-C", str(self.repo), "rebase", "--abort"],
-            capture_output=True,
-            timeout=TIMEOUT_SECONDS,
-        )
+        Quiet when there is no rebase to abort, which is the usual case.
+        Called from the failure handlers, so it must not raise itself: if git
+        is missing or hangs there is nothing more to do but carry on."""
+        try:
+            self._run("rebase", "--abort", capture_output=True)
+        except (subprocess.SubprocessError, OSError):
+            pass
 
 
 def _reason(error: Exception) -> str:

@@ -161,3 +161,73 @@ def test_the_lock_is_the_one_flock_1_takes(tmp_path):
         shell.wait()
 
     assert waited >= 0.4
+
+
+def test_a_conflicting_rebase_is_aborted_and_the_commit_kept(tmp_path, capsys):
+    # A peer pushed a different gw2.json; our commit conflicts on the rebase.
+    remote, box = scratch(tmp_path)
+    peer = clone_of(remote, tmp_path / "peer")
+    recorded(peer, '{"gw": 2, "by": "peer"}\n')
+    git("add", "state/", cwd=peer)
+    git("commit", "-qm", "peer records gw2", cwd=peer)
+    git("push", "-q", "origin", "HEAD:main", cwd=peer)
+    recorded(box, '{"gw": 2, "by": "box"}\n')
+
+    GitStateSync(box, INBOX_PATHS).publish("chore: record transfers made (inbox)")
+
+    assert capsys.readouterr().out.startswith(PUSH_FAILED.split("(")[0])
+    assert not (box / ".git" / "rebase-merge").exists()
+    assert not (box / ".git" / "rebase-apply").exists()
+    assert git("log", "-1", "--format=%s", cwd=box).strip() == (
+        "chore: record transfers made (inbox)"
+    )
+    assert '"box"' in (box / "state" / "executed" / "gw2.json").read_text()
+
+
+def test_every_git_call_is_non_interactive(tmp_path, monkeypatch):
+    seen = []
+    real = subprocess.run
+
+    def spy(cmd, **kwargs):
+        seen.append(kwargs)
+        return real(cmd, **kwargs)
+
+    monkeypatch.delenv("GIT_SSH_COMMAND", raising=False)
+    _, box = scratch(tmp_path)
+    recorded(box)
+    monkeypatch.setattr(subprocess, "run", spy)
+
+    GitStateSync(box, INBOX_PATHS).publish("chore: record")
+
+    assert seen
+    for kwargs in seen:
+        assert kwargs["env"]["GIT_TERMINAL_PROMPT"] == "0"
+        assert kwargs["env"]["GIT_SSH_COMMAND"] == "ssh -o BatchMode=yes"
+        assert kwargs["stdin"] == subprocess.DEVNULL
+
+
+def test_an_own_ssh_command_is_left_alone(tmp_path, monkeypatch):
+    seen = []
+    monkeypatch.setenv("GIT_SSH_COMMAND", "ssh -i mykey")
+    monkeypatch.setattr(
+        subprocess, "run", lambda cmd, **kw: seen.append(kw) or subprocess.CompletedProcess(cmd, 0)
+    )
+
+    GitStateSync(tmp_path, INBOX_PATHS).pull()
+
+    assert seen[0]["env"]["GIT_SSH_COMMAND"] == "ssh -i mykey"
+
+
+def test_never_raises_even_when_the_abort_cannot_run(tmp_path, monkeypatch, capsys):
+    # git missing or hung: the first call fails, and so does the abort.
+    def broken(cmd, **kwargs):
+        raise FileNotFoundError("git")
+
+    monkeypatch.setattr(subprocess, "run", broken)
+    sync = GitStateSync(tmp_path, INBOX_PATHS)
+
+    sync.pull()
+    sync.publish("chore: record")
+
+    out = capsys.readouterr().out
+    assert "state pull failed" in out and "state push failed" in out
