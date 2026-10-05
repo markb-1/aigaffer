@@ -55,11 +55,13 @@ from aigaffer.manager.agent import ManagerDecision
 from aigaffer.model.xp import PlayerProjection
 from aigaffer.report.render import (
     ENTERED_ALREADY,
+    ENTERED_STANDS,
     ENTERED_VERDICT,
     FRESH_SOLVE,
     GAFFER_VERDICT,
     HUMAN_JUDGES,
     NEWS_MOVED,
+    NEWS_MOVED_ENTERED,
     NO_FULL_REPORT,
     RECORDED_CALM,
     REMINDER_UNCHANGED,
@@ -1697,10 +1699,13 @@ def test_an_entered_week_that_has_not_moved_is_the_calm_alert():
 def test_a_signing_flagged_since_he_was_entered_is_news():
     text = entered_reminder(changes={"arrivals": [[18, "a", "d"]]})
 
-    assert NEWS_MOVED in text
+    assert NEWS_MOVED_ENTERED in text
     assert "- Reid (entered this week) is now doubtful — available when you entered him" in text
-    assert ENTERED_VERDICT in text and FRESH_SOLVE in text and HUMAN_JUDGES in text
+    assert ENTERED_VERDICT in text and FRESH_SOLVE in text and ENTERED_STANDS in text
     assert text.index(ENTERED_VERDICT) < text.index(FRESH_SOLVE)
+    # A week already entered is not the full report's, and there is no
+    # choosing which to enter: his stands unless he changes it in the app.
+    assert NEWS_MOVED not in text and HUMAN_JUDGES not in text
 
 
 def test_a_moved_armband_and_bench_keep_one_checklist_on_the_phone():
@@ -1721,4 +1726,19 @@ def test_a_recorded_chip_reads_as_already_played_on_the_entered_checklist():
     )
 
     assert CHIP_ENTERED.format(chip="Wildcard") in text
+    assert "PLAY Wildcard" not in text
+
+
+def test_a_recorded_chip_reads_as_already_played_in_the_fresh_block_too():
+    # The fresh solve on a wildcard week he entered plays the same wildcard:
+    # it is played already, and "PLAY Wildcard" in either block would send
+    # him looking for a chip he has spent.
+    text = render_entered_reminder(
+        EVENT, entered(chip="wildcard"), entered_actions(chip="wildcard"),
+        entered_actions(chip="wildcard", captain=13, vice=8),
+        {"captain": [8, 13]}, BOOTSTRAP,
+    )
+
+    assert FRESH_SOLVE in text
+    assert text.count(CHIP_ENTERED.format(chip="Wildcard")) == 2
     assert "PLAY Wildcard" not in text

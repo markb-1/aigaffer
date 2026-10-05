@@ -172,6 +172,14 @@ HUMAN_JUDGES = (
 ENTERED_ALREADY = "Transfers entered — nothing more to make."
 RECORDED_CALM = "Transfers recorded; nothing has moved since you entered them."
 ENTERED_VERDICT = "## What you entered (the operative plan)"
+# The loud line and the authority line, for a week already entered: the news
+# is measured from his entry, not from a report he has acted on, and there is
+# no choosing which plan to enter — his stands until he changes it.
+NEWS_MOVED_ENTERED = "⚠️ THE NEWS HAS MOVED since you entered your transfers"
+ENTERED_STANDS = (
+    "Your entered plan stands unless you change it in the app. The fresh"
+    " solve is the solver's alone, and it overrules nothing."
+)
 
 # The FPL status flags in words, for a signing whose flag changed.
 STATUS_WORDS = {
@@ -553,6 +561,9 @@ def render_entered_reminder(
     read as a dead VM. Changed, the full alert leads with what moved and
     shows both weeks, his first; the digest keeps his as the one checklist
     and points at the repo for the fresh solve, as the ordinary digest does.
+    Its loud line and its closing line are the entered week's own: the news
+    is measured from his entry, and his plan stands until he changes it.
+    A fresh plan playing the chip he already played says it is played.
     """
     players = {player.id: player for player in bootstrap.elements}
     clubs = {team.id: team.short_name for team in bootstrap.teams}
@@ -561,7 +572,11 @@ def render_entered_reminder(
         return _actions_block(
             heading, event, actions, players, clubs, selling_prices,
             entered=as_entered,
+            chip_entered=actions["chip"] == executed.chip != NO_CHIP,
         )
+
+    def moved() -> str:
+        return _changed(changes, players, clubs, headline=NEWS_MOVED_ENTERED)
 
     sections = [
         _header("reminder", event, standing, free_transfers),
@@ -572,15 +587,15 @@ def render_entered_reminder(
     elif digest:
         sections += [
             block("## Do this", baseline, True),
-            _changed(changes, players, clubs),
+            moved(),
             FRESH_SOLVE_POINTER.format(gw=event.id),
         ]
     else:
         sections += [
-            _changed(changes, players, clubs),
+            moved(),
             block(ENTERED_VERDICT, baseline, True),
             block(FRESH_SOLVE, fresh, False),
-            HUMAN_JUDGES,
+            ENTERED_STANDS,
         ]
     return "\n\n".join(sections) + "\n"
 
@@ -626,7 +641,12 @@ def _opening(rationale: str) -> str:
     return text
 
 
-def _changed(changes: dict, players: dict[int, Player], clubs: dict[int, str]) -> str:
+def _changed(
+    changes: dict,
+    players: dict[int, Player],
+    clubs: dict[int, str],
+    headline: str = NEWS_MOVED,
+) -> str:
     """What the news moved between yesterday's solve and today's, a line each.
 
     The order is the order the moves are entered in: transfers, then the
@@ -636,9 +656,10 @@ def _changed(changes: dict, players: dict[int, Player], clubs: dict[int, str]) -
     separate lines — two lists is how the FPL app takes them, and a paired
     line here would claim to know which sale funds which signing, which
     nothing does. ``Now`` is what the fresh solve wants and yesterday's did
-    not; ``No longer`` the other way about.
+    not; ``No longer`` the other way about. ``headline`` is the loud line,
+    which after "Transfers made" measures from his entry instead.
     """
-    lines = [NEWS_MOVED, ""]
+    lines = [headline, ""]
     for pid, before, after in changes.get("arrivals", []):
         lines.append(
             f"- {_who(pid, players)} (entered this week) is now {_status(after)}"
@@ -694,6 +715,7 @@ def _actions_block(
     selling_prices: dict[int, int] | None = None,
     *,
     entered: bool = False,
+    chip_entered: bool = False,
 ) -> str:
     """One plan as the ⏰ checklist, under ``heading``.
 
@@ -707,7 +729,8 @@ def _actions_block(
     ``entered`` is a week the owner has already entered with "Transfers
     made": nothing is left to make, a recorded chip is already played, and
     the bench he set is shown, because its order is one of the few things
-    left to change.
+    left to change. ``chip_entered`` is a fresh plan whose chip is the one
+    he has already played: it reads as played, never as "PLAY".
     """
     if entered:
         lines = [
@@ -723,7 +746,9 @@ def _actions_block(
             _swap(out, bought, players, clubs, selling_prices)
             for out, bought in actions["transfers"]
         ]
-        if actions["chip"] != NO_CHIP:
+        if actions["chip"] != NO_CHIP and chip_entered:
+            lines.append(CHIP_ENTERED.format(chip=chip_label(actions["chip"])))
+        elif actions["chip"] != NO_CHIP:
             lines.append(f"PLAY {chip_label(actions['chip'])}")
     lines.append(
         f"CAPTAIN {_who(actions['captain'], players)}"

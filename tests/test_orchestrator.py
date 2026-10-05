@@ -3938,7 +3938,7 @@ def test_a_signing_flagged_since_he_was_entered_is_news_at_t_minus_3(tmp_path):
     reminder = store.decision(2, "reminder")
 
     assert [signing, "a", "d"] in reminder["changes"]["arrivals"]
-    assert render.NEWS_MOVED in alert
+    assert render.NEWS_MOVED_ENTERED in alert
     assert "(entered this week) is now doubtful — available when you entered him" in alert
 
 
@@ -4017,3 +4017,176 @@ def test_the_withheld_alert_on_the_phone_says_it_too(monkeypatch, tmp_path):
     [(_, _, alert)] = sent
     assert "The gaffer did not decide" in alert, "withheld, not the digest"
     assert working_from(make_executed(), PLAYERS) in alert
+
+
+# --- like against like, after "Transfers made" --------------------------------
+#
+# The armbands, shape and bench are diffed solver-then against solver-now,
+# as the ordinary reminder diffs them: a week where the gaffer overruled the
+# solver's armband was settled at T-24h, and is not news at T-3h. What he
+# entered is still the plan the alert shows as operative.
+
+
+def test_a_gaffer_overruled_armband_is_not_news_at_t_minus_3(monkeypatch, tmp_path):
+    # The solver's own plan, with the gaffer's armbands (the highest id in
+    # the eleven, never the solver's captain).
+    stub_gaffer(monkeypatch, lambda consult: decided(consult, plan=consult.solve0.choice))
+    cfg = gaffer_cfg(tmp_path)
+    store = Store(cfg.state_dir / "aigaffer.db")
+    client = make_client(pipeline_routes())
+    run_pipeline(cfg, client, store, "deadline", send=False, now=PAST_THE_FLOOR)
+    record = store.decision(2, "deadline")
+    assert record["captain"] != record["solver_actions"]["captain"], "he overruled it"
+    row = enter_latest(store)
+
+    alert = run_pipeline(cfg, client, store, "reminder", send=False)
+    reminder = store.decision(2, "reminder")
+
+    assert reminder["changes"] == {}
+    assert render.RECORDED_CALM in alert
+    assert f"CAPTAIN {PLAYERS[row.captain].web_name}" in alert, "his armband, operative"
+
+
+def test_the_solvers_own_bench_is_kept_beside_the_operative_one(tmp_path):
+    store = Store(tmp_path / "aigaffer.db")
+
+    run_pipeline(
+        config(state_dir=tmp_path / "state"), make_client(pipeline_routes()),
+        store, "deadline", send=False,
+    )
+    record = store.decision(2, "deadline")
+
+    # No gaffer: the solver's eleven is the operative one, bench and all.
+    assert len(record["solver_bench"]) == 4
+    assert record["solver_bench"] == record["bench"]
+    assert "bench" not in record["solver_actions"], "the five-field shape stays"
+
+
+def entered_week(tmp_path):
+    """A deadline run, then "Transfers made" on it: the config, store, row."""
+    cfg = config(state_dir=tmp_path / "state")
+    store = Store(cfg.state_dir / "aigaffer.db")
+    run_pipeline(cfg, make_client(pipeline_routes()), store, "deadline", send=False)
+    return cfg, store, enter_latest(store)
+
+
+def read_back_as(monkeypatch, store: Store, edit) -> None:
+    """Have the reminder read the recorded verdict back with ``edit`` applied."""
+    real = store.decision_at
+
+    def read(gw, mode, ts):
+        record = copy.deepcopy(real(gw, mode, ts))
+        edit(record)
+        return record
+
+    monkeypatch.setattr(store, "decision_at", read)
+
+
+def test_a_moved_solver_captain_is_news_under_his_operative_armbands(
+    monkeypatch, tmp_path
+):
+    cfg, store, row = entered_week(tmp_path)
+    # Yesterday the solver wanted his vice as captain; today it wants his
+    # captain. That is the solver moving, whatever he entered.
+    read_back_as(
+        monkeypatch, store,
+        lambda record: record["solver_actions"].update(captain=row.vice),
+    )
+
+    alert = run_pipeline(cfg, make_client(pipeline_routes()), store, "reminder", send=False)
+    reminder = store.decision(2, "reminder")
+
+    assert reminder["changes"] == {"captain": [row.vice, row.captain]}
+    assert render.NEWS_MOVED_ENTERED in alert
+    entered_block = alert[alert.index(render.ENTERED_VERDICT):alert.index(render.FRESH_SOLVE)]
+    captain, vice = PLAYERS[row.captain].web_name, PLAYERS[row.vice].web_name
+    assert f"CAPTAIN {captain} · VICE {vice}" in entered_block
+    assert reminder["full_report_plan"]["captain"] == row.captain, "shown: his"
+    assert reminder["full_report_solver_plan"]["captain"] == row.vice, "diffed: the solver's"
+
+
+def test_the_bench_is_diffed_against_the_solvers_own(monkeypatch, tmp_path):
+    cfg, store, row = entered_week(tmp_path)
+    bench = store.decision(2, "deadline")["solver_bench"]
+    read_back_as(
+        monkeypatch, store, lambda record: record.update(solver_bench=bench[::-1])
+    )
+
+    run_pipeline(cfg, make_client(pipeline_routes()), store, "reminder", send=False)
+
+    assert store.decision(2, "reminder")["changes"] == {"bench": [bench[::-1], bench]}
+
+
+def test_a_record_from_before_the_solvers_bench_skips_the_bench(monkeypatch, tmp_path):
+    cfg, store, _ = entered_week(tmp_path)
+    read_back_as(monkeypatch, store, lambda record: record.pop("solver_bench"))
+
+    alert = run_pipeline(cfg, make_client(pipeline_routes()), store, "reminder", send=False)
+
+    assert store.decision(2, "reminder")["changes"] == {}
+    assert render.RECORDED_CALM in alert
+
+
+def test_a_row_with_no_verdicts_still_buzzes(tmp_path):
+    cfg, store, row = entered_week(tmp_path)
+    store.save_executed(replace(row, verdicts=[]))
+
+    alert = run_pipeline(cfg, make_client(pipeline_routes()), store, "reminder", send=False)
+    reminder = store.decision(2, "reminder")
+
+    assert render.ENTERED_ALREADY in alert
+    assert reminder["full_report_plan"]["formation"] is None, "nothing to read it from"
+    assert reminder["full_report_plan"]["bench"] is None
+
+
+def wanting_a_move(monkeypatch) -> None:
+    """Have every solve want Sarr for Ito, whatever it was locked to."""
+    real = orchestrator.solve
+
+    def solve(*args, **kwargs):
+        solved = real(*args, **kwargs)
+        choice = replace(solved.choice, transfers_in=[18], transfers_out=[8])
+        return replace(solved, choice=choice)
+
+    monkeypatch.setattr(orchestrator, "solve", solve)
+
+
+def test_a_recorded_free_hit_week_has_no_transfer_news(monkeypatch, tmp_path):
+    # The fresh solve plans the standing squad, which he cannot touch in a
+    # free-hit week: a move it wants is not news he can act on.
+    wanting_a_move(monkeypatch)
+    store = Store(tmp_path / "aigaffer.db")
+    store.save_executed(
+        make_executed(
+            chip="free_hit", transfers_in=[], transfers_out=[],
+            squad_after=sorted(PICKS_15_IDS), bank_after=28, ft_after=1,
+            buy_prices={}, sell_prices={}, freehit_squad=FH_SQUAD, freehit_xi=FH_XI,
+            arrival_status={9: "a", 10: "a", 12: "a", 17: "a", 18: "a"},
+        )
+    )
+
+    alert = run_pipeline(
+        config(state_dir=tmp_path / "state"), make_client(pipeline_routes()),
+        store, "reminder", send=False,
+    )
+    reminder = store.decision(2, "reminder")
+
+    assert not {"sells_added", "buys_added"} & set(reminder["changes"])
+    assert reminder["actions"]["transfers"] == []
+    assert "Now buying" not in alert and "Now selling" not in alert
+
+
+def test_an_ordinary_entered_week_keeps_its_transfer_news(monkeypatch, tmp_path):
+    wanting_a_move(monkeypatch)
+    store = Store(tmp_path / "aigaffer.db")
+    store.save_executed(make_executed())
+
+    alert = run_pipeline(
+        config(state_dir=tmp_path / "state"), make_client(pipeline_routes()),
+        store, "reminder", send=False,
+    )
+    reminder = store.decision(2, "reminder")
+
+    assert reminder["changes"]["buys_added"] == [18]
+    assert reminder["changes"]["sells_added"] == [8]
+    assert "Now buying: Sarr" in alert

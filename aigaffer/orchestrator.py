@@ -626,6 +626,11 @@ def run_pipeline(
         # The bench in substitution order: the reminder after "Transfers made"
         # diffs it against a fresh solve, so the record keeps what was entered.
         "bench": lineup.bench,
+        # And the solver's own bench, before the manager touched it: the
+        # reminder after "Transfers made" diffs solver-then against
+        # solver-now, so a bench the gaffer reordered is not news at T-3h.
+        # Top-level, never inside solver_actions, which stays five fields.
+        "solver_bench": solver_lineup.bench,
         # The fifteen this run solved from. "Transfers made" composes a later
         # verdict onto the recorded position only when it was solved from that
         # position (aigaffer.recording.compose); None for a draft.
@@ -850,8 +855,10 @@ def _run_reminder(
     After "Transfers made" the yardstick is what he entered — hold, his
     armbands, his shape and bench — against a fresh solve on the squad he
     entered; the fresh side gains the bench, and any status change on the
-    players he signed is news. Calm weeks still buzz, with the calm line,
-    because silence would look like a dead VM. Both shapes are built apart
+    players he signed is news. The armbands, shape and bench are measured
+    against the solver's side of the verdict he entered, like against like,
+    while his own stay the plan the alert shows. Calm weeks still buzz, with
+    the calm line, because silence would look like a dead VM. Both shapes are built apart
     (:func:`_against_the_full_report`, :func:`_against_the_entered_week`)
     and share everything after: the peer check, the buzz, then the save.
     """
@@ -984,6 +991,13 @@ def _against_the_entered_week(
     entered — with the bench, so a reordered bench is news — and, on a free
     hit he entered, a fresh pick of eleven and armbands over the team he
     built, since that team is fixed now and only its use can move.
+
+    What the alert *shows* as operative is the baseline; what it *measures*
+    the news with is the solver's side of the verdict he entered
+    (:func:`_entered_yardstick`), like against like as the ordinary reminder
+    measures it, so an armband or bench the gaffer overruled a day ago is not
+    news now. On a free hit he entered, the fresh solve's moves are dropped:
+    they are moves to the standing squad, which he cannot touch this week.
     """
     event = effective.event
     players = effective.players
@@ -1003,9 +1017,18 @@ def _against_the_entered_week(
             chip, solved.choice, solved.lineup, players, projections, event.id
         )
     fresh = plan_actions(solved.choice, lineup, chip, players, with_bench=True)
-    mode, ts = executed.verdicts[-1]
-    baseline = _entered_actions(executed, store.decision_at(event.id, mode, ts))
-    changes = diff_actions(baseline, fresh)
+    if executed.chip == FREE_HIT:
+        fresh["transfers"] = []
+    # The verdict he entered, read back; a row that names none (it never
+    # should) leaves its shape and bench unknowable rather than costing the
+    # buzz.
+    record = None
+    if executed.verdicts:
+        mode, ts = executed.verdicts[-1]
+        record = store.decision_at(event.id, mode, ts)
+    baseline = _entered_actions(executed, record)
+    yardstick = _entered_yardstick(executed, record)
+    changes = diff_actions(yardstick, fresh)
     arrivals = _arrival_changes(executed, players)
     if arrivals:
         changes["arrivals"] = arrivals
@@ -1029,7 +1052,7 @@ def _against_the_entered_week(
         "event": event.id,
         "actions": fresh,
         "full_report_plan": baseline,
-        "full_report_solver_plan": None,
+        "full_report_solver_plan": yardstick,
         "changes": changes,
         "executed_from": executed.verdicts,
     }
@@ -1048,6 +1071,27 @@ def _entered_actions(executed: Executed, record: dict | None) -> dict:
         "chip": executed.chip,
         "formation": None if record is None else record.get("formation"),
         "bench": None if record is None else record.get("bench"),
+    }
+
+
+def _entered_yardstick(executed: Executed, record: dict | None) -> dict:
+    """The verdict he entered, solver-side: what the reminder diffs against.
+
+    A hold with his chip, and the armbands, shape and bench the *solver*
+    gave that verdict before the gaffer touched it (``solver_actions`` and
+    ``solver_bench``) — the fresh side is a solver alone, and only solver
+    against solver can mean the news moved. A record without them (gone, or
+    written before they were kept) leaves them None, and the diff skips
+    what it cannot know.
+    """
+    solver = {} if record is None else record.get("solver_actions") or {}
+    return {
+        "transfers": [],
+        "captain": solver.get("captain"),
+        "vice": solver.get("vice"),
+        "chip": executed.chip,
+        "formation": solver.get("formation"),
+        "bench": None if record is None else record.get("solver_bench"),
     }
 
 
