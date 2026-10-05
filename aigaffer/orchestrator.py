@@ -563,6 +563,7 @@ def run_pipeline(
         event.id,
     )
 
+    freehit_squad, freehit_xi = _freehit_team(chip, choice)
     decision = {
         "mode": mode,
         "event": event.id,
@@ -573,6 +574,19 @@ def run_pipeline(
         "hits": choice.hits,
         "captain": lineup.captain,
         "vice": lineup.vice,
+        # The bench in substitution order: the reminder after "Transfers made"
+        # diffs it against a fresh solve, so the record keeps what was entered.
+        "bench": lineup.bench,
+        # The fifteen this run solved from. "Transfers made" composes a later
+        # verdict onto the recorded position only when it was solved from that
+        # position (aigaffer.recording.compose); None for a draft.
+        "squad_before": (
+            None if inputs.squad is None else sorted(inputs.squad.player_ids)
+        ),
+        # On a free-hit week, the temporary team the chip fields — top-level,
+        # never inside solver_actions, which the reminder diffs as five fields.
+        "freehit_squad": freehit_squad,
+        "freehit_xi": freehit_xi,
         # The shape of the eleven, kept so the reminder can diff it: a plan
         # whose swaps and armbands held but whose eleven swapped a defender
         # for a forward is still a plan that changed on the sheet.
@@ -1747,6 +1761,19 @@ def _fielded_lineup(
     return pick_lineup(
         choice.path.week1_freehit_squad, positions, gw_xp, attacking
     )
+
+
+def _freehit_team(chip: str, choice: Plan) -> tuple[list[int] | None, list[int] | None]:
+    """The temporary fifteen and eleven a free-hit week fields, or two Nones.
+
+    Kept on the decision record as top-level keys, beside the standing
+    squad's moves rather than among them: "Transfers made" on a free-hit
+    verdict records the team the owner built, and ``solver_actions`` must
+    stay the five-field shape the reminder diffs.
+    """
+    if chip != FREE_HIT or choice.path is None or not choice.path.week1_freehit_squad:
+        return None, None
+    return choice.path.week1_freehit_squad, choice.path.week1_freehit_xi
 
 
 def _plans(

@@ -68,6 +68,7 @@ from aigaffer.solver.optimizer import FORWARD, MIDFIELDER, Plan
 from aigaffer.store import Store
 from tests.fixtures import (
     HISTORY_PATH,
+    PICKS_15_IDS,
     PICKS_PATH,
     TEAM_ID,
     TRANSFERS_PATH,
@@ -592,6 +593,67 @@ def test_a_free_hit_the_solver_plans_reaches_the_report_and_the_record(
     assert "Free Hit XI (this week only)" in report
     assert "PLAY Free Hit" in report
     assert store.last_runs(1)[0]["decision"]["chip"] == "free_hit"
+
+
+def test_the_record_keeps_the_squad_it_was_solved_from_and_the_bench(scout_run):
+    # "Transfers made" composes a later verdict onto the recorded position only
+    # when the verdict was solved from it, so every record says what it started
+    # from; and the T-3h reminder diffs the bench of what was entered.
+    decision = scout_run.store.last_runs(1)[0]["decision"]
+
+    assert decision["squad_before"] == sorted(PICKS_15_IDS)
+    assert len(decision["bench"]) == 4
+    assert decision["freehit_squad"] is None and decision["freehit_xi"] is None
+
+
+def test_a_free_hit_week_records_its_fifteen_and_eleven_at_the_top_level(
+    monkeypatch, tmp_path
+):
+    # The solver's answer stubbed to a planned free hit, as the test above
+    # does. The temporary team goes on the record beside the standing squad's
+    # moves — and never into solver_actions, whose diff would otherwise start
+    # comparing fifteen ids at T-3h.
+    inputs = fetch_inputs(
+        config(state_dir=tmp_path / "state"), make_client(pipeline_routes())
+    )
+    _, projections = build_projections(inputs, config())
+    standing = inputs.squad.player_ids
+    positions = {pid: p.element_type for pid, p in inputs.players.items()}
+    gw_xp = {pid: pr.per_gw.get(inputs.event.id, 0.0) for pid, pr in projections.items()}
+    fh_squad = [1, 9, 3, 4, 10, 12, 13, 5, 6, 11, 14, 17, 7, 15, 18]
+    fh_xi = [1, 3, 4, 10, 12, 5, 6, 11, 14, 17, 7]  # 4-5-1, one keeper
+    choice = Plan(
+        squad=standing, xi=[], transfers_in=[], transfers_out=[], hits=0,
+        xp_total=0.0, objective=0.0,
+        path=PlannedPath(
+            moves=[], objective=0.0, weekly_xp={}, week1_chip="free_hit",
+            week1_freehit_squad=fh_squad, week1_freehit_xi=fh_xi,
+        ),
+    )
+    solved = SolveResult(
+        plans=[choice],
+        choice=choice,
+        lineup=pick_lineup(standing, positions, gw_xp),
+        chips=NO_CHIPS,
+        draft_mode=False,
+    )
+    monkeypatch.setattr(orchestrator, "solve", lambda *a, **k: solved)
+    store = Store(tmp_path / "aigaffer.db")
+
+    run_pipeline(
+        config(state_dir=tmp_path / "state"),
+        make_client(pipeline_routes()),
+        store,
+        "scout",
+        send=False,
+    )
+    record = store.decision(2, "scout")
+
+    assert record["freehit_squad"] == fh_squad
+    assert record["freehit_xi"] == fh_xi
+    assert set(record["solver_actions"]) == {
+        "transfers", "captain", "vice", "chip", "formation",
+    }
 
 
 def test_the_chips_are_priced_off_the_squad_we_hold(scout_run):
