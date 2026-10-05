@@ -38,9 +38,13 @@ than folded in because the unit tests above are pinned to the small universe:
 its league averages, its player count, its three clubs.
 """
 
+from collections import Counter
 from typing import Any
 
 import httpx
+
+from aigaffer.config import Config
+from aigaffer.data.fpl_api import FplClient
 
 
 def fake_fpl_transport(
@@ -570,3 +574,99 @@ PICKS_15_JSON = {
         {"element": 8, "position": 15, "multiplier": 0, "is_captain": False, "is_vice_captain": False},
     ],
 }
+
+
+TEAM_ID = 99
+
+PICKS_PATH = f"/api/entry/{TEAM_ID}/event/1/picks/"
+TRANSFERS_PATH = f"/api/entry/{TEAM_ID}/transfers/"
+HISTORY_PATH = f"/api/entry/{TEAM_ID}/history/"
+
+
+def config(**kwargs) -> Config:
+    """This suite's configuration: our team, and the chip switch off.
+
+    Off unless a test says otherwise, because most of what is pinned here is
+    not about chips, and this universe's fixtures stop at GW3: with nothing
+    beyond the window worth saving a chip for, the calendar would bar nothing
+    and every run would play one — a fixture's artefact in every assertion,
+    and a solve twice as slow. The tests that are about chips pass
+    ``chips=True``.
+    """
+    return Config(**{"team_id": TEAM_ID, "chips": False, **kwargs})
+
+
+def pipeline_routes(
+    bootstrap: dict = PIPELINE_BOOTSTRAP_JSON,
+    fixtures: list[dict] = PIPELINE_FIXTURES_JSON,
+) -> dict:
+    """Every endpoint a run touches, for the fifteen-man universe."""
+    return {
+        "/api/bootstrap-static/": bootstrap,
+        "/api/fixtures/": fixtures,
+        PICKS_PATH: PICKS_15_JSON,
+        TRANSFERS_PATH: TRANSFERS_JSON,
+        HISTORY_PATH: HISTORY_JSON,
+        **{
+            f"/api/element-summary/{element['id']}/": ELEMENT_SUMMARY_JSON
+            for element in PIPELINE_ELEMENTS_JSON
+        },
+    }
+
+
+def make_client(routes: dict, statuses: dict[str, int] | None = None) -> FplClient:
+    """A client over the fake transport that never waits between retries."""
+    return FplClient(
+        http=httpx.Client(transport=fake_fpl_transport(routes, statuses)),
+        sleep=lambda _: None,
+    )
+
+
+class CountingTransport(httpx.BaseTransport):
+    """The fake transport, with a tally of what was asked of it."""
+
+    def __init__(self, routes: dict) -> None:
+        self.inner = fake_fpl_transport(routes)
+        self.counts: Counter = Counter()
+
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        self.counts[request.url.path] += 1
+        return self.inner.handle_request(request)
+
+
+# ---------------------------------------------------------------------------
+# A recorded "Transfers made" row for the pipeline universe: the owner entered
+# Grant (6, £7.5m) out and Reyes (17, £9.5m) in, Ferrer captain and Reyes vice,
+# off Tuesday's deadline verdict. Bank 28 + 75 - 95 = 8; one free transfer
+# spent of one. Tests override whatever their week needs.
+# ---------------------------------------------------------------------------
+
+PICKS_15_IDS = [pick["element"] for pick in PICKS_15_JSON["picks"]]
+
+
+def make_executed(**overrides):
+    """An :class:`~aigaffer.executed.Executed` row, Grant-for-Reyes by default."""
+    from aigaffer.executed import Executed
+
+    fields = dict(
+        gw=2,
+        mode="deadline",
+        recorded_at="2025-08-19T09:00:00+00:00",  # a Tuesday
+        transfers_in=[17],
+        transfers_out=[6],
+        squad_after=sorted(set(PICKS_15_IDS) - {6} | {17}),
+        chip="none",
+        captain=5,
+        vice=17,
+        buy_prices={17: 95},
+        sell_prices={6: 75},
+        bank_after=8,
+        ft_after=0,
+        ft_before=1,
+        verdicts=[["deadline", "2025-08-19T08:00:00+00:00"]],
+        freehit_squad=None,
+        freehit_xi=None,
+        arrival_status={17: "a"},
+    )
+    fields.update(overrides)
+    return Executed(**fields)

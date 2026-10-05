@@ -9,3 +9,6 @@ build/
 
 # Worktrees for isolated feature work
 .worktrees/
+
+# A recording interrupted mid-write; the real row is renamed into place.
+state/executed/.*.tmp

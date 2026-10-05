@@ -11,14 +11,24 @@ estimates can be checked against the bank the game actually published.
 ``withheld`` is the one table that is not a record of something done: a row
 per tick that kept a report back because the manager did not decide, so that
 a failure repeating every hour is told to the phone once.
+
+One record lives beside the tables rather than in them: what the owner told the
+inbox he entered (:mod:`aigaffer.executed`), one JSON file a gameweek in
+``executed/`` next to the database. The inbox commits it at any minute while
+the other scheduler commits the database; a binary file changed by both is a
+rebase that cannot be done, and one that stops every later tick, where two
+different text files rebase cleanly.
 """
 
 import json
+import os
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
+
+from aigaffer.executed import Executed, Verdict
 
 DB_NAME = "aigaffer.db"
 
@@ -74,6 +84,11 @@ CREATE TABLE IF NOT EXISTS withheld (
 )
 """
 
+# Where the owner's recorded weeks live: one JSON file per gameweek, in a
+# directory beside the database — ``state/executed/gw{n}.json`` in the repo.
+# Text, not a table: see the module docstring.
+EXECUTED_DIR = "executed"
+
 
 class Store:
     """Run history kept in a SQLite file at ``db_path``."""
@@ -127,6 +142,79 @@ class Store:
                 "SELECT decision_json FROM runs WHERE gw = ? AND mode = ?"
                 " ORDER BY id DESC LIMIT 1",
                 (gw, mode),
+            ).fetchone()
+        return None if row is None else json.loads(row[0])
+
+    @property
+    def executed_dir(self) -> Path:
+        """The directory the recorded weeks are written to, beside the database."""
+        return self.db_path.parent / EXECUTED_DIR
+
+    def save_executed(self, row: Executed) -> None:
+        """Write the gameweek's recorded position, replacing any before it.
+
+        Atomically: the JSON goes to a temp file in the same directory and is
+        renamed over the old one, so a crash mid-write leaves the last good
+        row and never half of a new one. Pretty-printed with sorted keys, so
+        a second recording is a readable diff in the state commit.
+        """
+        directory = self.executed_dir
+        directory.mkdir(parents=True, exist_ok=True)
+        temporary = directory / f".gw{row.gw}.json.tmp"
+        temporary.write_text(
+            json.dumps(row.to_json(), indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        os.replace(temporary, directory / f"gw{row.gw}.json")
+
+    def executed(self, gw: int) -> Executed | None:
+        """The recorded position for ``gw``, or None when he texted nothing."""
+        try:
+            text = (self.executed_dir / f"gw{gw}.json").read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return None
+        return Executed.from_json(json.loads(text))
+
+    def latest_verdict(
+        self,
+        gw: int,
+        modes: tuple[str, ...],
+        at_or_before: datetime | None = None,
+    ) -> Verdict | None:
+        """The newest decision ``modes`` recorded for ``gw``, or None.
+
+        "Newest" is the runs table's timestamp, a tie going to the row
+        written last. ``at_or_before`` (timezone-aware) leaves out anything
+        stamped after it: the verdict a text refers to is one that existed
+        when the text was sent, however long the inbox then waited.
+        Compared as datetimes, not strings, so a timestamp with microseconds
+        and one without still order correctly.
+        """
+        marks = ", ".join("?" for _ in modes)
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT id, mode, ts, decision_json FROM runs"
+                f" WHERE gw = ? AND mode IN ({marks})",
+                (gw, *modes),
+            ).fetchall()
+        candidates = [
+            (datetime.fromisoformat(ts), row_id, mode, ts, decision)
+            for row_id, mode, ts, decision in rows
+            if at_or_before is None or datetime.fromisoformat(ts) <= at_or_before
+        ]
+        if not candidates:
+            return None
+        _, _, mode, ts, decision = max(candidates, key=lambda c: (c[0], c[1]))
+        return Verdict(mode=mode, ts=ts, decision=json.loads(decision))
+
+    def decision_at(self, gw: int, mode: str, ts: str) -> dict | None:
+        """The decision ``mode`` recorded for ``gw`` at exactly ``ts``, or None
+        — how the reminder reads back the verdict a row was composed from."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT decision_json FROM runs WHERE gw = ? AND mode = ? AND ts = ?"
+                " ORDER BY id DESC LIMIT 1",
+                (gw, mode, ts),
             ).fetchone()
         return None if row is None else json.loads(row[0])
 

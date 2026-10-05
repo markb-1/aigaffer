@@ -21,7 +21,6 @@ import copy
 import json
 import sys
 from types import SimpleNamespace
-from collections import Counter
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from functools import partial
@@ -68,6 +67,14 @@ from aigaffer.solver.multiweek import FALLBACK_BARS, PlannedPath
 from aigaffer.solver.optimizer import FORWARD, MIDFIELDER, Plan
 from aigaffer.store import Store
 from tests.fixtures import (
+    HISTORY_PATH,
+    PICKS_PATH,
+    TEAM_ID,
+    TRANSFERS_PATH,
+    CountingTransport,
+    config,
+    make_client,
+    pipeline_routes,
     ELEMENT_SUMMARY_JSON,
     HISTORY_JSON,
     PICKS_15_JSON,
@@ -78,7 +85,6 @@ from tests.fixtures import (
     fake_fpl_transport,
 )
 
-TEAM_ID = 99
 TOKEN = "1234:super-secret-bot-token"
 # The fixture's GW2 deadline itself: zero hours left, past every floor the
 # withholding rule measures against (tests/test_manager_retry.py). The runs
@@ -87,24 +93,8 @@ TOKEN = "1234:super-secret-bot-token"
 # clock, which only agrees because 2025 is behind us.
 PAST_THE_FLOOR = datetime(2025, 8, 22, 17, 30, tzinfo=UTC)
 
-PICKS_PATH = f"/api/entry/{TEAM_ID}/event/1/picks/"
-TRANSFERS_PATH = f"/api/entry/{TEAM_ID}/transfers/"
-HISTORY_PATH = f"/api/entry/{TEAM_ID}/history/"
 
 DEADLINE = datetime(2025, 8, 22, 17, 30, tzinfo=UTC)
-
-
-def config(**kwargs) -> Config:
-    """This suite's configuration: our team, and the chip switch off.
-
-    Off unless a test says otherwise, because most of what is pinned here is
-    not about chips, and this universe's fixtures stop at GW3: with nothing
-    beyond the window worth saving a chip for, the calendar would bar nothing
-    and every run would play one — a fixture's artefact in every assertion,
-    and a solve twice as slow. The tests that are about chips pass
-    ``chips=True``.
-    """
-    return Config(**{"team_id": TEAM_ID, "chips": False, **kwargs})
 
 
 @pytest.fixture(autouse=True)
@@ -226,32 +216,6 @@ def test_a_reminder_asked_for_by_name_is_not_promoted(tmp_path):
 
 
 # --- the pipeline ----------------------------------------------------------
-
-
-def pipeline_routes(
-    bootstrap: dict = PIPELINE_BOOTSTRAP_JSON,
-    fixtures: list[dict] = PIPELINE_FIXTURES_JSON,
-) -> dict:
-    """Every endpoint a run touches, for the fifteen-man universe."""
-    return {
-        "/api/bootstrap-static/": bootstrap,
-        "/api/fixtures/": fixtures,
-        PICKS_PATH: PICKS_15_JSON,
-        TRANSFERS_PATH: TRANSFERS_JSON,
-        HISTORY_PATH: HISTORY_JSON,
-        **{
-            f"/api/element-summary/{element['id']}/": ELEMENT_SUMMARY_JSON
-            for element in PIPELINE_ELEMENTS_JSON
-        },
-    }
-
-
-def make_client(routes: dict, statuses: dict[str, int] | None = None) -> FplClient:
-    """A client over the fake transport that never waits between retries."""
-    return FplClient(
-        http=httpx.Client(transport=fake_fpl_transport(routes, statuses)),
-        sleep=lambda _: None,
-    )
 
 
 def preseason_bootstrap() -> dict:
@@ -964,18 +928,6 @@ def seam(tmp_path_factory) -> Seam:
     which is the point of them being a value."""
     cfg = config(state_dir=tmp_path_factory.mktemp("seam") / "state")
     return Seam(cfg=cfg, inputs=fetch_inputs(cfg, make_client(pipeline_routes())))
-
-
-class CountingTransport(httpx.BaseTransport):
-    """The fake transport, with a tally of what was asked of it."""
-
-    def __init__(self, routes: dict) -> None:
-        self.inner = fake_fpl_transport(routes)
-        self.counts: Counter = Counter()
-
-    def handle_request(self, request: httpx.Request) -> httpx.Response:
-        self.counts[request.url.path] += 1
-        return self.inner.handle_request(request)
 
 
 def test_the_chips_already_played_are_fetched_once_and_kept(tmp_path):

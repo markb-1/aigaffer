@@ -1,7 +1,10 @@
+import json
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
+from aigaffer.executed import Verdict
 from aigaffer.store import Store
+from tests.fixtures import make_executed
 
 
 def test_saved_run_is_recorded(tmp_path):
@@ -217,3 +220,140 @@ def test_a_withheld_report_has_not_run(tmp_path):
 
     assert store.has_run(2, "deadline") is False
     assert store.last_runs() == []
+
+
+# --- what the owner entered ---------------------------------------------------
+
+
+def run_at(store: Store, gw: int, mode: str, ts: str, decision: dict) -> None:
+    """A run row with a timestamp of the test's choosing — save_run stamps now."""
+    with sqlite3.connect(store.db_path) as conn:
+        conn.execute(
+            "INSERT INTO runs (ts, gw, mode, report_md, decision_json)"
+            " VALUES (?, ?, ?, ?, ?)",
+            (ts, gw, mode, "# report", json.dumps(decision)),
+        )
+
+
+def test_an_executed_row_round_trips_with_its_integer_keys(tmp_path):
+    store = Store(tmp_path / "aigaffer.db")
+    row = make_executed(
+        chip="free_hit",
+        freehit_squad=[1, 9, 3],
+        freehit_xi=[1, 3],
+        arrival_status={17: "d", 9: "a"},
+    )
+
+    store.save_executed(row)
+
+    back = store.executed(2)
+    assert back == row
+    assert back.buy_prices == {17: 95}, "JSON's string keys come back as ints"
+    assert back.arrival_status == {17: "d", 9: "a"}
+
+
+def test_a_week_with_no_free_hit_keeps_its_none(tmp_path):
+    store = Store(tmp_path / "aigaffer.db")
+    store.save_executed(make_executed())
+
+    back = store.executed(2)
+    assert back.freehit_squad is None and back.freehit_xi is None
+
+
+def test_the_row_is_a_text_file_beside_the_store(tmp_path):
+    # A text file so that the inbox's commit and the other scheduler's
+    # database commit touch different files and always rebase cleanly.
+    store = Store(tmp_path / "aigaffer.db")
+
+    store.save_executed(make_executed())
+
+    path = tmp_path / "executed" / "gw2.json"
+    text = path.read_text()
+    assert json.loads(text)["gw"] == 2
+    assert json.loads(text)["buy_prices"] == {"17": 95}
+    assert text.endswith("\n")
+    assert [p.name for p in (tmp_path / "executed").iterdir()] == ["gw2.json"], (
+        "the temp file was renamed into place, not left behind"
+    )
+
+
+def test_a_second_recording_replaces_the_gameweeks_row(tmp_path):
+    store = Store(tmp_path / "aigaffer.db")
+    store.save_executed(make_executed())
+    store.save_executed(make_executed(bank_after=3, verdicts=[["scout", "a"], ["deadline", "b"]]))
+
+    assert store.executed(2).bank_after == 3
+    assert [p.name for p in (tmp_path / "executed").iterdir()] == ["gw2.json"]
+
+
+def test_recording_never_touches_the_database(tmp_path):
+    store = Store(tmp_path / "aigaffer.db")
+    before = (tmp_path / "aigaffer.db").read_bytes()
+
+    store.save_executed(make_executed())
+
+    assert (tmp_path / "aigaffer.db").read_bytes() == before
+
+
+def test_a_store_never_recorded_into_has_no_executed_directory(tmp_path):
+    store = Store(tmp_path / "aigaffer.db")
+
+    assert store.executed(2) is None
+    assert not (tmp_path / "executed").exists()
+
+
+def test_no_row_for_another_gameweek(tmp_path):
+    store = Store(tmp_path / "aigaffer.db")
+    store.save_executed(make_executed())
+
+    assert store.executed(3) is None
+
+
+MODES = ("early", "scout", "deadline")
+
+
+def test_the_latest_verdict_is_the_newest_of_the_three_report_modes(tmp_path):
+    store = Store(tmp_path / "aigaffer.db")
+    run_at(store, 2, "early", "2025-08-17T18:00:00+00:00", {"n": 1})
+    run_at(store, 2, "deadline", "2025-08-21T17:35:00+00:00", {"n": 3})
+    run_at(store, 2, "scout", "2025-08-20T17:35:00+00:00", {"n": 2})
+    # The reminder is never a verdict to enter, however new.
+    run_at(store, 2, "reminder", "2025-08-22T14:35:00+00:00", {"n": 4})
+
+    verdict = store.latest_verdict(2, MODES)
+
+    assert verdict == Verdict(
+        mode="deadline", ts="2025-08-21T17:35:00+00:00", decision={"n": 3}
+    )
+
+
+def test_a_tie_on_the_timestamp_goes_to_the_row_written_last(tmp_path):
+    store = Store(tmp_path / "aigaffer.db")
+    run_at(store, 2, "scout", "2025-08-20T17:35:00+00:00", {"n": 1})
+    run_at(store, 2, "deadline", "2025-08-20T17:35:00+00:00", {"n": 2})
+
+    assert store.latest_verdict(2, MODES).decision == {"n": 2}
+
+
+def test_a_verdict_newer_than_the_cutoff_is_not_one_he_saw(tmp_path):
+    store = Store(tmp_path / "aigaffer.db")
+    run_at(store, 2, "scout", "2025-08-20T17:35:00+00:00", {"n": 1})
+    run_at(store, 2, "deadline", "2025-08-21T17:35:00+00:00", {"n": 2})
+
+    cutoff = datetime(2025, 8, 21, 17, 0, tzinfo=UTC)
+
+    assert store.latest_verdict(2, MODES, at_or_before=cutoff).decision == {"n": 1}
+    assert store.latest_verdict(2, MODES, at_or_before=datetime(2025, 8, 1, tzinfo=UTC)) is None
+
+
+def test_no_verdict_for_a_gameweek_with_none(tmp_path):
+    assert Store(tmp_path / "aigaffer.db").latest_verdict(2, MODES) is None
+
+
+def test_a_decision_is_found_by_its_timestamp(tmp_path):
+    store = Store(tmp_path / "aigaffer.db")
+    run_at(store, 2, "deadline", "2025-08-21T17:35:00+00:00", {"n": 1})
+    run_at(store, 2, "deadline", "2025-08-21T18:35:00+00:00", {"n": 2})
+
+    assert store.decision_at(2, "deadline", "2025-08-21T17:35:00+00:00") == {"n": 1}
+    assert store.decision_at(2, "deadline", "2025-08-21T19:00:00+00:00") is None
