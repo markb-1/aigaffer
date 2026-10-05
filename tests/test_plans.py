@@ -674,4 +674,20 @@ def test_a_recorded_wildcard_week_is_free_in_both_engines():
         )
         best = recommend(plans)
         assert best.hits == 0, planner
-        assert len(best.transfers_in) == 3, planner  # the sweep stops at three
+        # Six moves pay on this board; the unpinned solve is what reaches them.
+        assert len(best.transfers_in) == 6, planner
+
+
+def test_a_recorded_wildcard_adds_one_unforced_window_solve_without_a_held_wildcard(
+    monkeypatch,
+):
+    answers = windows(range(4))
+    answers[None] = canned_path(7, 120.0)[0]
+    calls = stub_optimize_path(monkeypatch, answers)
+
+    generate_plans(
+        PLAYERS, XP, SQUAD, bank=0, free_transfers=1,
+        projections_events=EVENTS, lock=Week1Lock(free=True),
+    )
+
+    assert [call["forced_first_transfers"] for call in calls] == [0, 1, 2, 3, None]

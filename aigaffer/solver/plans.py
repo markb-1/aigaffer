@@ -98,6 +98,10 @@ def generate_plans(
     free hit (``lock.hold``) is a hold week, so each engine is asked the one
     count it allows: none.
 
+    A wildcard playable this week, or a recorded one (``lock.free``), adds
+    one more solve per engine that is not pinned to a count, since pinning a
+    count keeps the cap a wildcard lifts.
+
     A transfer count the budget or the pool cannot support comes back from
     the optimizer as None and is simply left out — infeasible is an answer,
     and a squad with nothing worth buying should say so by offering fewer
@@ -107,6 +111,7 @@ def generate_plans(
     real window beats a shortlist of four guesses at the wrong question.
     """
     hold = lock is not None and lock.hold
+    free_week = lock is not None and lock.free
     if planner != "single" and projections_events:
         # Only a free hit some week of this window may play is priced: one held
         # for the other half of the season builds no binary here, and has no
@@ -175,9 +180,15 @@ def generate_plans(
             # the worst case is the time spent. With no wildcard that may be
             # played this week there is nothing for it to find and the sweep
             # is exactly the pinned solves.
-            if any(
-                chip.chip == WILDCARD
-                for chip in playable_in(held_chips, projections_events[:1])
+            # A recorded wildcard (``lock.free``) is the same week already
+            # played, so it asks for the unpinned solve whether or not a
+            # wildcard is still held.
+            if not hold and (
+                free_week
+                or any(
+                    chip.chip == WILDCARD
+                    for chip in playable_in(held_chips, projections_events[:1])
+                )
             ):
                 answer = optimize_path(
                     players,
@@ -193,6 +204,7 @@ def generate_plans(
                     freehit_prices=freehit_prices,
                     selling_prices=selling_prices,
                     bars=bars,
+                    lock=lock,
                 )
                 opened.append(answer[0] if answer is not None else None)
 
@@ -200,13 +212,25 @@ def generate_plans(
             if planned:
                 return planned
 
-    return _shortlist(
+    counts = (0,) if hold else transfer_counts(free_transfers)
+    solved = [
         optimize(
             players, xp, current_squad, bank, free_transfers,
             forced_transfers=count, selling_prices=selling_prices, lock=lock,
         )
-        for count in ((0,) if hold else transfer_counts(free_transfers))
-    )
+        for count in counts
+    ]
+    if free_week and not hold:
+        # A recorded wildcard's week is free and uncapped, and a pinned count
+        # keeps the cap: one unpinned solve lets the fallback make more than
+        # three moves too. This engine plays no chips, so only a lock asks.
+        solved.append(
+            optimize(
+                players, xp, current_squad, bank, free_transfers,
+                selling_prices=selling_prices, lock=lock,
+            )
+        )
+    return _shortlist(solved)
 
 
 def _shortlist(candidates: Iterable[Plan | None]) -> list[Plan]:
