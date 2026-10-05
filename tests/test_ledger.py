@@ -9,6 +9,7 @@ million throughout, exactly as the API quotes them.
 from aigaffer.data.models import Player, Squad
 from aigaffer.ledger import observe, selling_price
 from aigaffer.store import Store
+from tests.fixtures import make_executed
 
 
 def player(pid: int, cost: int, change: int = 0) -> Player:
@@ -277,3 +278,84 @@ def test_a_sale_the_ledger_never_priced_is_not_audited(tmp_path):
     observed = observe(store, squad_of([1, 4], bank=0, event=2), players)
 
     assert observed.note is None
+
+
+# --- after "Transfers made" -------------------------------------------------
+#
+# The owner sold 2 (bought at £6.0m, still £6.0m) for 3 at £5.0m and texted
+# straight away; 3 rose to £5.2m before the deadline. The first run after it
+# sights 3 in the picks. Bank before 1.0, after 1.0 + 6.0 - 5.0 = 2.0.
+
+
+def recorded_week(store, **overrides) -> None:
+    fields = dict(
+        gw=3, transfers_in=[3], transfers_out=[2], squad_after=[1, 3],
+        buy_prices={3: 50}, sell_prices={2: 60}, bank_after=20, ft_after=0,
+        captain=1, vice=3, arrival_status={3: "a"},
+    )
+    fields.update(overrides)
+    store.save_executed(make_executed(**fields))
+
+
+def test_a_recorded_signing_is_ledgered_at_what_was_paid(tmp_path):
+    store = store_at(tmp_path)
+    players = {1: player(1, 50), 2: player(2, 60), 3: player(3, 52)}
+    observe(store, squad_of([1, 2], bank=10, event=2), players)
+    recorded_week(store)
+
+    seen = observe(store, squad_of([1, 3], bank=20, event=3), players)
+
+    assert store.purchases() == {1: 50, 3: 50}, "his £5.0m, not the £5.2m of today"
+    assert seen.note is None, "the row's prices make the audit exact"
+
+
+def test_without_a_row_the_sighting_is_todays_price(tmp_path):
+    # The same week with nothing recorded: the old behaviour, drift and all.
+    store = store_at(tmp_path)
+    players = {1: player(1, 50), 2: player(2, 60), 3: player(3, 52)}
+    observe(store, squad_of([1, 2], bank=10, event=2), players)
+
+    seen = observe(store, squad_of([1, 3], bank=20, event=3), players)
+
+    assert store.purchases() == {1: 50, 3: 52}
+    assert seen.note is not None  # predicted 10 + 60 - 52 = 18, published 20
+
+
+def test_a_row_for_the_coming_gameweek_does_not_touch_this_ones_picks(tmp_path):
+    # Before the deadline the picks still show the last gameweek; the row for
+    # the next one is the effective squad's business, never the ledger's.
+    store = store_at(tmp_path)
+    players = {1: player(1, 50), 2: player(2, 60), 3: player(3, 52)}
+    observe(store, squad_of([1, 2], bank=10, event=2), players)
+    recorded_week(store)
+
+    observe(store, squad_of([1, 2], bank=10, event=2), players)
+
+    assert store.purchases() == {1: 50, 2: 60}
+
+
+def test_a_free_hit_row_that_dropped_its_prices_seeds_nothing_for_them(tmp_path):
+    # A free hit composed after earlier moves drops buy/sell prices (the moves
+    # are undone). The week after, the real picks show the standing squad;
+    # with no prices in the row the sighting is today's price as ever.
+    store = store_at(tmp_path)
+    players = {1: player(1, 50), 2: player(2, 60), 3: player(3, 52)}
+    observe(store, squad_of([1, 2], bank=10, event=2), players)
+    recorded_week(store, buy_prices={}, sell_prices={}, chip="free_hit")
+
+    observe(store, squad_of([1, 3], bank=18, event=3), players)
+
+    assert store.purchases() == {1: 50, 3: 52}
+
+
+def test_a_free_hit_rows_fifteen_is_never_a_purchase(tmp_path):
+    # Even if a free-hit row carried prices for its temporary fifteen, none
+    # of them is a purchase: the real picks decide who is held.
+    store = store_at(tmp_path)
+    players = {1: player(1, 50), 2: player(2, 60), 3: player(3, 52)}
+    observe(store, squad_of([1, 2], bank=10, event=2), players)
+    recorded_week(store, buy_prices={3: 40}, chip="free_hit")
+
+    observe(store, squad_of([1, 3], bank=18, event=3), players)
+
+    assert store.purchases() == {1: 50, 3: 52}

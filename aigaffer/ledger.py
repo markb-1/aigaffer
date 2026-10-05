@@ -27,6 +27,11 @@ against every run's picks:
   and by then his price has had however many £0.1m daily moves the market
   made in between, every one of them drift between the recorded price and the
   owner's click. Reconciliation is what catches it.
+* **A recorded signing.** When the owner texted "Transfers made" for the
+  gameweek the picks now show (:mod:`aigaffer.executed`), the row holds what
+  each signing cost at that moment, and that is his purchase price — exact,
+  not the sighting day's. The audit reads the row's prices too, so an exact
+  entry raises no note.
 * **A departure.** A ledger row for a player no longer held is deleted: his
   sale is settled and the proceeds are already in the published bank.
 
@@ -55,6 +60,7 @@ prices, which is what lets floor division be the game's own rounding.
 from dataclasses import dataclass, field
 
 from aigaffer.data.models import Player, Squad
+from aigaffer.chips import FREE_HIT
 from aigaffer.report.render import price
 from aigaffer.store import Store
 
@@ -136,18 +142,31 @@ def observe(
         return Observation(selling_prices=_priced(ledger, squad, players))
 
     ledger = store.purchases()
-    note = _reconcile(store, squad, players, ledger)
+    # What the owner paid, when he recorded this gameweek's moves: the row
+    # for the gameweek these picks belong to, so only the first run after
+    # its deadline — when the signing first shows here — ever reads it. A
+    # free-hit row prices nothing: its fifteen is a one-week team that
+    # reverts, never a purchase, and the real picks decide who is held.
+    executed = store.executed(squad.event)
+    if executed is None or executed.chip == FREE_HIT:
+        paid: dict[int, int] = {}
+        raised: dict[int, int] = {}
+    else:
+        paid, raised = executed.buy_prices, executed.sell_prices
+    note = _reconcile(store, squad, players, ledger, paid, raised)
 
     held = [pid for pid in squad.player_ids if pid in players]
     if not ledger:
         # The seed: the season-opening price, exact for a squad held since GW1.
         additions = {
-            pid: players[pid].now_cost - players[pid].cost_change_start
+            pid: paid.get(pid, players[pid].now_cost - players[pid].cost_change_start)
             for pid in held
         }
     else:
         additions = {
-            pid: players[pid].now_cost for pid in held if pid not in ledger
+            pid: paid.get(pid, players[pid].now_cost)
+            for pid in held
+            if pid not in ledger
         }
     departures = [pid for pid in ledger if pid not in set(squad.player_ids)]
 
@@ -191,7 +210,12 @@ def _free_hit_week(chips_used: list[dict] | tuple, event: int) -> bool:
 
 
 def _reconcile(
-    store: Store, squad: Squad, players: dict[int, Player], ledger: dict[int, int]
+    store: Store,
+    squad: Squad,
+    players: dict[int, Player],
+    ledger: dict[int, int],
+    paid: dict[int, int] | None = None,
+    raised: dict[int, int] | None = None,
 ) -> str | None:
     """The audit line for a gameweek the picks just rolled into, or None.
 
@@ -203,6 +227,9 @@ def _reconcile(
     between the deadline and this run is part of the very staleness the line
     reports. A move involving anyone the ledger or the bootstrap cannot
     price is not audited at all — silence over a guess.
+
+    ``paid``/``raised`` are a recorded week's prices; where present they
+    replace the reconstruction, which is the point of recording them.
     """
     if not ledger:
         return None
@@ -219,10 +246,15 @@ def _reconcile(
     if any(pid not in ledger for pid in sold):
         return None
 
+    paid = paid or {}
+    raised = raised or {}
     predicted = (
         previous["bank"]
-        + sum(selling_price(ledger[pid], players[pid].now_cost) for pid in sold)
-        - sum(players[pid].now_cost for pid in bought)
+        + sum(
+            raised.get(pid, selling_price(ledger[pid], players[pid].now_cost))
+            for pid in sold
+        )
+        - sum(paid.get(pid, players[pid].now_cost) for pid in bought)
     )
     if predicted == squad.bank:
         return None
