@@ -551,7 +551,10 @@ def test_transfers_made_records_the_scout_he_entered(scouted, tmp_path):
     assert row.ft_after == max(0, 1 - len(ins))
     assert reply.startswith("Recorded for GW2 (from ")
     # Recording asks the API for three things, not two hundred.
-    assert set(transport.counts) == {"/api/bootstrap-static/", PICKS_PATH, HISTORY_PATH}
+    # Each exactly once: a retry loop or a stray extra fetch would show here.
+    assert dict(transport.counts) == {
+        "/api/bootstrap-static/": 1, PICKS_PATH: 1, HISTORY_PATH: 1,
+    }
     # Pull, write and push all happen under the shared lock.
     assert sync.calls == [("pull", True), ("publish", True)]
 
@@ -567,3 +570,72 @@ def test_a_second_text_publishes_nothing(scouted, tmp_path):
 
     assert second_reply == first_reply
     assert [name for name, _ in sync.calls] == ["pull", "publish", "pull"]
+
+
+class LockProbeTransport(CountingTransport):
+    """Records, per request, whether the state lock was held at that moment."""
+
+    def __init__(self, routes: dict, lock_path) -> None:
+        super().__init__(routes)
+        self.lock_path = lock_path
+        self.held_during: list[tuple[str, bool]] = []
+
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        self.held_during.append((request.url.path, held(self.lock_path)))
+        return super().handle_request(request)
+
+
+def test_the_fetches_are_made_outside_the_lock(scouted, tmp_path):
+    # The lock is shared with the hourly tick; holding it across the network
+    # would stall the tick behind three slow requests. If any client.* call
+    # moved inside ``with state_lock`` this fails.
+    cfg, _ = scouted
+    lock = tmp_path / "inbox" / "state.lock"
+    lock.parent.mkdir()  # the probe opens the file before the first lock exists
+    transport = LockProbeTransport(pipeline_routes(), lock)
+    client = FplClient(http=httpx.Client(transport=transport), sleep=lambda _: None)
+
+    transfers_made(
+        cfg, client, FakeSync(lock), lock, sent_at=datetime.now(UTC) + timedelta(seconds=1)
+    )
+
+    assert len(transport.held_during) == 3
+    assert all(not was_held for _, was_held in transport.held_during)
+
+
+def test_the_row_is_read_after_the_pull(tmp_path):
+    # Tuesday's scout was entered and its row pushed by the other scheduler;
+    # this machine's checkout does not have it until the pull brings it in.
+    # Thursday's deadline verdict was solved from the squad Tuesday left, so it
+    # composes only onto that row: read before the pull, the store has no row
+    # and the verdict is "stale" (neither the API's squad nor the row's).
+    cfg = config(state_dir=tmp_path / "state")
+    store = Store(cfg.state_dir / "aigaffer.db")
+    tuesday = first()  # Grant (6) out, Reyes (17) in
+    run_at(store, 2, "scout", SCOUT_TS, verdict("scout", SCOUT_TS).decision)
+    run_at(
+        store, 2, "deadline", DEADLINE_TS,
+        verdict(
+            transfers_in=[10], transfers_out=[4], squad_before=tuesday.squad_after
+        ).decision,
+    )
+    lock = tmp_path / "inbox" / "state.lock"
+
+    class PullingSync(FakeSync):
+        def pull(self) -> None:
+            Store(cfg.state_dir / "aigaffer.db").save_executed(tuesday)
+            super().pull()
+
+    sync = PullingSync(lock)
+
+    reply = transfers_made(
+        cfg, make_client(pipeline_routes()), sync, lock, sent_at=LATER, now=NOW
+    )
+
+    row = store.executed(2)
+    assert not reply.startswith("Not recorded"), reply
+    # Cumulative: Tuesday's Grant-for-Reyes plus Thursday's Dodd-for-Kelly.
+    assert row.verdicts == [["scout", SCOUT_TS], ["deadline", DEADLINE_TS]]
+    assert sorted(row.transfers_in) == [10, 17]
+    assert sorted(row.transfers_out) == [4, 6]
+    assert sync.calls == [("pull", True), ("publish", True)]

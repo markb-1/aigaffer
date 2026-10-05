@@ -395,6 +395,9 @@ def transfers_made(
     the row (a text file, ``state/executed/gw{n}.json``), the commit and the
     push. A push that fails is said on the log and the reply still goes; the
     row is committed locally and the next hourly tick pushes it.
+
+    ``sent_at`` and ``now`` must be timezone-aware: they are compared with the
+    stored UTC timestamps.
     """
     bootstrap = client.bootstrap()
     current = bootstrap.current_event()
