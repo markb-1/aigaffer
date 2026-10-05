@@ -82,3 +82,11 @@ def test_a_chip_week_does_not_change_the_chip_week_itself():
     # The chip is played in GW5, so the GW5 deadline is untouched: 4 earned.
     chips = [{"name": "freehit", "event": 5}]
     assert compute_free_transfers([], chips, next_event=5) == 4
+
+
+def test_a_chip_recorded_at_gw1_does_not_take_gw2s_first_free_transfer():
+    # Every manager is granted a free transfer for GW2 whatever the history
+    # says; a chip at GW1 (impossible in the game, present in fixtures) must not
+    # take it away: 1 for GW2.
+    chips = [{"name": "wildcard", "event": 1}]
+    assert compute_free_transfers([], chips, next_event=2) == 1

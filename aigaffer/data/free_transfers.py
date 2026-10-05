@@ -39,7 +39,9 @@ def compute_free_transfers(
     for gw in range(2, next_event + 1):
         # The +1 is the transfer earned *for* ``gw``; the week after a chip week
         # earns none.
-        earned = 0 if gw - 1 in free_transfer_events else 1
+        # GW2's first free transfer is granted to every manager at the start of
+        # the season, and no chip can be played before GW2, so it is always earned.
+        earned = 1 if gw == 2 or gw - 1 not in free_transfer_events else 0
         banked = min(MAX_FREE_TRANSFERS, banked + earned)
         # Transfers for next_event itself are still ahead of the deadline, so
         # nothing has been spent there yet.
