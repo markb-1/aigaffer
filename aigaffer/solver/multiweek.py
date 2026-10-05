@@ -100,10 +100,12 @@ The price is a per-gameweek constant, ``best_oneweek[w]`` — the value of the
 best legal one-week fifteen the pool holds within the manager's budget, scored
 for that gameweek with the armband and the tenth-weighted bench exactly as the
 objective scores the standing squad, computed by :func:`_best_one_week_squad` in
-its own small program before this one is built. The budget it is held to is the
-one the manager actually has: the bank plus the sale value of the current squad,
-which under this module's constant-price approximation is a constant over the
-window — a free hit buys a better eleven, not an unlimited one.
+its own small program before this one is built — for each gameweek a held free
+hit may be played in, and for no other, since nothing reads it there. The
+budget it is held to is the one the manager actually has: the bank plus the
+sale value of the current squad, which under this module's constant-price
+approximation is a constant over the window — a free hit buys a better eleven,
+not an unlimited one.
 
 A free-hit gameweek ``fh[w] = 1`` then does two things. It makes no permanent
 transfers — ``moves[w] ≤ SQUAD_SIZE·(1 − fh[w])`` pins the gameweek's moves to
@@ -433,9 +435,10 @@ def optimize_path(
     a standalone solve passes — the prices are computed here from the same inputs
     and the same helper, so the answer is identical to the point either way; the
     lever only moves where the work happens, never the result. It is read only
-    when a held free hit may be played in some week of the window, and is the
-    week-index → ``(value, fifteen, eleven)`` mapping :func:`_free_hit_prices`
-    returns.
+    when a held free hit may be played in some week of the window, and only for
+    the weeks one may be played in, and is the week-index → ``(value, fifteen,
+    eleven)`` mapping :func:`_free_hit_prices` returns for the same
+    ``held_chips``.
 
     ``selling_prices`` is what each of ``current_squad``'s sales would
     actually raise, from the purchase ledger; a squad member absent from it
@@ -496,6 +499,20 @@ def optimize_path(
     chips = [
         kind for kind in _PLANNABLE_CHIPS if any(chip.chip == kind for chip in held)
     ]
+    # The window weeks each kind may be played in — the union of its held
+    # chips' eligible weeks, ascending, and empty for a kind not held. A week
+    # outside it reads the kind's binary as a constant zero, so whatever the
+    # kind would add there — an auxiliary, its pins, its objective term, the
+    # free hit's price — could only ever be pinned to nothing, and none of it is
+    # built. A window inside one half is every week of it, and builds what it
+    # always did; one that straddles GW19/20 holding only one set's chips skips
+    # the other half's weeks.
+    chip_weeks = {
+        kind: sorted(
+            {w for chip in held if chip.chip == kind for w in eligible[chip.id]}
+        )
+        for kind in _PLANNABLE_CHIPS
+    }
 
     # A free hit's value each gameweek is priced to one side, as a constant, so
     # its squad is never a variable of this program and cannot reach the next
@@ -503,7 +520,9 @@ def optimize_path(
     # is the one the manager holds: the bank plus the sale value of the current
     # squad, a constant over the window under this module's constant-price
     # approximation. A gameweek whose best legal one-week squad the budget cannot
-    # even field is no window at all, which is None like any other infeasibility.
+    # even field is no window at all, which is None like any other infeasibility
+    # — but only a gameweek a held free hit may be played in is priced at all, so
+    # a week of the other half can neither cost a sub-solve nor sink the window.
     best_oneweek: dict[int, float] = {}
     # The fifteen and eleven each week's free-hit price was measured on, kept so
     # that the week the window actually plays a free hit can field the team it
@@ -518,22 +537,25 @@ def optimize_path(
         if freehit_prices is None:
             freehit_prices = _free_hit_prices(
                 players, projections, current_squad, bank, events, time_limit,
-                selling_prices=selling_prices,
+                selling_prices=selling_prices, held_chips=held,
             )
         if freehit_prices is None:
             return None
-        for w in weeks:
+        for w in chip_weeks[FREE_HIT]:
             value, fh_squad, fh_xi = freehit_prices[w]
             best_oneweek[w] = value
             best_oneweek_squad[w] = (fh_squad, fh_xi)
 
     problem = pulp.LpProblem("aigaffer_transfer_path", pulp.LpMaximize)
 
-    def per_week(name: str, **bounds) -> dict[int, dict[int, pulp.LpVariable]]:
-        """One variable a player a gameweek, built in a fixed order so that the
-        same board always writes the same model file."""
+    def per_week(
+        name: str, among: list[int] = weeks, **bounds
+    ) -> dict[int, dict[int, pulp.LpVariable]]:
+        """One variable a player a gameweek — every gameweek, or only those
+        ``among`` names — built in a fixed order so that the same board always
+        writes the same model file."""
         return {
-            w: problem.add_variable_dicts(f"{name}{w}", pool, **bounds) for w in weeks
+            w: problem.add_variable_dicts(f"{name}{w}", pool, **bounds) for w in among
         }
 
     squad = per_week("squad", cat=pulp.LpBinary)
@@ -619,28 +641,27 @@ def optimize_path(
     # the product with the big-M pair added in the gameweek loop: ``z_bb`` is
     # ``(squad - xi)·bb``, the bench at full weight for the boosted week, and
     # ``z_tc`` is ``captain·tc``, the third armband multiple. Both factors sit in
-    # [0, 1], so the bound is exact rather than a relaxation.
-    z_bb = per_week("zbb", lowBound=0, upBound=1) if BENCH_BOOST in chips else {}
-    z_tc = per_week("ztc", lowBound=0, upBound=1) if TRIPLE_CAPTAIN in chips else {}
+    # [0, 1], so the bound is exact rather than a relaxation. Each is built only
+    # in the weeks its kind may be played in (``chip_weeks``), and so is every
+    # auxiliary below: elsewhere the chip's factor is zero and so is the
+    # product, with nothing to linearize. A kind not held builds none at all.
+    z_bb = per_week("zbb", chip_weeks[BENCH_BOOST], lowBound=0, upBound=1)
+    z_tc = per_week("ztc", chip_weeks[TRIPLE_CAPTAIN], lowBound=0, upBound=1)
     # One auxiliary a gameweek, not one a player: ``z_wc[w]`` is ``moves[w]·wc[w]``,
     # the free transfers a wildcarded gameweek did not really spend, added back to
     # the next gameweek's carry. Pinned from above only in the gameweek loop; the
     # module docstring says why that is exact.
-    z_wc = (
-        {w: problem.add_variable(f"zwc{w}", lowBound=0) for w in weeks}
-        if WILDCARD in chips
-        else {}
-    )
+    z_wc = {
+        w: problem.add_variable(f"zwc{w}", lowBound=0) for w in chip_weeks[WILDCARD]
+    }
     # One auxiliary a gameweek: ``y_fh[w]`` is ``fh[w]·normal_score[w]``, the
     # standing squad's own score for the gameweek, which a free hit takes off so
     # that the constant free-hit score can replace it. Pinned by the usual big-M
     # pair in the gameweek loop, its big-M being ``best_oneweek[w]`` itself — a
     # true upper bound on the standing score, so the pin is exact.
-    y_fh = (
-        {w: problem.add_variable(f"yfh{w}", lowBound=0) for w in weeks}
-        if FREE_HIT in chips
-        else {}
-    )
+    y_fh = {
+        w: problem.add_variable(f"yfh{w}", lowBound=0) for w in chip_weeks[FREE_HIT]
+    }
 
     objective = (
         pulp.lpSum(
@@ -669,7 +690,7 @@ def optimize_path(
                 * pulp.lpSum(points[p, w] * z_bb[w][p] for p in pool)
                 - bars_paid(BENCH_BOOST, w)
             )
-            for w in weeks
+            for w in chip_weeks[BENCH_BOOST]
         )
     if TRIPLE_CAPTAIN in chips:
         # One extra captain multiple, less the same kind of bar.
@@ -679,7 +700,7 @@ def optimize_path(
                 pulp.lpSum(points[p, w] * z_tc[w][p] for p in pool)
                 - bars_paid(TRIPLE_CAPTAIN, w)
             )
-            for w in weeks
+            for w in chip_weeks[TRIPLE_CAPTAIN]
         )
     if WILDCARD in chips:
         # The wildcard adds no scoring term of its own — its gain is the better
@@ -687,7 +708,7 @@ def optimize_path(
         # which the objective already counts. So only its bar goes in, and the
         # chip is played only where that endogenous gain clears it.
         objective -= pulp.lpSum(
-            decay ** (w - 1) * bars_paid(WILDCARD, w) for w in weeks
+            decay ** (w - 1) * bars_paid(WILDCARD, w) for w in chip_weeks[WILDCARD]
         )
     if FREE_HIT in chips:
         # The free-hit gameweek is worth its best one-week squad in place of the
@@ -703,7 +724,7 @@ def optimize_path(
                 - y_fh[w]
                 - bars_paid(FREE_HIT, w)
             )
-            for w in weeks
+            for w in chip_weeks[FREE_HIT]
         )
     problem += objective
 
@@ -752,19 +773,22 @@ def optimize_path(
         # exactly as they did before chips: the floor is ``moves − ft`` and the
         # ceiling is the variable's own ``MAX_HITS``. A wildcarded gameweek drops
         # the floor to zero or below and the ceiling to zero, so it charges no
-        # hits however many men it moves — free transfers, made linear.
+        # hits however many men it moves — free transfers, made linear. A
+        # gameweek no held wildcard may be played in is an ordinary one by
+        # construction, and is written as one.
         floor = moves[w] - banked[w]
-        if WILDCARD in chips:
+        if w in z_wc:
             floor = floor - SQUAD_SIZE * on(WILDCARD, w)
             problem += paid[w] <= MAX_HITS * (1 - on(WILDCARD, w))
         problem += paid[w] >= floor
         problem += paid[w] <= moves[w] - banked[w] + big_m * (1 - owing[w])
         problem += paid[w] <= big_m * owing[w]
         if w > 1:
-            # The carry gains the wildcard add-back only when a wildcard is in
-            # play; without it the row is the pre-chip one, term for term.
+            # The carry gains the wildcard add-back only after a gameweek a
+            # wildcard may be played in; otherwise the row is the pre-chip one,
+            # term for term.
             carry = banked[w - 1] - moves[w - 1] + paid[w - 1] + 1
-            if WILDCARD in chips:
+            if w - 1 in z_wc:
                 carry = carry + z_wc[w - 1]
             problem += banked[w] <= carry
 
@@ -773,26 +797,26 @@ def optimize_path(
         here = [play[chip.id][w] for chip in held if w in play[chip.id]]
         if len(here) > 1:
             problem += pulp.lpSum(here) <= 1
-        if BENCH_BOOST in chips:
+        if w in z_bb:
             bb = on(BENCH_BOOST, w)
             for p in pool:
                 diff = squad[w][p] - starting[w][p]
                 problem += z_bb[w][p] <= diff
                 problem += z_bb[w][p] <= bb
                 problem += z_bb[w][p] >= diff - (1 - bb)
-        if TRIPLE_CAPTAIN in chips:
+        if w in z_tc:
             tc = on(TRIPLE_CAPTAIN, w)
             for p in pool:
                 problem += z_tc[w][p] <= captain[w][p]
                 problem += z_tc[w][p] <= tc
                 problem += z_tc[w][p] >= captain[w][p] - (1 - tc)
-        if WILDCARD in chips:
+        if w in z_wc:
             # The two ceilings on the carry's add-back: it cannot exceed the
             # gameweek's moves and it vanishes off a non-wildcarded gameweek. No
             # floor — the carry pushes it to whichever is smaller on its own.
             problem += z_wc[w] <= moves[w]
             problem += z_wc[w] <= SQUAD_SIZE * on(WILDCARD, w)
-        if FREE_HIT in chips:
+        if w in y_fh:
             fh = on(FREE_HIT, w)
             # A free hit makes no permanent transfers — that is the game's rule
             # and the whole of the revert: with the gameweek's moves pinned to
@@ -827,7 +851,7 @@ def optimize_path(
         # The opening cap, lifted for a wildcarded first gameweek: fifteen is the
         # most any gameweek can move, so the term uncaps it without unbounding it.
         cap = max(MAX_TRANSFERS, opening_bank)
-        if WILDCARD in chips:
+        if 1 in z_wc:
             problem += moves[1] <= cap + SQUAD_SIZE * on(WILDCARD, 1)
         else:
             problem += moves[1] <= cap
@@ -980,6 +1004,35 @@ def _projected(
     return projection.per_gw.get(event, 0.0) if projection else 0.0
 
 
+def _one_week_market(
+    players: dict[int, Player],
+    projections: dict[int, PlayerProjection],
+    current_squad: list[int],
+    bank: int,
+    selling_prices: dict[int, int] | None,
+) -> tuple[list[int], dict[int, list[int]], dict[int, list[int]], int]:
+    """What a one-week fifteen is bought from: the pool, it grouped by position
+    and by club, and the budget — as ``(pool, by_position, by_club, budget)``.
+
+    Shared by the free hit's pricing and the chip calendar's, which are the
+    same sub-solve asked different questions, so that the two can never be
+    pricing off different markets. The pool is the window's own, cut by
+    :data:`CANDIDATES_PER_POSITION`. The budget is the one a free hit really
+    grants: the bank plus what the squad would actually sell for — the
+    ledger's prices where the caller has them, the listed price where it does
+    not. A riser's paper value is not money.
+    """
+    pool = candidate_pool(
+        players, projections, current_squad, limit=CANDIDATES_PER_POSITION
+    )
+    current = {pid for pid in current_squad if pid in players}
+    by_position = _grouped(pool, lambda p: players[p].element_type)
+    by_club = _grouped(pool, lambda p: players[p].team)
+    sale = selling_prices or {}
+    budget = bank + sum(sale.get(p, players[p].now_cost) for p in current)
+    return pool, by_position, by_club, budget
+
+
 def _free_hit_prices(
     players: dict[int, Player],
     projections: dict[int, PlayerProjection],
@@ -988,13 +1041,21 @@ def _free_hit_prices(
     events: list[int],
     time_limit: int | None,
     selling_prices: dict[int, int] | None = None,
+    held_chips: tuple[HeldChip, ...] | None = None,
 ) -> dict[int, tuple[float, list[int], list[int]]] | None:
-    """Every window gameweek's free-hit price — value, fifteen and eleven.
+    """Each window gameweek's free-hit price — value, fifteen and eleven — for
+    the gameweeks a held free hit may be played in.
 
     A free hit's worth in a gameweek is the best legal one-week squad the pool
     holds inside the manager's budget, scored for that week by
-    :func:`_best_one_week_squad`. This prices it for every gameweek in ``events``,
-    keyed by the one-based week index the window program uses.
+    :func:`_best_one_week_squad`. This prices it for the gameweeks in ``events``
+    that some free hit in ``held_chips`` allows, keyed by the one-based week
+    index the window program uses. Any other gameweek is left out: no free hit
+    can be played there, so :func:`optimize_path` builds no free-hit term there
+    and has no use for its price, and a sub-solve for it would be time spent on
+    nothing — or, were that week the one the budget cannot field, a window
+    thrown away over a week it never needed priced. None, the default, prices
+    every gameweek, which is what a whole-season free hit would ask for.
 
     It is factored out because it is the one part of :func:`optimize_path` a
     forced opening-move count never touches: the pool, the budget and each week's
@@ -1004,28 +1065,30 @@ def _free_hit_prices(
     therefore price the free hit once here and hand the same result to every
     solve, paying for the CBC sub-solves once rather than once per count.
     :func:`optimize_path` calls this itself when it is handed nothing, off the
-    same pool and budget, so a standalone solve is unchanged and the prices a
-    sweep hoists are identical to the ones each solve would have computed.
+    same pool, budget and held chips, so a standalone solve is unchanged and
+    the prices a sweep hoists are identical to the ones each solve would have
+    computed.
 
-    None when any gameweek's best one-week squad cannot be fielded inside the
-    budget — the same infeasibility :func:`optimize_path` returns None on.
+    None when any priced gameweek's best one-week squad cannot be fielded
+    inside the budget — the same infeasibility :func:`optimize_path` returns
+    None on.
     """
-    pool = candidate_pool(
-        players, projections, current_squad, limit=CANDIDATES_PER_POSITION
+    pool, by_position, by_club, budget = _one_week_market(
+        players, projections, current_squad, bank, selling_prices
     )
-    current = {pid for pid in current_squad if pid in players}
-    by_position = _grouped(pool, lambda p: players[p].element_type)
-    by_club = _grouped(pool, lambda p: players[p].team)
-    # The budget a free hit really grants: the bank plus what the squad would
-    # actually sell for — the ledger's prices where the caller has them, the
-    # listed price where it does not. A riser's paper value is not money.
-    sale = selling_prices or {}
-    budget = bank + sum(sale.get(p, players[p].now_cost) for p in current)
+    weeks = [
+        w
+        for w in range(1, len(events) + 1)
+        if held_chips is None
+        or any(
+            chip.chip == FREE_HIT and chip.allows(events[w - 1]) for chip in held_chips
+        )
+    ]
     # One command wrapper for the lot: it keeps no per-problem state, so pricing
     # every week through the same object is the same solve run several times.
     solver = _solver(time_limit)
     prices: dict[int, tuple[float, list[int], list[int]]] = {}
-    for w in range(1, len(events) + 1):
+    for w in weeks:
         week_points = {p: _projected(projections, p, events[w - 1]) for p in pool}
         priced = _best_one_week_squad(
             pool, players, by_position, by_club, week_points, budget, solver
@@ -1051,20 +1114,16 @@ def best_one_week_squads(
 
     The chip calendar's pricing, kept beside the free hit's because it is the
     same sub-solve: the same pool, the same budget (the bank plus what the
-    squad actually sells for), the same legality. Two differences. It is keyed
-    by gameweek id, since the calendar works in gameweeks and has no window
+    squad actually sells for), the same legality — one market,
+    :func:`_one_week_market`, for both. Two differences. It is keyed by
+    gameweek id, since the calendar works in gameweeks and has no window
     index; and a week the budget cannot field is None rather than the end of
     the answer, since one unpriceable week is a week the calendar skips, not a
     calendar it cannot draw.
     """
-    pool = candidate_pool(
-        players, projections, current_squad, limit=CANDIDATES_PER_POSITION
+    pool, by_position, by_club, budget = _one_week_market(
+        players, projections, current_squad, bank, selling_prices
     )
-    current = {pid for pid in current_squad if pid in players}
-    by_position = _grouped(pool, lambda p: players[p].element_type)
-    by_club = _grouped(pool, lambda p: players[p].team)
-    sale = selling_prices or {}
-    budget = bank + sum(sale.get(p, players[p].now_cost) for p in current)
     solver = _solver(time_limit)
     return {
         event: _best_one_week_squad(

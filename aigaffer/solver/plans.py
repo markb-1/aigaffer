@@ -117,10 +117,14 @@ def generate_plans(
         # would otherwise pay for. None is a window that cannot field a free-hit
         # squad, which every count would return None on — the empty sweep that
         # falls through to the single-week solver, reached here without the work.
+        # Only the weeks a held free hit may be played in are priced, exactly
+        # the weeks each solve would price for itself, so the hoisted dict and
+        # a standalone solve's are the same dict.
         freehit_prices = (
             _free_hit_prices(
                 players, xp, current_squad, bank, projections_events,
                 SWEEP_TIME_LIMIT, selling_prices=selling_prices,
+                held_chips=held_chips,
             )
             if fh_playable
             else None

@@ -149,7 +149,8 @@ def stub_free_hit_prices(monkeypatch, value) -> list[dict]:
     calls: list[dict] = []
 
     def fake_free_hit_prices(
-        players, xp, current_squad, bank, events, time_limit, selling_prices=None
+        players, xp, current_squad, bank, events, time_limit, selling_prices=None,
+        held_chips=None,
     ):
         calls.append(
             {
@@ -160,6 +161,7 @@ def stub_free_hit_prices(monkeypatch, value) -> list[dict]:
                 "events": events,
                 "time_limit": time_limit,
                 "selling_prices": selling_prices,
+                "held_chips": held_chips,
             }
         )
         return value
@@ -337,6 +339,9 @@ def test_the_free_hit_price_is_computed_once_and_rides_the_whole_sweep(monkeypat
     assert priced[0]["bank"] == 25
     assert priced[0]["events"] is EVENTS
     assert priced[0]["time_limit"] == SWEEP_TIME_LIMIT
+    # Handed the held chips, so it prices only the weeks a held free hit may
+    # be played in — the weeks each solve would have priced for itself.
+    assert priced[0]["held_chips"] == whole_season(FREE_HIT)
     # And that one dict is the very object every opening count is handed.
     assert [call["freehit_prices"] for call in calls] == [prices] * 4
     assert all(call["freehit_prices"] is prices for call in calls)

@@ -2215,6 +2215,175 @@ def test_generate_plans_with_no_held_chips_is_the_pre_calendar_shortlist():
 
 
 # --------------------------------------------------------------------------
+# A window across the halves: a chip's terms only where it may be played
+# --------------------------------------------------------------------------
+#
+# A window of GW18-21 seen with only the first set in hand: every chip held may
+# go in GW18 or GW19 and in neither of the last two weeks. Those weeks can only
+# ever read the chip's binary as zero, so they get no free-hit price, no
+# auxiliary and no row — which saves the work, and saves the window from a
+# free-hit sub-solve in a week no free hit could be played in.
+#
+# The board is the flat fifteen of the bench-boost tests, worth 4.0 a man in
+# GW18-19 and 5.0 in GW20-21; the pool is the squad, so nothing is bought. A
+# 4.0 week is 44.0 + 4.0 armband + 0.1 x 16.0 bench = 49.6, a 5.0 week
+# 55.0 + 5.0 + 2.0 = 62.0, over decays 1, 0.85, 0.7225 and 0.614125:
+# 49.6 + 42.16 + 44.795 + 38.07575 = 174.63075. No chip clears its fallback
+# bar on it — the boost gains 0.9 x 16.0 = 14.4 against 20, the triple captain
+# 4.0 against 18, the wildcard and the free hit nothing (there is no one better
+# to field) against 35 and 25 — so every solve below is that do-nothing plan.
+
+ACROSS_THE_HALVES = [18, 19, 20, 21]
+ACROSS_THE_HALVES_OBJECTIVE = 174.63075
+
+
+def across_the_halves() -> tuple[dict[int, Player], dict[int, PlayerProjection]]:
+    rows = [
+        (
+            pid,
+            FLAT_POSITIONS[pid - 1],
+            50,
+            {18: 4.0, 19: 4.0, 20: 5.0, 21: 5.0},
+        )
+        for pid in range(1, 16)
+    ]
+    return _build(rows)
+
+
+def priced_weeks(monkeypatch, fail_from: float | None = None) -> list[float]:
+    """Spy on the free-hit sub-solve: record the board's per-man value for each
+    week it is asked to price (4.0 is GW18-19, 5.0 GW20-21), and when
+    ``fail_from`` is given make every week at or above it unfieldable — the
+    None a week the budget cannot field comes back as."""
+    asked: list[float] = []
+    real = multiweek._best_one_week_squad
+
+    def spy(pool, players_, by_position, by_club, week_points, *rest, **kw):
+        value = max(week_points.values())
+        asked.append(value)
+        if fail_from is not None and value >= fail_from:
+            return None
+        return real(pool, players_, by_position, by_club, week_points, *rest, **kw)
+
+    monkeypatch.setattr(multiweek, "_best_one_week_squad", spy)
+    return asked
+
+
+FIRST_SET_FREE_HIT = (HeldChip(FREE_HIT, 2, 19),)
+
+
+def test_a_first_set_free_hit_is_priced_only_in_the_weeks_it_may_be_played(
+    monkeypatch,
+):
+    # Two sub-solves, GW18 and GW19, not four: GW20 and GW21 could only ever
+    # read the free hit's binary as zero. The plan is the do-nothing one.
+    asked = priced_weeks(monkeypatch)
+    players, projections = across_the_halves()
+
+    plan, path = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1,
+        events=ACROSS_THE_HALVES, decay=DECAY, held_chips=FIRST_SET_FREE_HIT,
+    )
+
+    assert asked == [4.0, 4.0]
+    assert path.week1_chip == "none"
+    assert plan.objective == pytest.approx(ACROSS_THE_HALVES_OBJECTIVE, abs=1e-4)
+
+
+def test_the_hoisted_free_hit_prices_cover_only_the_weeks_it_may_be_played(
+    monkeypatch,
+):
+    # The sweep's hoist prices the same two weeks the standalone solve does —
+    # the dict is keyed by window week, so GW18 and GW19 are 1 and 2 — and
+    # generate_plans asks for them once for the whole sweep.
+    players, projections = across_the_halves()
+
+    prices = _free_hit_prices(
+        players, projections, SQUAD, 0, ACROSS_THE_HALVES, None,
+        held_chips=FIRST_SET_FREE_HIT,
+    )
+
+    assert set(prices) == {1, 2}
+    assert prices[1][0] == pytest.approx(49.6, abs=1e-4)
+    asked = priced_weeks(monkeypatch)
+    generate_plans(
+        players, projections, SQUAD, bank=0, free_transfers=1,
+        projections_events=ACROSS_THE_HALVES, decay=DECAY,
+        held_chips=FIRST_SET_FREE_HIT,
+    )
+    assert asked == [4.0, 4.0]
+
+
+def test_a_week_no_free_hit_may_be_played_in_cannot_sink_the_window(monkeypatch):
+    # GW20 and GW21 are made unfieldable. Priced, they would end the window
+    # (a free-hit week the budget cannot field is no window at all) and send
+    # the sweep to the single-week solver; unpriced, they are ordinary weeks
+    # and the window answers, standalone and through the sweep alike.
+    asked = priced_weeks(monkeypatch, fail_from=5.0)
+    players, projections = across_the_halves()
+
+    answer = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1,
+        events=ACROSS_THE_HALVES, decay=DECAY, held_chips=FIRST_SET_FREE_HIT,
+    )
+    plans = generate_plans(
+        players, projections, SQUAD, bank=0, free_transfers=1,
+        projections_events=ACROSS_THE_HALVES, decay=DECAY,
+        held_chips=FIRST_SET_FREE_HIT,
+    )
+
+    assert answer is not None
+    assert answer[0].objective == pytest.approx(ACROSS_THE_HALVES_OBJECTIVE, abs=1e-4)
+    assert plans[0].path is not None, "the window answered, not the fallback"
+    assert 5.0 not in asked
+
+
+@pytest.mark.parametrize(
+    ("held", "prefix"),
+    [
+        (HeldChip(BENCH_BOOST, 1, 19), "zbb"),
+        (HeldChip(TRIPLE_CAPTAIN, 1, 19), "ztc"),
+        (HeldChip(WILDCARD, 2, 19), "zwc"),
+        (HeldChip(FREE_HIT, 2, 19), "yfh"),
+    ],
+)
+def test_a_chips_auxiliaries_are_built_only_in_the_weeks_it_may_be_played(
+    monkeypatch, held, prefix
+):
+    # The auxiliary each kind linearizes its product with — z_bb, z_tc, z_wc,
+    # y_fh, numbered by window week — exists in weeks 1 and 2 (GW18-19) and
+    # not in 3 and 4 (GW20-21), where the chip's binary is a constant zero and
+    # the auxiliary could only be pinned to zero beside it. Read off the model
+    # at the solve; the plan is the do-nothing one either way.
+    built: list[str] = []
+    solve = multiweek.pulp.LpProblem.solve
+
+    def recorded(problem, *args, **kwargs):
+        if problem.name == "aigaffer_transfer_path":
+            built.extend(variable.name for variable in problem.variables())
+        return solve(problem, *args, **kwargs)
+
+    monkeypatch.setattr(multiweek.pulp.LpProblem, "solve", recorded)
+    players, projections = across_the_halves()
+
+    plan, path = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1,
+        events=ACROSS_THE_HALVES, decay=DECAY, held_chips=(held,),
+    )
+
+    weeks = {
+        w
+        for w in range(1, len(ACROSS_THE_HALVES) + 1)
+        for name in built
+        if name == f"{prefix}{w}" or name.startswith(f"{prefix}{w}_")
+    }
+    assert weeks == {1, 2}
+    assert path.week1_chip == "none"
+    assert all(move.chip == "none" for move in path.moves)
+    assert plan.objective == pytest.approx(ACROSS_THE_HALVES_OBJECTIVE, abs=1e-4)
+
+
+# --------------------------------------------------------------------------
 # What a sale actually raises, over the window
 # --------------------------------------------------------------------------
 #
