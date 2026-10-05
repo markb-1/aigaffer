@@ -1204,6 +1204,24 @@ def test_a_draft_holds_no_chips_to_plan(seam):
     assert _calendar(inputs, config(chips=True), {}, None) is None
 
 
+def test_the_single_week_planner_builds_no_calendar(monkeypatch, tmp_path):
+    # Chips on and seven held, but the single-week solver reads no bars: a
+    # calendar for it would be projections to GW19 and a dozen weeks of
+    # sub-solves nobody consults.
+    # None — the same answer as holding nothing — and build_calendar is never
+    # asked.
+    calls = calendar_spy(monkeypatch)
+    inputs = fetch_inputs(
+        config(state_dir=tmp_path), make_client(halves_routes())
+    )
+    _, projections = build_projections(inputs, config(chips=True))
+    single = config(chips=True, planner="single")
+
+    assert _held(single, inputs) != ()
+    assert _calendar(inputs, single, projections, None) is None
+    assert calls == []
+
+
 def test_the_fielded_lineup_is_the_free_hit_team_on_a_free_hit_week(seam):
     # The critical T3 carry at the orchestrator seam: on a free-hit week the
     # eleven fielded is the temporary team the solver priced, not the standing

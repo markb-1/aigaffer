@@ -1633,7 +1633,13 @@ def _calendar(
     selling_prices: dict[int, int] | None,
     strengths: "TeamStrengths | None | object" = _UNFITTED,
 ) -> ChipCalendar | None:
-    """The chip calendar for this run, or None when no chip is held.
+    """The chip calendar for this run, or None when no chip is held or the
+    single-week planner is answering.
+
+    The single-week solver plans no chip and reads no bar, so a calendar for
+    it would be a horizon's worth of sub-solves nobody consults: it gets
+    None, the same as holding nothing, and the report and the record say no
+    calendar was drawn rather than show bars no engine was held to.
 
     Built once, here, from projections of its own: base minutes (the gaffer's
     are for the coming gameweek and must not reach GW17) and a horizon running
@@ -1647,6 +1653,8 @@ def _calendar(
     the window is the one ``projections`` covers, which is the one the solve
     plans over.
     """
+    if cfg.planner == SINGLE:
+        return None
     held = _held(cfg, inputs)
     if not held:
         return None
