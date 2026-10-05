@@ -127,6 +127,14 @@ PLANNED_THIS_WEEK = (
 # reverts — so the section and the checklist both say so, in the same words.
 FREE_HIT_XI = "Free Hit XI (this week only)"
 
+# What every document says, near the top, once the owner has texted
+# "Transfers made" for the week: which squad it is working from, so a report
+# that says "roll" never reads as the bot forgetting the moves he made.
+WORKING_FROM = "Working from the squad you entered on {day}: {moves}."
+# A chip he has already entered, on the checklist where "PLAY" would be: it
+# is the week's chip, and the one thing he must not do is look for it again.
+CHIP_ENTERED = "{chip} already played — you entered it"
+
 # The line under the path, every week. The gameweeks after this one are solved
 # on a projection of a projection and re-planned from scratch on the next run;
 # printed without this they would read as a commitment, and the one thing a
@@ -207,6 +215,7 @@ def render_report(
     free_transfers: int | None = None,
     selling_prices: dict[int, int] | None = None,
     calendar: "ChipCalendar | None" = None,
+    executed: "Executed | None" = None,
 ) -> str:
     """The whole report as one markdown string. Pure; no I/O.
 
@@ -243,6 +252,11 @@ def render_report(
 
     ``calendar`` is the chip calendar, and it adds one section after the chip
     panel; None, or a calendar with no chip to plan, adds nothing.
+
+    ``executed`` is the owner's recorded week, when he has texted "Transfers
+    made": the report then says, under its header, what squad it is working
+    from, and the week's chip is the one he entered. None is the report as it
+    always was.
     """
     players = {player.id: player for player in bootstrap.elements}
     clubs = {team.id: team.short_name for team in bootstrap.teams}
@@ -250,19 +264,21 @@ def render_report(
     # The chip this week plays, decided in one place. It moves the checklist, the
     # team sheet's label and the panel's note together, so none of them can say
     # a different thing about the same decision.
-    chip = played_chip(choice, gaffer)
-    free_hit = _free_hitting(choice, chip)
+    chip = played_chip(choice, gaffer, executed)
+    free_hit = _free_hitting(choice, chip, executed)
+    entered = executed is not None and executed.chip == chip != NO_CHIP
     chip_section = render_chip_calendar(calendar, event.id)
 
     sections = [
         _header(mode, event),
+        *([] if executed is None else [working_from(executed, players)]),
         *(
             []
             if _drafting(choice)
             else [
                 _do_this(
                     event, choice, lineup, players, clubs, chip, free_hit,
-                    free_transfers, selling_prices,
+                    free_transfers, selling_prices, chip_entered=entered,
                 )
             ]
         ),
@@ -365,6 +381,7 @@ def render_digest(
     selling_prices: dict[int, int] | None = None,
     standing: Standing | None = None,
     calendar: "ChipCalendar | None" = None,
+    executed: "Executed | None" = None,
 ) -> str:
     """The report as the phone gets it. Pure; no I/O.
 
@@ -379,22 +396,27 @@ def render_digest(
     ``standing`` is where the season stands, and it opens the digest under
     the deadline as one line; None leaves the line out. ``calendar`` adds one
     more under it: each chip's week and the nearest expiry (:func:`chip_line`).
+    ``executed`` is what the owner has entered this week: the digest then says
+    what squad it is working from, after the header and its chip line.
     """
     players = {player.id: player for player in bootstrap.elements}
     clubs = {team.id: team.short_name for team in bootstrap.teams}
-    chip = played_chip(choice, gaffer)
-    free_hit = _free_hitting(choice, chip)
+    chip = played_chip(choice, gaffer, executed)
+    free_hit = _free_hitting(choice, chip, executed)
 
     sections = [_header(mode, event, standing, free_transfers)]
     # A draft holds no chips, so its calendar is None and there is no line.
     line = chip_line(calendar, choice, chip, event.id)
     if line is not None:
         sections[0] += "\n\n" + line
+    if executed is not None:
+        sections.append(working_from(executed, players))
     if not _drafting(choice):
         sections.append(
             _do_this(
                 event, choice, lineup, players, clubs, chip, free_hit,
                 free_transfers, selling_prices,
+                chip_entered=executed is not None and executed.chip == chip != NO_CHIP,
             )
         )
     sections.append(_recommendation(choice, players, clubs))
@@ -417,6 +439,7 @@ def render_withheld(
     free_transfers: int | None = None,
     selling_prices: dict[int, int] | None = None,
     standing: Standing | None = None,
+    executed: "Executed | None" = None,
 ) -> str:
     """The alert the phone gets for a withheld report. Pure; no I/O.
 
@@ -430,11 +453,12 @@ def render_withheld(
     """
     players = {player.id: player for player in bootstrap.elements}
     clubs = {team.id: team.short_name for team in bootstrap.teams}
-    chip = played_chip(choice, None)
-    free_hit = _free_hitting(choice, chip)
+    chip = played_chip(choice, None, executed)
+    free_hit = _free_hitting(choice, chip, executed)
 
     sections = [
         _header(mode, event, standing, free_transfers),
+        *([] if executed is None else [working_from(executed, players)]),
         WITHHELD_NOTICE.format(reason=reason, until=_utc(until), attempts=attempts),
     ]
     if not _drafting(choice):
@@ -442,6 +466,7 @@ def render_withheld(
             _do_this(
                 event, choice, lineup, players, clubs, chip, free_hit,
                 free_transfers, selling_prices,
+                chip_entered=executed is not None and executed.chip == chip != NO_CHIP,
             )
         )
     return "\n\n".join(sections) + "\n"
@@ -664,19 +689,19 @@ def _spoken(chip: str) -> str:
     return chip.replace("_", " ")
 
 
-def _free_hitting(choice: Plan, chip: str) -> bool:
+def _free_hitting(choice: Plan, chip: str, executed: "Executed | None" = None) -> bool:
     """Is this a free-hit week with a temporary team to field?
 
     Only then does the report field an eleven the standing squad is not: a free
     hit the solver actually planned carries the fifteen it priced. Any other
     chip, or a free hit nobody put a squad behind, leaves the standing team on
-    the sheet.
+    the sheet. A free hit he has entered carries the eleven he entered.
     """
-    return (
-        chip == FREE_HIT
-        and choice.path is not None
-        and bool(choice.path.week1_freehit_xi)
-    )
+    if chip != FREE_HIT:
+        return False
+    if executed is not None and executed.chip == FREE_HIT and executed.freehit_xi:
+        return True
+    return choice.path is not None and bool(choice.path.week1_freehit_xi)
 
 
 def chip_label(chip: str) -> str:
@@ -712,7 +737,15 @@ def entered_moves(executed: "Executed", players: dict[int, Player]) -> str:
     return moves
 
 
-def played_chip(choice: Plan, gaffer: "ManagerDecision | None") -> str:
+def working_from(executed: "Executed", players: dict[int, Player]) -> str:
+    """The "working from" line: the day he recorded it and what he entered."""
+    day = datetime.fromisoformat(executed.recorded_at).astimezone(UTC).strftime("%A")
+    return WORKING_FROM.format(day=day, moves=entered_moves(executed, players))
+
+
+def played_chip(
+    choice: Plan, gaffer: "ManagerDecision | None", executed: "Executed | None" = None
+) -> str:
     """The chip this week actually plays, or ``"none"``.
 
     One place decides it, so the checklist, the panel and the record cannot come
@@ -720,8 +753,12 @@ def played_chip(choice: Plan, gaffer: "ManagerDecision | None") -> str:
     chip the solver planned, a different one, or none. Without a manager it is
     the solver's own week-1 chip, which the window sets on the recommended
     plan's path — a plan off the single-week solver has no path and plays
-    nothing, which is the pre-chip behaviour to the byte.
+    nothing, which is the pre-chip behaviour to the byte. A chip the owner has
+    already entered (``executed``) is the week's chip whatever anyone now
+    plans: it is played.
     """
+    if executed is not None and executed.chip != NO_CHIP:
+        return executed.chip
     if gaffer is not None:
         return gaffer.chip
     if choice.path is not None:
@@ -808,6 +845,7 @@ def _do_this(
     free_hit: bool,
     free_transfers: int | None,
     selling_prices: dict[int, int] | None = None,
+    chip_entered: bool = False,
 ) -> str:
     """The week's moves as a checklist, first and imperative.
 
@@ -830,10 +868,18 @@ def _do_this(
     whole eleven by position, on one line: this block is what the phone gets,
     without the team sheet that follows it in the report, and "set the lineup"
     with no names is a nudge nobody can act on at a deadline.
+
+    ``chip_entered`` says the chip came from what he entered, and the line says
+    so instead of telling him to play it.
     """
     lines = ["## Do this", "", f"⏰ Make these by {deadline(event)} — GW{event.id}"]
+    chip_line_text = (
+        CHIP_ENTERED.format(chip=chip_label(chip))
+        if chip_entered
+        else f"PLAY {chip_label(chip)}"
+    )
     if free_hit:
-        lines.append(f"PLAY {chip_label(chip)}")
+        lines.append(chip_line_text)
         lines.append(
             f"{FREE_HIT_XI}: {_eleven(lineup, players)}"
             " — a temporary team; it reverts next week"
@@ -846,7 +892,7 @@ def _do_this(
 
     lines += _moves(choice, players, clubs, free_transfers, selling_prices)
     if chip != NO_CHIP:
-        lines.append(f"PLAY {chip_label(chip)}")
+        lines.append(chip_line_text)
     lines.append(
         f"CAPTAIN {_who(lineup.captain, players)} · VICE {_who(lineup.vice, players)}"
     )

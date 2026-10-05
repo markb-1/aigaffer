@@ -57,9 +57,11 @@ import pytest
 
 from aigaffer.chips import held_by_rules
 from aigaffer.data.models import Bootstrap, ChipRule, Event, Pick, Player, Squad
+from aigaffer.executed import Executed
 from aigaffer.manager.briefing import (
     EARLY_SEASON_GWS,
     EARLY_SEASON_NOTE,
+    CHIP_ALREADY_PLAYED,
     NOT_HELD_GUARD,
     NOT_HELD_MARK,
     PLANNED_GUARD,
@@ -1084,3 +1086,42 @@ def test_the_price_watch_is_capped():
     text = market_briefing(movers)
     bullets = [b for b in section(text, "Price watch") if b.startswith("- ")]
     assert len(bullets) == 10
+
+
+# --- after "Transfers made" -------------------------------------------------
+
+
+def entered(**overrides) -> Executed:
+    fields = dict(
+        gw=2, mode="scout", recorded_at="2025-08-19T09:00:00+00:00",
+        transfers_in=[18], transfers_out=[7],
+        squad_after=sorted(set(SQUAD) - {7} | {18}), chip="none",
+        captain=8, vice=13, buy_prices={18: 95}, sell_prices={7: 40},
+        bank_after=0, ft_after=0, ft_before=1,
+        verdicts=[["scout", "2025-08-19T08:00:00+00:00"]],
+    )
+    fields.update(overrides)
+    return Executed(**fields)
+
+
+def test_the_briefing_says_what_squad_it_is_working_from():
+    inputs = replace(pipeline_inputs(), executed=entered())
+
+    text = briefing(inputs=inputs)
+
+    line = "Working from the squad you entered on Tuesday: Gale → Reid."
+    assert text.index("Bank:") < text.index(line) < text.index("Numbers:")
+
+
+def test_a_recorded_chip_is_already_played_and_every_chip_is_marked():
+    inputs = replace(pipeline_inputs(), executed=entered(chip="wildcard"))
+
+    panel = section(briefing(inputs=inputs), "Chip EV")
+
+    assert CHIP_ALREADY_PLAYED.format(chip="Wildcard") in panel
+    chip_lines = [line for line in panel if line.startswith("- ")]
+    assert len(chip_lines) == 4 and all(line.endswith(NOT_HELD_MARK) for line in chip_lines)
+
+
+def test_a_briefing_with_nothing_entered_is_unchanged():
+    assert briefing(inputs=replace(pipeline_inputs(), executed=None)) == briefing()

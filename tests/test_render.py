@@ -50,6 +50,7 @@ from aigaffer.chips import (
     HeldChip,
 )
 from aigaffer.data.models import Bootstrap, Event, Player, Standing
+from aigaffer.executed import Executed
 from aigaffer.manager.agent import ManagerDecision
 from aigaffer.model.xp import PlayerProjection
 from aigaffer.report.render import (
@@ -60,6 +61,10 @@ from aigaffer.report.render import (
     NO_FULL_REPORT,
     REMINDER_UNCHANGED,
     chip_line,
+    CHIP_ENTERED,
+    WORKING_FROM,
+    played_chip,
+    working_from,
     render_chip_calendar,
     render_digest,
     render_reminder,
@@ -133,6 +138,7 @@ BOOTSTRAP = Bootstrap(
     teams=FIXTURE.teams,
     elements=[element(*row[:5]) for row in UNIVERSE],
 )
+BOOTSTRAP_PLAYERS = {player.id: player for player in BOOTSTRAP.elements}
 
 # The renderer reads ``total`` for every number it prints. ``per_gw`` is here
 # for its length alone: it is how long the horizon is, which is what the chip
@@ -1539,3 +1545,110 @@ def test_the_full_report_carries_the_calendar_after_the_chip_panel():
     )
     assert text.index("## Chip EV") < text.index("## Chip calendar")
     assert "Chip calendar" not in report()
+
+
+# --- after "Transfers made" -------------------------------------------------
+#
+# The owner entered Gale-for-Reid on Tuesday. Every document the week sends
+# afterwards says so near the top, so a report that says "roll" never reads
+# as the bot forgetting the move.
+
+
+def entered(**overrides) -> Executed:
+    fields = dict(
+        gw=2, mode="scout", recorded_at="2025-08-19T09:00:00+00:00",
+        transfers_in=[18], transfers_out=[7],
+        squad_after=sorted(set(SQUAD) - {7} | {18}), chip="none",
+        captain=8, vice=13, buy_prices={18: 95}, sell_prices={7: 40},
+        bank_after=0, ft_after=0, ft_before=1,
+        verdicts=[["scout", "2025-08-19T08:00:00+00:00"]],
+    )
+    fields.update(overrides)
+    return Executed(**fields)
+
+
+GALE_FOR_REID = "Working from the squad you entered on Tuesday: Gale → Reid."
+
+
+def test_the_report_says_what_it_is_working_from_under_the_header():
+    text = render_report(
+        "deadline", EVENT, PLANS, ROLL, LINEUP, CHIPS, BOOTSTRAP, XP,
+        free_transfers=0, executed=entered(),
+    )
+    sections = text.split("\n\n")
+
+    assert sections[0].startswith("# AI Gaffer — GW2 deadline")
+    assert GALE_FOR_REID in sections[1:3]
+    assert text.index(GALE_FOR_REID) < text.index("## Do this")
+
+
+def test_a_report_with_nothing_entered_is_unchanged():
+    assert "Working from" not in report()
+    assert render_report(
+        "scout", EVENT, PLANS, ONE, LINEUP, CHIPS, BOOTSTRAP, XP,
+        free_transfers=1, executed=None,
+    ) == report()
+
+
+def test_the_digest_says_it_too():
+    text = render_digest(
+        "deadline", EVENT, ROLL, LINEUP, BOOTSTRAP, free_transfers=0,
+        executed=entered(),
+    )
+
+    assert GALE_FOR_REID in text
+    assert text.index(GALE_FOR_REID) < text.index("## Do this")
+
+
+def test_the_withheld_alert_says_it_too():
+    text = render_withheld(
+        "deadline", EVENT, ROLL, LINEUP, BOOTSTRAP, "RateLimitError",
+        until=EVENT.deadline_time, attempts=12, executed=entered(),
+    )
+
+    assert GALE_FOR_REID in text
+
+
+def test_a_recorded_chip_is_the_weeks_chip_and_reads_as_already_played():
+    wildcard = entered(chip="wildcard")
+
+    text = render_report(
+        "deadline", EVENT, PLANS, ROLL, LINEUP, CHIPS, BOOTSTRAP, XP,
+        free_transfers=1, executed=wildcard,
+    )
+
+    assert "Working from the squad you entered on Tuesday: Wildcard played (1 transfer)." in text
+    assert CHIP_ENTERED.format(chip="Wildcard") in text
+    assert "PLAY Wildcard" not in text
+
+
+def test_the_recorded_chip_wins_over_the_gaffer_and_the_path():
+    planned = with_path(ROLL, [])
+    planned = replace(planned, path=replace(planned.path, week1_chip="bench_boost"))
+
+    assert played_chip(planned, None, entered(chip="wildcard")) == "wildcard"
+    assert played_chip(ROLL, gaffer(chip="none"), entered(chip="wildcard")) == "wildcard"
+    assert played_chip(planned, None, entered()) == "bench_boost", "none recorded: the path's"
+    assert played_chip(planned, None) == "bench_boost"
+
+
+def test_a_recorded_free_hit_fields_its_team_and_says_it_is_entered():
+    fh_xi = [1, 3, 4, 5, 8, 9, 10, 11, 13, 14, 18]
+    free_hit = entered(
+        chip="free_hit", transfers_in=[], transfers_out=[],
+        squad_after=SQUAD, freehit_squad=SQUAD[:14] + [18], freehit_xi=fh_xi,
+    )
+    lineup = replace(LINEUP, xi=fh_xi, bench=[2, 12, 6, 7])
+
+    text = render_report(
+        "deadline", EVENT, PLANS, ROLL, lineup, CHIPS, BOOTSTRAP, XP,
+        free_transfers=1, executed=free_hit,
+    )
+
+    assert CHIP_ENTERED.format(chip="Free Hit") in text
+    assert "Free Hit XI (this week only)" in text
+    assert "PLAY Free Hit" not in text
+
+
+def test_working_from_is_one_sentence():
+    assert working_from(entered(), BOOTSTRAP_PLAYERS) == GALE_FOR_REID

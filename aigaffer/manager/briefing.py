@@ -56,6 +56,7 @@ from aigaffer.report.render import (
     price,
     render_chip_calendar,
     wildcard_ev,
+    working_from,
 )
 from aigaffer.solver.lineup import ChipEvs, Lineup
 from aigaffer.solver.optimizer import AVAILABLE, Plan, projected_points
@@ -106,6 +107,15 @@ NOT_HELD_MARK = " (not held this gameweek)"
 NOT_HELD_GUARD = (
     f"A chip marked{NOT_HELD_MARK} is spent or belongs to the next set,"
     " whatever it is priced at above. Finalize with chip 'none' instead."
+)
+
+# What the chip panel says when the owner has already entered a chip this
+# gameweek with "Transfers made": it is played, a gameweek plays one, and the
+# only finalize that is not refused is 'none' — the recorded chip stands.
+CHIP_ALREADY_PLAYED = (
+    "Already played this gameweek: {chip}, entered by the owner with this"
+    " week's transfers. A gameweek plays one chip, so every chip above is"
+    " marked; finalize with chip 'none' and the recorded {chip} stands."
 )
 
 # What the panel is measuring. The wildcard is priced over the horizon and the
@@ -390,6 +400,13 @@ def _situation(
             f" | Squad value: {value}"
         )
 
+    # The squad above is the one he entered, not the API's: say so, once.
+    entered = (
+        None
+        if inputs.executed is None
+        else working_from(inputs.executed, board.players)
+    )
+
     # The minutes clause exists only when the minutes do: a briefing built
     # without them must read exactly as it read before they were an option.
     minutes = (
@@ -408,6 +425,7 @@ def _situation(
         f"Today: {today.strftime(DATE_FORMAT)}",
         f"Deadline: {deadline(event)}",
         money,
+        *([] if entered is None else [entered]),
         f"Numbers:{minutes}"
         f' "xP GW{event.id}" is next gameweek alone;'
         f' "xP{board.horizon}" is the decayed {board.horizon}-gameweek'
@@ -545,6 +563,9 @@ def _chips(
     panel = _chip_panel(
         solve.chips, solve.draft_mode, _not_held(inputs, event), board.horizon
     )
+    executed = inputs.executed
+    if executed is not None and executed.chip in CHIP_ORDER:
+        panel += "\n\n" + CHIP_ALREADY_PLAYED.format(chip=chip_label(executed.chip))
     calendar = render_chip_calendar(solve.calendar, event)
     return [panel] if calendar is None else [panel, calendar]
 
