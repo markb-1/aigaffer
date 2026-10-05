@@ -65,6 +65,7 @@ from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
+from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -1027,11 +1028,20 @@ def fetch_inputs(cfg: Config, client: FplClient) -> PipelineInputs:
     )
 
 
-# What ``build_projections`` is handed when nobody fitted the team strengths
-# for it: fit them here. Not None, because None is an answer — the switch off,
-# or a fit that failed and said so — and a caller who already has it must not
-# pay for a second fit, or print a second failure line, to be told it again.
-_UNFITTED = object()
+class _Unfitted(Enum):
+    """What ``build_projections`` is handed when nobody fitted the team
+    strengths for it: fit them here. Not None, because None is an answer — the
+    switch off, or a fit that failed and said so — and a caller who already
+    has it must not pay for a second fit, or print a second failure line, to
+    be told it again. A one-member enum rather than a bare ``object()`` so the
+    hint can name it: ``TeamStrengths | None | _Unfitted`` says all three
+    things a caller may pass, where ``object`` in the union would swallow the
+    other two."""
+
+    UNFITTED = "unfitted"
+
+
+_UNFITTED = _Unfitted.UNFITTED
 
 
 def _strengths(inputs: PipelineInputs, cfg: Config) -> TeamStrengths | None:
@@ -1058,7 +1068,7 @@ def build_projections(
     minute_overrides: dict[int, float] | None = None,
     *,
     horizon: int | None = None,
-    strengths: "TeamStrengths | None | object" = _UNFITTED,
+    strengths: TeamStrengths | None | _Unfitted = _UNFITTED,
 ) -> tuple[dict[int, float], dict[int, PlayerProjection]]:
     """Expected minutes, and the expected points that follow from them.
 
@@ -1213,7 +1223,7 @@ def _consult(
     xmins: dict[int, float],
     selling_prices: dict[int, int] | None = None,
     *,
-    strengths: "TeamStrengths | None | object" = _UNFITTED,
+    strengths: TeamStrengths | None | _Unfitted = _UNFITTED,
 ) -> "ManagerDecision | None":
     """Put the week to the manager, and come back with the week to enter.
 
@@ -1349,7 +1359,10 @@ def _consult(
     # chips off means planned by nobody, not unplayable, and a chip he holds
     # stays his to play.
     held = held_by_rules(inputs)
-    if decision.chip != NO_CHIP and held_for(held, decision.chip, inputs.event.id) is None:
+    if (
+        decision.chip != NO_CHIP
+        and held_for(held, decision.chip, inputs.event.id) is None
+    ):
         decision = solver_view(CHIP_SPENT, decision.searches)
 
     # One line a run, on stdout, for the log nobody is watching live: either
@@ -1631,7 +1644,7 @@ def _calendar(
     cfg: Config,
     projections: dict[int, PlayerProjection],
     selling_prices: dict[int, int] | None,
-    strengths: "TeamStrengths | None | object" = _UNFITTED,
+    strengths: TeamStrengths | None | _Unfitted = _UNFITTED,
 ) -> ChipCalendar | None:
     """The chip calendar for this run, or None when no chip is held or the
     single-week planner is answering.

@@ -1432,7 +1432,10 @@ def render_chip_calendar(calendar: "ChipCalendar | None", event: int) -> str | N
             if bar is not None:
                 text += f"; this week's bar {bar:.1f}"
         elif bar is not None:
-            text = f"no later week to save it for — play it inside the window (bar {bar:.1f})"
+            text = (
+                "no later week to save it for — play it inside the window"
+                f" (bar {bar:.1f})"
+            )
         else:
             text = f"playable from GW{chip.start_event}"
         lines.append(f"- {name}: {text}")

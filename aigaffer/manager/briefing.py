@@ -100,8 +100,8 @@ PICK_MARKER = "  <- solver pick"
 # What a chip he cannot play this gameweek is marked with, and the line that
 # says what the mark means: spent, or the next set's. The panel has to
 # distinguish "worth nothing" from "not yours to play".
-PLAYED_MARK = " (not held this gameweek)"
-PLAYED_GUARD = (
+NOT_HELD_MARK = " (not held this gameweek)"
+NOT_HELD_GUARD = (
     "A chip marked (not held this gameweek) is spent or belongs to the next set,"
     " whatever it is priced at above. Finalize with chip 'none' instead."
 )
@@ -243,23 +243,20 @@ def build_briefing(
 
     sections = [
         _situation(
-            inputs, board, held, free_transfers, today or date.today(), solve.draft_mode
+            inputs,
+            board,
+            held,
+            free_transfers,
+            today or date.today(),
+            solve.draft_mode,
         ),
         _squad(held, board, event, solve.draft_mode),
         _team_sheet(solve.lineup, board, event, pick),
         _candidates(numbered, board, pick),
-        _chip_panel(
-            solve.chips,
-            solve.draft_mode,
-            _not_held(inputs, event),
-            board.horizon,
-        ),
+        *_chips(inputs, solve, board, event),
         _watchlist(held, board, event),
         _relevant(solve, board),
     ]
-    calendar = render_chip_calendar(solve.calendar, event)
-    if calendar is not None:
-        sections.insert(5, calendar)
     # The market on a quiet day — or a payload from before the fields were
     # read — adds nothing, and the briefing stays byte-for-byte what it was.
     watch = _price_watch(solve, board)
@@ -535,8 +532,23 @@ def _not_held(inputs: "PipelineInputs", event: int) -> set[str]:
     return {chip for chip in CHIP_ORDER if held_for(held, chip, event) is None}
 
 
+def _chips(
+    inputs: "PipelineInputs", solve: "SolveResult", board: _Board, event: int
+) -> list[str]:
+    """The chip panel, and the chip calendar straight after it when there is
+    one: built together, so the calendar follows the numbers it explains
+    wherever the panel goes rather than wherever a list index once put it.
+    No calendar — none held, chips off, the single-week planner, a draft —
+    is the panel alone, and the briefing is what it was without one."""
+    panel = _chip_panel(
+        solve.chips, solve.draft_mode, _not_held(inputs, event), board.horizon
+    )
+    calendar = render_chip_calendar(solve.calendar, event)
+    return [panel] if calendar is None else [panel, calendar]
+
+
 def _chip_panel(
-    chips: ChipEvs, drafting: bool, played: set[str], horizon: int
+    chips: ChipEvs, drafting: bool, not_held: set[str], horizon: int
 ) -> str:
     """The chip numbers, signed: a chip can be worth less than nothing.
 
@@ -550,12 +562,12 @@ def _chip_panel(
     tells him to play the chip the plan in hand was built for, because a rule
     he meets first as an error is a turn spent learning it.
 
-    A chip not held this gameweek is priced anyway and then marked. The number is worth
-    reading — it says what this week would have been worth with it — but the
-    chip is not on the table, and the manager is told so in the one place he
-    looks the chips up. The guardrail line is printed only when something has
-    actually not held, because a warning about nothing is a line of noise
-    in a document that is already long.
+    A chip not held this gameweek is priced anyway and then marked. The
+    number is worth reading — it says what this week would have been worth
+    with it — but the chip is not on the table, and the manager is told so in
+    the one place he looks the chips up. The guardrail line is printed only
+    when some chip is actually not held, because a warning about nothing is a
+    line of noise in a document that is already long.
     """
     if drafting:
         return (
@@ -571,12 +583,12 @@ def _chip_panel(
     }
     lines = ["## Chip EV", "", CHIP_UNITS, ""]
     lines += [
-        f"- {label}: {points}{PLAYED_MARK if chip in played else ''}"
+        f"- {label}: {points}{NOT_HELD_MARK if chip in not_held else ''}"
         for chip, (label, points) in panel.items()
     ]
     lines += ["", PLANNED_GUARD]
-    if played:
-        lines += ["", PLAYED_GUARD]
+    if not_held:
+        lines += ["", NOT_HELD_GUARD]
     return "\n".join(lines)
 
 

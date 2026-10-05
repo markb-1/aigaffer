@@ -41,6 +41,7 @@ from aigaffer.data.models import Player
 from aigaffer.model.xp import PlayerProjection
 from aigaffer.solver.multiweek import (
     FALLBACK_BARS,
+    _projected,
     best_one_week_squads,
     squad_one_week,
 )
@@ -118,6 +119,12 @@ def _beyond(chip: HeldChip, window: list[int]) -> list[int]:
     return list(range(max(window[-1] + 1, chip.start_event), chip.stop_event + 1))
 
 
+def _kind(chip_id: str) -> str:
+    """The kind a held chip's :attr:`~aigaffer.chips.HeldChip.id` names — the
+    part before its ``@stop_event``."""
+    return chip_id.partition("@")[0]
+
+
 def assign(values: dict[str, dict[int, float]], anchors: dict[str, int]) -> dict[str, int]:
     """Each chip's saved-for week: the assignment of chips to distinct weeks
     that maximises Σ v·ρ^(w − anchor), a chip free to go unassigned.
@@ -128,7 +135,7 @@ def assign(values: dict[str, dict[int, float]], anchors: dict[str, int]) -> dict
     strictly better total replaces the best so far — so ties go to the
     earlier week, then the earlier chip.
     """
-    chips = sorted(values, key=lambda key: CHIP_ORDER.index(key.split("@")[0]))
+    chips = sorted(values, key=lambda key: CHIP_ORDER.index(_kind(key)))
     options = {
         chip: [w for w in sorted(values[chip]) if values[chip][w] > 0] + [None]
         for chip in chips
@@ -190,7 +197,7 @@ def _values(
             if not starters:
                 break
             pick = max(starters, key=lambda pid: (projections[pid].attacking_per_gw.get(w, 0.0), -pid))
-            values[w] = scale * projections[pick].per_gw.get(w, 0.0)
+            values[w] = scale * _projected(projections, pick, w)
         return values
     if chip == BENCH_BOOST:
         priced = best_one_week_squads(
@@ -212,7 +219,7 @@ def _values(
                 continue
             bench = set(fifteen) - set(xi)
             values[w] = scale * (1 - BENCH_WEIGHT) * sum(
-                projections[p].per_gw.get(w, 0.0) for p in bench
+                _projected(projections, p, w) for p in bench
             )
         return values
     priced = best_one_week_squads(
@@ -247,11 +254,14 @@ def build_calendar(
                          current_squad, bank, selling_prices)
         for chip in planned if chip.chip in _VALUED
     }
+    # Each half is assigned on its own — its chips compete for its weeks, never
+    # the other half's — and anchored where it may first be played in the
+    # window, so a second set seen from GW15 discounts from GW20.
     saved: dict[str, int] = {}
     for stop in sorted({chip.stop_event for chip in planned}):
-        half = {key: values[key] for key in values if key.endswith(f"@{stop}")}
-        anchors = {chip.id: max(window[0], chip.start_event) for chip in planned if chip.id in half}
-        saved.update(assign(half, anchors))
+        half = [chip for chip in planned if chip.stop_event == stop and chip.id in values]
+        anchors = {chip.id: max(window[0], chip.start_event) for chip in half}
+        saved.update(assign({chip.id: values[chip.id] for chip in half}, anchors))
     # The haircut value at each chip's saved-for week; absent when unassigned.
     worth = {key: values[key][week] for key, week in saved.items()}
     entries = tuple(
