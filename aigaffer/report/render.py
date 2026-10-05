@@ -165,6 +165,24 @@ HUMAN_JUDGES = (
     " neither overrules the other. Read both, then enter one."
 )
 
+# The reminder after "Transfers made". Its checklist is a week already
+# entered, so it says so instead of "make these"; its calm line is the one
+# the owner is waiting for; and a changed week shows what he entered first,
+# then the fresh solve.
+ENTERED_ALREADY = "Transfers entered — nothing more to make."
+RECORDED_CALM = "Transfers recorded; nothing has moved since you entered them."
+ENTERED_VERDICT = "## What you entered (the operative plan)"
+
+# The FPL status flags in words, for a signing whose flag changed.
+STATUS_WORDS = {
+    "a": "available",
+    "d": "doubtful",
+    "i": "injured",
+    "s": "suspended",
+    "u": "unavailable",
+    "n": "not available",
+}
+
 # The two blocks a changed reminder shows side by side, in this order: the
 # decision that was actually made — the operative plan — then the news that
 # questions it.
@@ -512,6 +530,61 @@ def render_reminder_digest(
     return "\n\n".join(sections) + "\n"
 
 
+def render_entered_reminder(
+    event: Event,
+    executed: "Executed",
+    baseline: dict,
+    fresh: dict,
+    changes: dict,
+    bootstrap: Bootstrap,
+    *,
+    selling_prices: dict[int, int] | None = None,
+    standing: Standing | None = None,
+    free_transfers: int | None = None,
+    digest: bool = False,
+) -> str:
+    """The T-3h reminder after "Transfers made". Pure; no I/O.
+
+    ``baseline`` is what he entered as an actions dict (a hold, his armbands,
+    the shape and bench of the verdict he entered); ``fresh`` the solver's
+    fresh look at that squad; ``changes`` the diff between them plus any
+    arrival whose status flag moved. Calm, it is the entered checklist and
+    the calm line — the same document on the phone, because silence would
+    read as a dead VM. Changed, the full alert leads with what moved and
+    shows both weeks, his first; the digest keeps his as the one checklist
+    and points at the repo for the fresh solve, as the ordinary digest does.
+    """
+    players = {player.id: player for player in bootstrap.elements}
+    clubs = {team.id: team.short_name for team in bootstrap.teams}
+
+    def block(heading: str, actions: dict, as_entered: bool) -> str:
+        return _actions_block(
+            heading, event, actions, players, clubs, selling_prices,
+            entered=as_entered,
+        )
+
+    sections = [
+        _header("reminder", event, standing, free_transfers),
+        working_from(executed, players),
+    ]
+    if not changes:
+        sections += [block("## Do this", baseline, True), RECORDED_CALM]
+    elif digest:
+        sections += [
+            block("## Do this", baseline, True),
+            _changed(changes, players, clubs),
+            FRESH_SOLVE_POINTER.format(gw=event.id),
+        ]
+    else:
+        sections += [
+            _changed(changes, players, clubs),
+            block(ENTERED_VERDICT, baseline, True),
+            block(FRESH_SOLVE, fresh, False),
+            HUMAN_JUDGES,
+        ]
+    return "\n\n".join(sections) + "\n"
+
+
 def _gaffer_digest(gaffer: "ManagerDecision") -> str:
     """The manager's opening paragraph, and whose decision it is.
 
@@ -557,13 +630,20 @@ def _changed(changes: dict, players: dict[int, Player], clubs: dict[int, str]) -
     """What the news moved between yesterday's solve and today's, a line each.
 
     The order is the order the moves are entered in: transfers, then the
-    chip, then the armbands, then the shape. Sells and buys are named on
+    chip, then the armbands, then the shape and the bench — after any
+    signing he entered whose status flag has changed since, which leads
+    because it is news about a player he has just paid for. Sells and buys are named on
     separate lines — two lists is how the FPL app takes them, and a paired
     line here would claim to know which sale funds which signing, which
     nothing does. ``Now`` is what the fresh solve wants and yesterday's did
     not; ``No longer`` the other way about.
     """
     lines = [NEWS_MOVED, ""]
+    for pid, before, after in changes.get("arrivals", []):
+        lines.append(
+            f"- {_who(pid, players)} (entered this week) is now {_status(after)}"
+            f" — {_status(before)} when you entered him"
+        )
     for key, label in (
         ("sells_added", "Now selling"),
         ("sells_dropped", "No longer selling"),
@@ -587,7 +667,22 @@ def _changed(changes: dict, players: dict[int, Player], clubs: dict[int, str]) -
     if "formation" in changes:
         before, after = changes["formation"]
         lines.append(f"- Formation changed from {before} to {after}")
+    if "bench" in changes:
+        before, after = changes["bench"]
+        lines.append(
+            f"- Bench order changed from {_names(before, players)}"
+            f" to {_names(after, players)}"
+        )
     return "\n".join(lines)
+
+
+def _status(code: str) -> str:
+    """An FPL status flag in words, or the flag itself if the game invents one."""
+    return STATUS_WORDS.get(code, code)
+
+
+def _names(pids: list[int], players: dict[int, Player]) -> str:
+    return ", ".join(_who(pid, players) for pid in pids)
 
 
 def _actions_block(
@@ -597,6 +692,8 @@ def _actions_block(
     players: dict[int, Player],
     clubs: dict[int, str],
     selling_prices: dict[int, int] | None = None,
+    *,
+    entered: bool = False,
 ) -> str:
     """One plan as the ⏰ checklist, under ``heading``.
 
@@ -606,22 +703,36 @@ def _actions_block(
     when a signing starts — the formation, because a reminder with no team
     sheet under it has nowhere else to say the shape. A stored plan from
     before formations were kept simply drops the line.
+
+    ``entered`` is a week the owner has already entered with "Transfers
+    made": nothing is left to make, a recorded chip is already played, and
+    the bench he set is shown, because its order is one of the few things
+    left to change.
     """
-    lines = [heading, "", f"⏰ Make these by {deadline(event)} — GW{event.id}"]
-    if not actions["transfers"]:
-        lines.append("No transfers — roll.")
-    lines += [
-        _swap(out, bought, players, clubs, selling_prices)
-        for out, bought in actions["transfers"]
-    ]
-    if actions["chip"] != NO_CHIP:
-        lines.append(f"PLAY {chip_label(actions['chip'])}")
+    if entered:
+        lines = [
+            heading, "", f"⏰ Deadline {deadline(event)} — GW{event.id}", ENTERED_ALREADY
+        ]
+        if actions["chip"] != NO_CHIP:
+            lines.append(CHIP_ENTERED.format(chip=chip_label(actions["chip"])))
+    else:
+        lines = [heading, "", f"⏰ Make these by {deadline(event)} — GW{event.id}"]
+        if not actions["transfers"]:
+            lines.append("No transfers — roll.")
+        lines += [
+            _swap(out, bought, players, clubs, selling_prices)
+            for out, bought in actions["transfers"]
+        ]
+        if actions["chip"] != NO_CHIP:
+            lines.append(f"PLAY {chip_label(actions['chip'])}")
     lines.append(
         f"CAPTAIN {_who(actions['captain'], players)}"
         f" · VICE {_who(actions['vice'], players)}"
     )
     if actions.get("formation"):
         lines.append(f"Formation: {actions['formation']}")
+    if entered and actions.get("bench"):
+        lines.append(f"Bench: {_names(actions['bench'], players)}")
     return "\n".join(lines)
 
 

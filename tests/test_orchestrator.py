@@ -36,6 +36,7 @@ from aigaffer.chips import TRIPLE_CAPTAIN, held_for, whole_season
 from aigaffer.config import Config
 from aigaffer.data.fpl_api import FplClient
 from aigaffer.data.models import GwHistory, Player
+from aigaffer.ledger import Observation
 from aigaffer.manager import agent
 from aigaffer.manager.agent import ManagerDecision
 from aigaffer.manager.briefing import CHIP_ALREADY_PLAYED
@@ -50,6 +51,7 @@ from aigaffer.orchestrator import (
     _calendar,
     _fielded_lineup,
     _held,
+    _selling_prices,
     _week1_lock,
     _stored_actions,
     build_projections,
@@ -3873,3 +3875,145 @@ def test_the_gaffers_none_in_a_recorded_chip_week_stands(monkeypatch, tmp_path):
     assert decision["decision_source"] == "manager"
     assert decision["chip"] == "wildcard"
     assert CHIP_ALREADY_PLAYED.format(chip="Wildcard") in gaffer.consults[0].briefing
+
+
+# --- the T-3h reminder after "Transfers made" --------------------------------
+#
+# The yardstick is what he entered: a hold with his armbands and the shape and
+# bench of the verdict he entered, against a fresh solve on the squad he
+# entered. A calm week still buzzes, with the calm line.
+
+
+def test_the_bench_is_diffed_only_when_both_sides_keep_it():
+    base = {"transfers": [], "captain": 1, "vice": 2, "chip": "none", "formation": "4-4-2"}
+
+    assert diff_actions({**base, "bench": [3, 4]}, {**base, "bench": [4, 3]}) == {
+        "bench": [[3, 4], [4, 3]]
+    }
+    assert diff_actions(base, {**base, "bench": [4, 3]}) == {}
+
+
+def doubtful(pid: int) -> dict:
+    """The pipeline board with ``pid`` flagged a doubt since yesterday."""
+    payload = copy.deepcopy(PIPELINE_BOOTSTRAP_JSON)
+    for element in payload["elements"]:
+        if element["id"] == pid:
+            element.update(status="d", chance_of_playing_next_round=50)
+    return payload
+
+
+def test_an_entered_week_with_nothing_new_gets_the_calm_alert(tmp_path):
+    cfg = config(state_dir=tmp_path / "state")
+    store = Store(cfg.state_dir / "aigaffer.db")
+    client = make_client(pipeline_routes())
+    run_pipeline(cfg, client, store, "deadline", send=False)
+    row = enter_latest(store)
+
+    alert = run_pipeline(cfg, client, store, "reminder", send=False)
+    reminder = store.decision(2, "reminder")
+
+    assert render.RECORDED_CALM in alert
+    assert render.ENTERED_ALREADY in alert
+    assert working_from(row, PLAYERS) in alert
+    assert "⚠️" not in alert
+    assert reminder["changes"] == {}
+    assert reminder["executed_from"] == row.verdicts
+    assert reminder["full_report_plan"]["transfers"] == []
+    assert reminder["full_report_plan"]["captain"] == row.captain
+    assert set(store.purchases()) == set(PICKS_15_IDS), "the ledger kept the API's truth"
+
+
+def test_a_signing_flagged_since_he_was_entered_is_news_at_t_minus_3(tmp_path):
+    cfg = config(state_dir=tmp_path / "state")
+    store = Store(cfg.state_dir / "aigaffer.db")
+    run_pipeline(cfg, make_client(pipeline_routes()), store, "deadline", send=False)
+    row = enter_latest(store)
+    assert row.transfers_in, "the deadline verdict signs someone"
+    signing = row.transfers_in[0]
+
+    alert = run_pipeline(
+        cfg, make_client(pipeline_routes(bootstrap=doubtful(signing))), store,
+        "reminder", send=False,
+    )
+    reminder = store.decision(2, "reminder")
+
+    assert [signing, "a", "d"] in reminder["changes"]["arrivals"]
+    assert render.NEWS_MOVED in alert
+    assert "(entered this week) is now doubtful — available when you entered him" in alert
+
+
+# --- what a recorded signing sells for, before the game has seen him ---------
+#
+# The ledger reads the real picks, so before the deadline a signing he
+# entered has no ledger price and would be sold at his listed one. FPL pays
+# half the rise: Reyes bought at £9.3m and listed at £9.5m sells for £9.4m.
+
+
+def test_a_recorded_signing_sells_for_half_his_rise():
+    ledger = Observation(selling_prices={1: 55, 6: 75})
+    effective = SimpleNamespace(players=PLAYERS)
+
+    prices = _selling_prices(ledger, make_executed(buy_prices={17: 93}), effective)
+
+    assert prices == {1: 55, 6: 75, 17: 94}, "93 + (95 - 93) // 2, not his listed 95"
+    assert ledger.selling_prices == {1: 55, 6: 75}, "the ledger itself is untouched"
+    assert _selling_prices(ledger, None, effective) is ledger.selling_prices
+
+
+@pytest.mark.parametrize("mode", ["deadline", "reminder"])
+def test_the_solve_sells_a_recorded_signing_at_half_his_rise(monkeypatch, tmp_path, mode):
+    asked = []
+    real = orchestrator.solve
+
+    def spy(inputs, projections, cfg, selling_prices=None, calendar=None):
+        asked.append(selling_prices)
+        return real(inputs, projections, cfg, selling_prices, calendar)
+
+    monkeypatch.setattr(orchestrator, "solve", spy)
+    store = Store(tmp_path / "aigaffer.db")
+    store.save_executed(make_executed(buy_prices={17: 93}))
+
+    run_pipeline(
+        config(state_dir=tmp_path / "state"), make_client(pipeline_routes()),
+        store, mode, send=False,
+    )
+
+    [prices] = asked
+    assert prices[17] == 94, "credited +0.1 on a 0.2 rise, not his listed 95"
+    assert set(prices) == set(PICKS_15_IDS) | {17}
+
+
+# --- the phone after "Transfers made" -----------------------------------------
+
+
+def test_the_digest_on_the_phone_says_what_it_works_from(monkeypatch, tmp_path):
+    sent = []
+    monkeypatch.setattr(orchestrator, "send_report", lambda *args: sent.append(args))
+    store = Store(tmp_path / "aigaffer.db")
+    store.save_executed(make_executed())
+    cfg = config(
+        telegram_token=TOKEN, telegram_chat_id="42", state_dir=tmp_path / "state"
+    )
+
+    run_pipeline(cfg, make_client(pipeline_routes()), store, "deadline")
+
+    [(_, _, message)] = sent
+    assert working_from(make_executed(), PLAYERS) in message
+
+
+def test_the_withheld_alert_on_the_phone_says_it_too(monkeypatch, tmp_path):
+    sent = []
+    monkeypatch.setattr(orchestrator, "send_report", lambda *args: sent.append(args))
+    stub_gaffer(monkeypatch, unavailable)
+    store = Store(tmp_path / "aigaffer.db")
+    store.save_executed(make_executed())
+    cfg = gaffer_cfg(tmp_path, telegram_token=TOKEN, telegram_chat_id="42")
+
+    run_pipeline(
+        cfg, make_client(pipeline_routes()), store, "deadline",
+        now=PAST_THE_FLOOR - timedelta(hours=20),
+    )
+
+    [(_, _, alert)] = sent
+    assert "The gaffer did not decide" in alert, "withheld, not the digest"
+    assert working_from(make_executed(), PLAYERS) in alert

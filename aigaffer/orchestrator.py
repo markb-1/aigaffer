@@ -109,7 +109,7 @@ from aigaffer.data.models import (
     Standing,
 )
 from aigaffer.executed import Executed, apply_executed
-from aigaffer.ledger import Observation, observe
+from aigaffer.ledger import Observation, observe, selling_price
 from aigaffer.model.minutes import expected_minutes, season_prior
 from aigaffer.model.strength import TeamStrengths, build_team_strengths
 from aigaffer.model.xp import PlayerProjection, project_all, projected_events
@@ -121,6 +121,7 @@ from aigaffer.report.render import (
     formation,
     played_chip,
     render_digest,
+    render_entered_reminder,
     render_reminder,
     render_reminder_digest,
     render_report,
@@ -497,7 +498,9 @@ def run_pipeline(
     (:func:`aigaffer.executed.apply_executed`): everything from the
     projections to the phone reads the effective inputs, and both of the
     ledger's calls read the API's own, so a move the game has not yet seen is
-    never ledgered as a purchase.
+    never ledgered as a purchase. Everything else prices its sales off
+    :func:`_selling_prices`, which adds what each signing he entered would
+    sell for — the ledger cannot know him until the game does.
     """
     if mode == REMINDER_MODE:
         return _run_reminder(
@@ -519,24 +522,24 @@ def run_pipeline(
     # else: projections, calendar, solve, gaffer, briefing and every renderer.
     # With nothing recorded the two are the same object.
     effective, executed = apply_executed(inputs, store.executed(inputs.event.id))
+    # The ledger's prices, plus what each signing he entered would sell for:
+    # read by everything downstream that is not the ledger itself.
+    prices = _selling_prices(ledger, executed, effective)
     # One fit of the team strengths a run, read by every projection the run
     # makes: the week's, the calendar's and each of the gaffer's re-solves.
     strengths = _strengths(effective, cfg)
     xmins, projections = build_projections(effective, cfg, strengths=strengths)
     # The chip calendar, once a run and before the solve it shapes; the
     # gaffer's re-solves are judged against this same one (see _calendar).
-    calendar = _calendar(
-        effective, cfg, projections, ledger.selling_prices, strengths=strengths
-    )
-    solved = solve(effective, projections, cfg, ledger.selling_prices, calendar)
+    calendar = _calendar(effective, cfg, projections, prices, strengths=strengths)
+    solved = solve(effective, projections, cfg, prices, calendar)
     # In a week the owner has already played a chip in, the belt inside
     # _consult refuses any chip the gaffer finalizes — held_by_rules on the
     # effective chip history holds none for this gameweek — and passes his
     # ``none``, after which played_chip below makes the recorded chip the
     # week's.
     gaffer = _consult(
-        cfg, effective, solved, projections, xmins, ledger.selling_prices,
-        strengths=strengths,
+        cfg, effective, solved, projections, xmins, prices, strengths=strengths,
     )
 
     # From here down the week is his, if there was a him: the plan he chose and
@@ -580,7 +583,7 @@ def run_pipeline(
         free_transfers=effective.free_transfers,
         # What each sale actually raises, for the SELL tags that differ from
         # the listed price.
-        selling_prices=ledger.selling_prices,
+        selling_prices=prices,
         calendar=calendar,
         executed=executed,
     )
@@ -718,7 +721,7 @@ def run_pipeline(
                     until=event.deadline_time - timedelta(hours=RETRY_FLOORS[mode]),
                     attempts=MANAGER_RETRY_LIMIT,
                     free_transfers=effective.free_transfers,
-                    selling_prices=ledger.selling_prices,
+                    selling_prices=prices,
                     standing=_standing(effective),
                     executed=executed,
                 ),
@@ -750,7 +753,7 @@ def run_pipeline(
             _label(mode, drafting=solved.draft_mode),
             event, choice, lineup, effective.bootstrap, gaffer,
             free_transfers=effective.free_transfers,
-            selling_prices=ledger.selling_prices,
+            selling_prices=prices,
             standing=_standing(effective),
             calendar=calendar,
             executed=executed,
@@ -843,67 +846,47 @@ def _run_reminder(
     in the buzz nobody got. The trade is the dance's usual one: a send that
     lands and a save that then dies re-observes on the next tick, which
     re-learns the same prices from the same picks.
+
+    After "Transfers made" the yardstick is what he entered — hold, his
+    armbands, his shape and bench — against a fresh solve on the squad he
+    entered; the fresh side gains the bench, and any status change on the
+    players he signed is news. Calm weeks still buzz, with the calm line,
+    because silence would look like a dead VM. Both shapes are built apart
+    (:func:`_against_the_full_report`, :func:`_against_the_entered_week`)
+    and share everything after: the peer check, the buzz, then the save.
     """
-    inputs = fetch_inputs(cfg, client)
+    inputs = fetch_inputs(cfg, client, store=store)
     ledger = observe(
         store, inputs.squad, inputs.players, inputs.chips_used, persist=False
     )
+    # The week he entered, if he has texted "Transfers made": the same overlay
+    # the full report reads, with the ledger kept on the API's own squad.
+    effective, executed = apply_executed(inputs, store.executed(inputs.event.id))
+    prices = _selling_prices(ledger, executed, effective)
     # A fresh calendar for a fresh solve: the deadline run's was built on the
     # board as it stood a day ago, and the yardstick here is solver-then
     # against solver-now, each on its own day's calendar. One fit, as ever.
-    strengths = _strengths(inputs, cfg)
-    _, projections = build_projections(inputs, cfg, strengths=strengths)
-    calendar = _calendar(
-        inputs, cfg, projections, ledger.selling_prices, strengths=strengths
-    )
-    solved = solve(inputs, projections, cfg, ledger.selling_prices, calendar)
-    event = inputs.event
+    strengths = _strengths(effective, cfg)
+    _, projections = build_projections(effective, cfg, strengths=strengths)
+    calendar = _calendar(effective, cfg, projections, prices, strengths=strengths)
+    solved = solve(effective, projections, cfg, prices, calendar)
+    event = effective.event
 
-    # The same reading of the solve the full report would make without a
-    # manager: the week-1 chip off the path, and on a free-hit week the
-    # temporary eleven that chip actually fields.
-    chip = played_chip(solved.choice, None)
-    lineup = _fielded_lineup(
-        chip, solved.choice, solved.lineup, inputs.players, projections, event.id
-    )
-    fresh = plan_actions(solved.choice, lineup, chip, inputs.players)
-    record = store.decision(event.id, DEADLINE_MODE)
-    stored = _stored_actions(record)
-    # Solver-then, when the record is new enough to carry it. None is a
-    # legacy record, and unknowable is not changed.
-    solver_then = None if record is None else record.get("solver_actions")
-    changes = {} if solver_then is None else diff_actions(solver_then, fresh)
+    if executed is None:
+        report, buzz, decision = _against_the_full_report(
+            effective, solved, projections, store, ledger, prices
+        )
+    else:
+        report, buzz, decision = _against_the_entered_week(
+            effective, executed, solved, projections, store, ledger, prices
+        )
+    # Last, so an ordinary week's record keeps the key order it always had.
+    decision["chip_calendar"] = calendar.record() if calendar is not None else None
 
-    report = render_reminder(
-        event, fresh, stored, changes, inputs.bootstrap,
-        selling_prices=ledger.selling_prices,
-        standing=_standing(inputs),
-        free_transfers=inputs.free_transfers,
-    )
-    # The buzz is the digest — one checklist, what moved, a pointer — and on
-    # the calm weeks it is the alert itself, byte for byte. The audit line
-    # rides both: the phone is where a bank discrepancy has to be seen.
-    buzz = render_reminder_digest(
-        event, fresh, stored, changes, inputs.bootstrap,
-        selling_prices=ledger.selling_prices,
-        standing=_standing(inputs),
-        free_transfers=inputs.free_transfers,
-    )
-    report += _audit_line(ledger)
-    buzz += _audit_line(ledger)
-    decision = {
-        "mode": REMINDER_MODE,
-        "event": event.id,
-        "actions": fresh,
-        "full_report_plan": stored,
-        "full_report_solver_plan": solver_then,
-        "changes": changes,
-        "chip_calendar": calendar.record() if calendar is not None else None,
-    }
     # Deliver before saving — see the docstring: a buzz that failed must
     # leave has_run false so the next tick retries, and the history file
     # goes with the store row so nothing on disk claims a reminder happened
-    # that nobody felt.
+    # that nobody felt. Both shapes of the reminder share this tail.
     # The other scheduler's word first, as for every scheduled tick: the
     # solve is seconds, but the ticks are not, and a reminder felt twice is
     # the kind of text this run exists to keep short.
@@ -916,7 +899,8 @@ def _run_reminder(
         # The ledger's writes, now that the buzz went: the same observation
         # again, persisted this time. Written any earlier, the snapshot would
         # have marked the gameweek reconciled and a retried send would carry
-        # no note (see the docstring).
+        # no note (see the docstring). The real inputs, never the effective:
+        # the ledger keeps the API's truth.
         observe(store, inputs.squad, inputs.players, inputs.chips_used)
         # Not _write_report: the history file goes, the root verdict stays.
         path = cfg.state_dir / "reports" / f"gw{event.id}-{REMINDER_MODE}.md"
@@ -924,6 +908,184 @@ def _run_reminder(
         path.write_text(report, encoding="utf-8")
         store.save_run(event.id, REMINDER_MODE, report, decision)
     return report
+
+
+def _against_the_full_report(
+    effective: PipelineInputs,
+    solved: SolveResult,
+    projections: dict[int, PlayerProjection],
+    store: Store,
+    ledger: Observation,
+    selling_prices: dict[int, int],
+) -> tuple[str, str, dict]:
+    """The ordinary reminder: yesterday's solve against today's.
+
+    The full alert, the buzz and the decision record (bar its chip calendar,
+    which the caller adds last), exactly as the reminder has always built
+    them — nothing was recorded, so ``effective`` is the API's own inputs.
+    """
+    event = effective.event
+    # The same reading of the solve the full report would make without a
+    # manager: the week-1 chip off the path, and on a free-hit week the
+    # temporary eleven that chip actually fields.
+    chip = played_chip(solved.choice, None)
+    lineup = _fielded_lineup(
+        chip, solved.choice, solved.lineup, effective.players, projections, event.id
+    )
+    fresh = plan_actions(solved.choice, lineup, chip, effective.players)
+    record = store.decision(event.id, DEADLINE_MODE)
+    stored = _stored_actions(record)
+    # Solver-then, when the record is new enough to carry it. None is a
+    # legacy record, and unknowable is not changed.
+    solver_then = None if record is None else record.get("solver_actions")
+    changes = {} if solver_then is None else diff_actions(solver_then, fresh)
+
+    report = render_reminder(
+        event, fresh, stored, changes, effective.bootstrap,
+        selling_prices=selling_prices,
+        standing=_standing(effective),
+        free_transfers=effective.free_transfers,
+    )
+    # The buzz is the digest — one checklist, what moved, a pointer — and on
+    # the calm weeks it is the alert itself, byte for byte. The audit line
+    # rides both: the phone is where a bank discrepancy has to be seen.
+    buzz = render_reminder_digest(
+        event, fresh, stored, changes, effective.bootstrap,
+        selling_prices=selling_prices,
+        standing=_standing(effective),
+        free_transfers=effective.free_transfers,
+    )
+    report += _audit_line(ledger)
+    buzz += _audit_line(ledger)
+    decision = {
+        "mode": REMINDER_MODE,
+        "event": event.id,
+        "actions": fresh,
+        "full_report_plan": stored,
+        "full_report_solver_plan": solver_then,
+        "changes": changes,
+    }
+    return report, buzz, decision
+
+
+def _against_the_entered_week(
+    effective: PipelineInputs,
+    executed: Executed,
+    solved: SolveResult,
+    projections: dict[int, PlayerProjection],
+    store: Store,
+    ledger: Observation,
+    selling_prices: dict[int, int],
+) -> tuple[str, str, dict]:
+    """The reminder after "Transfers made": what he entered against a fresh look.
+
+    The baseline is a hold with his armbands, and the shape and bench of the
+    verdict he entered. The fresh side is a solver-only solve on the squad he
+    entered — with the bench, so a reordered bench is news — and, on a free
+    hit he entered, a fresh pick of eleven and armbands over the team he
+    built, since that team is fixed now and only its use can move.
+    """
+    event = effective.event
+    players = effective.players
+    chip = played_chip(solved.choice, None, executed)
+    if chip == FREE_HIT and executed.freehit_squad:
+        positions = {pid: player.element_type for pid, player in players.items()}
+        gw_xp = {
+            pid: projection.per_gw.get(event.id, 0.0)
+            for pid, projection in projections.items()
+        }
+        lineup = pick_lineup(
+            executed.freehit_squad, positions, gw_xp,
+            attacking_evs(projections, event.id),
+        )
+    else:
+        lineup = _fielded_lineup(
+            chip, solved.choice, solved.lineup, players, projections, event.id
+        )
+    fresh = plan_actions(solved.choice, lineup, chip, players, with_bench=True)
+    mode, ts = executed.verdicts[-1]
+    baseline = _entered_actions(executed, store.decision_at(event.id, mode, ts))
+    changes = diff_actions(baseline, fresh)
+    arrivals = _arrival_changes(executed, players)
+    if arrivals:
+        changes["arrivals"] = arrivals
+
+    shared = dict(
+        selling_prices=selling_prices,
+        standing=_standing(effective),
+        free_transfers=effective.free_transfers,
+    )
+    report = render_entered_reminder(
+        event, executed, baseline, fresh, changes, effective.bootstrap, **shared
+    )
+    buzz = render_entered_reminder(
+        event, executed, baseline, fresh, changes, effective.bootstrap,
+        digest=True, **shared,
+    )
+    report += _audit_line(ledger)
+    buzz += _audit_line(ledger)
+    decision = {
+        "mode": REMINDER_MODE,
+        "event": event.id,
+        "actions": fresh,
+        "full_report_plan": baseline,
+        "full_report_solver_plan": None,
+        "changes": changes,
+        "executed_from": executed.verdicts,
+    }
+    return report, buzz, decision
+
+
+def _entered_actions(executed: Executed, record: dict | None) -> dict:
+    """What he entered, in the actions shape: a hold — the moves are made —
+    with his armbands, his chip, and the recorded verdict's shape and bench.
+    A record that has gone missing leaves those two unknowable, and the diff
+    skips what it cannot know."""
+    return {
+        "transfers": [],
+        "captain": executed.captain,
+        "vice": executed.vice,
+        "chip": executed.chip,
+        "formation": None if record is None else record.get("formation"),
+        "bench": None if record is None else record.get("bench"),
+    }
+
+
+def _arrival_changes(executed: Executed, players: dict[int, Player]) -> list[list]:
+    """Each player he brought in whose status flag has changed since he did:
+    ``[id, then, now]``, by id. A player the board no longer knows is not news
+    the board can give."""
+    return [
+        [pid, before, players[pid].status]
+        for pid, before in sorted(executed.arrival_status.items())
+        if pid in players and players[pid].status != before
+    ]
+
+
+def _selling_prices(
+    ledger: Observation, executed: Executed | None, effective: PipelineInputs
+) -> dict[int, int]:
+    """What each man in the effective squad sells for, for every reader but
+    the ledger.
+
+    The ledger reads the real picks, so before the deadline a signing the
+    owner entered is not in it, and every consumer would fall back to his
+    listed price — a riser sold for the whole of his rise, which the game
+    never pays. Laid over the ledger's answer here, once, at the half-the-
+    rise price his recorded purchase earns (:func:`aigaffer.ledger.selling_price`,
+    which "Transfers made" prices a resale with too). The ledger's own dict
+    is never touched, and with nothing recorded it comes back as it is.
+    """
+    if executed is None:
+        return ledger.selling_prices
+    return {
+        **ledger.selling_prices,
+        **{
+            pid: selling_price(executed.buy_prices[pid], effective.players[pid].now_cost)
+            for pid in executed.transfers_in
+            if pid in executed.buy_prices and pid in effective.players
+        },
+    }
 
 
 def _audit_line(ledger: Observation) -> str:
@@ -939,7 +1101,12 @@ def _audit_line(ledger: Observation) -> str:
 
 
 def plan_actions(
-    choice: Plan, lineup: Lineup, chip: str, players: dict[int, Player]
+    choice: Plan,
+    lineup: Lineup,
+    chip: str,
+    players: dict[int, Player],
+    *,
+    with_bench: bool = False,
 ) -> dict:
     """A decided week reduced to the actions a person enters.
 
@@ -953,8 +1120,11 @@ def plan_actions(
     are the renderer's job and would age worse than ids do. This is also the
     shape the deadline record keeps under ``solver_actions`` and the
     reminder's own decision record keeps under ``actions``.
+
+    ``with_bench`` adds the bench in substitution order, for the reminder
+    after "Transfers made" alone; every other caller's shape is unchanged.
     """
-    return {
+    actions = {
         "transfers": [
             [out, bought]
             for out, bought in zip(choice.transfers_out, choice.transfers_in)
@@ -964,6 +1134,12 @@ def plan_actions(
         "chip": chip,
         "formation": formation(lineup, players),
     }
+    if with_bench:
+        # Only the reminder after "Transfers made" asks for it: a bench he
+        # entered is part of what he entered, while an ordinary week's
+        # records never kept one and must diff as they always have.
+        actions["bench"] = lineup.bench
+    return actions
 
 
 def _stored_actions(record: dict | None) -> dict | None:
@@ -1023,7 +1199,9 @@ def diff_actions(stored: dict, fresh: dict) -> dict:
     fields — ``captain``, ``vice``, ``chip``, ``formation`` — come back as
     ``[before, after]`` pairs, and a field that is None on either side is
     skipped: an old record that never kept the formation is a record with
-    less in it, not a plan that changed shape.
+    less in it, not a plan that changed shape. ``bench`` is compared too,
+    and like the formation only when both sides kept it — which only the
+    reminder after "Transfers made" does.
 
     Decided here, once: the reminder's message and its decision record both
     read this dict, so they cannot disagree about whether the plan moved.
@@ -1036,7 +1214,7 @@ def diff_actions(stored: dict, fresh: dict) -> dict:
             diff[f"{side}_added"] = added
         if dropped := sorted(then - now):
             diff[f"{side}_dropped"] = dropped
-    for field_name in ("captain", "vice", "chip", "formation"):
+    for field_name in ("captain", "vice", "chip", "formation", "bench"):
         before, after = stored.get(field_name), fresh.get(field_name)
         if before is not None and after is not None and before != after:
             diff[field_name] = [before, after]

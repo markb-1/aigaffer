@@ -54,11 +54,14 @@ from aigaffer.executed import Executed
 from aigaffer.manager.agent import ManagerDecision
 from aigaffer.model.xp import PlayerProjection
 from aigaffer.report.render import (
+    ENTERED_ALREADY,
+    ENTERED_VERDICT,
     FRESH_SOLVE,
     GAFFER_VERDICT,
     HUMAN_JUDGES,
     NEWS_MOVED,
     NO_FULL_REPORT,
+    RECORDED_CALM,
     REMINDER_UNCHANGED,
     chip_line,
     CHIP_ENTERED,
@@ -67,6 +70,7 @@ from aigaffer.report.render import (
     working_from,
     render_chip_calendar,
     render_digest,
+    render_entered_reminder,
     render_reminder,
     render_reminder_digest,
     render_withheld,
@@ -1652,3 +1656,69 @@ def test_a_recorded_free_hit_fields_its_team_and_says_it_is_entered():
 
 def test_working_from_is_one_sentence():
     assert working_from(entered(), BOOTSTRAP_PLAYERS) == GALE_FOR_REID
+
+
+# --- the reminder after "Transfers made" -------------------------------------
+
+
+def entered_actions(**overrides) -> dict:
+    """What he entered, Gale-for-Reid: a hold with Hume's armband."""
+    shape = {
+        "transfers": [],
+        "captain": 8,
+        "vice": 13,
+        "chip": "none",
+        "formation": "3-4-3",
+        "bench": [2, 12, 6, 14],
+    }
+    shape.update(overrides)
+    return shape
+
+
+def entered_reminder(changes: dict | None = None, digest: bool = False, **fresh) -> str:
+    return render_entered_reminder(
+        EVENT, entered(), entered_actions(), entered_actions(**fresh),
+        changes or {}, BOOTSTRAP, digest=digest,
+    )
+
+
+def test_an_entered_week_that_has_not_moved_is_the_calm_alert():
+    text = entered_reminder()
+
+    assert text.startswith("# AI Gaffer — GW2 reminder")
+    assert GALE_FOR_REID in text
+    assert ENTERED_ALREADY in text and RECORDED_CALM in text
+    assert "No transfers — roll." not in text and "⚠️" not in text
+    assert "CAPTAIN Hume · VICE Moss" in text
+    assert "Bench: Byrne, Lang, Fenn, Nunes" in text
+    assert entered_reminder(digest=True) == text, "calm: the phone gets the alert itself"
+
+
+def test_a_signing_flagged_since_he_was_entered_is_news():
+    text = entered_reminder(changes={"arrivals": [[18, "a", "d"]]})
+
+    assert NEWS_MOVED in text
+    assert "- Reid (entered this week) is now doubtful — available when you entered him" in text
+    assert ENTERED_VERDICT in text and FRESH_SOLVE in text and HUMAN_JUDGES in text
+    assert text.index(ENTERED_VERDICT) < text.index(FRESH_SOLVE)
+
+
+def test_a_moved_armband_and_bench_keep_one_checklist_on_the_phone():
+    changes = {"captain": [8, 13], "bench": [[2, 12, 6, 14], [2, 6, 12, 14]]}
+
+    digest = entered_reminder(changes=changes, digest=True)
+
+    assert digest.count("⏰") == 1
+    assert "- Captain moved from Hume to Moss" in digest
+    assert "- Bench order changed from Byrne, Lang, Fenn, Nunes to Byrne, Fenn, Lang, Nunes" in digest
+    assert "state/reports/gw2-reminder.md" in digest
+
+
+def test_a_recorded_chip_reads_as_already_played_on_the_entered_checklist():
+    text = render_entered_reminder(
+        EVENT, entered(chip="wildcard"), entered_actions(chip="wildcard"),
+        entered_actions(chip="wildcard"), {}, BOOTSTRAP,
+    )
+
+    assert CHIP_ENTERED.format(chip="Wildcard") in text
+    assert "PLAY Wildcard" not in text
