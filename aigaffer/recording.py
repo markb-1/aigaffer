@@ -76,6 +76,13 @@ def compose(
     bought_before = {} if base is None else base.buy_prices
     sold_before = {} if base is None else base.sell_prices
 
+    if (
+        base is not None
+        and (decision.get("chip") or NO_CHIP) == FREE_HIT
+        and (base.transfers_in or base.transfers_out)
+    ):
+        return _free_hit_over_moves(base, verdict, real_squad, real_bank, players, now)
+
     ins = list(decision.get("transfers_in") or [])
     outs = list(decision.get("transfers_out") or [])
 
@@ -156,6 +163,53 @@ def compose(
     )
 
 
+def _free_hit_over_moves(
+    base: Executed,
+    verdict: Verdict,
+    real_squad: list[int],
+    real_bank: int,
+    players: dict[int, Player],
+    now: datetime,
+) -> Executed:
+    """A free hit played after earlier moves this gameweek.
+
+    FPL reverts a free-hit week to the *previous* deadline's squad, and that
+    undoes the week's earlier transfers too: hits refunded, bank restored, the
+    free-transfer bank left at its pre-week value. So the position is the
+    API's squad and bank with nothing locked (a hold week), and the earlier
+    signings are *dropped* — buy/sell prices and arrival flags with them — so
+    that after the deadline the ledger never seeds a purchase for a player
+    the owner did not keep. The verdicts stay, so a re-send is still a no-op
+    and the echo can still say which verdict this was.
+    """
+    decision = verdict.decision
+    freehit_squad = decision.get("freehit_squad") or None
+    freehit_xi = decision.get("freehit_xi") or None
+    arrivals = set(freehit_squad or []) - set(real_squad)
+    return Executed(
+        gw=int(decision["event"]),
+        mode=verdict.mode,
+        recorded_at=now.isoformat(),
+        transfers_in=[],
+        transfers_out=[],
+        squad_after=sorted(real_squad),
+        chip=FREE_HIT,
+        captain=int(decision["captain"]),
+        vice=int(decision["vice"]),
+        buy_prices={},
+        sell_prices={},
+        bank_after=real_bank,
+        ft_after=base.ft_before,
+        ft_before=base.ft_before,
+        verdicts=[list(p) for p in base.verdicts] + [[verdict.mode, verdict.ts]],
+        freehit_squad=freehit_squad,
+        freehit_xi=freehit_xi,
+        arrival_status={
+            pid: players[pid].status for pid in sorted(arrivals) if pid in players
+        },
+    )
+
+
 def _base(
     row: Executed | None, squad_before: list[int] | None, real_squad: list[int]
 ) -> Executed | None:
@@ -193,12 +247,38 @@ def echo(row: Executed, verdict: Verdict, players: dict[int, Player]) -> str:
     ]
     if row.chip == FREE_HIT and row.freehit_squad:
         lines.append(f"Free Hit team: {_by_position(row.freehit_squad, players)}")
+    undone = _undone_moves(row, verdict, players)
+    if undone:
+        earlier = datetime.fromisoformat(row.verdicts[-2][1]).astimezone(UTC)
+        lines.append(
+            f"Free Hit played: {earlier.strftime('%A')}'s moves ({undone})"
+            " are undone for this gameweek."
+        )
     lines.append(
         f"Bank {price(row.bank_after)}"
         f" · {plural(row.ft_after, 'free transfer')} left"
     )
     lines.append(LATER_RUNS)
     return "\n".join(lines)
+
+
+def _undone_moves(
+    row: Executed, verdict: Verdict, players: dict[int, Player]
+) -> str:
+    """The earlier moves a free hit has undone, or "" when it undid none.
+
+    The row has dropped them, but the verdict says which squad it was solved
+    from: against the row's (real) squad, the difference is what was undone.
+    """
+    before = verdict.decision.get("squad_before")
+    if row.chip != FREE_HIT or len(row.verdicts) < 2 or not before:
+        return ""
+    gone = sorted(set(before) - set(row.squad_after))  # signed earlier
+    back = sorted(set(row.squad_after) - set(before))  # sold earlier
+    return ", ".join(
+        f"{_name(out, players)} → {_name(bought, players)}"
+        for out, bought in zip(back, gone)
+    )
 
 
 def _name(pid: int, players: dict[int, Player]) -> str:
