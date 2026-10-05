@@ -71,7 +71,7 @@ from typing import TYPE_CHECKING
 
 import httpx
 
-from aigaffer.chips import HeldChip, held_by_rules, held_for, rule_gaps
+from aigaffer.chips import CHIP_ORDER, HeldChip, held_by_rules, held_for, rule_gaps
 from aigaffer.config import (
     DEADLINE_ANCHOR_HOURS,
     EARLY_SCOUT_HOUR_UTC,
@@ -1602,7 +1602,13 @@ def _warn_if_chip_rules_gap(bootstrap: Bootstrap) -> None:
     if not missing:
         return
     seen = ", ".join(unknown) if unknown else "none"
-    print(f"{CHIP_RULES_GAP} {', '.join(missing)} not offered (unknown chips: {seen})")
+    line = f"{CHIP_RULES_GAP} {', '.join(missing)} not offered (unknown chips: {seen})"
+    # None of ours mapped at all, so chip_windows has fallen back to a whole
+    # season per chip: the chips are still planned, and "not offered" alone
+    # would say the opposite.
+    if set(missing) == set(CHIP_ORDER):
+        line += " — whole-season fallback in force"
+    print(line)
 
 
 def history_pool(players: dict[int, Player], held: list[int]) -> list[int]:

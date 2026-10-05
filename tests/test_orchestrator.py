@@ -899,6 +899,21 @@ def test_a_chip_missing_from_the_rules_is_said_once(tmp_path, capsys):
     assert "chip rules: bench_boost not offered (unknown chips: benchboost)" in printed
 
 
+def test_every_chip_renamed_says_the_fallback_is_in_force(tmp_path, capsys):
+    # Nothing maps, so the planner falls back to whole-season windows and the
+    # chips stay planned: the line must not leave it at "not offered".
+    payload = copy.deepcopy(PIPELINE_BOOTSTRAP_JSON)
+    for rule in payload["chips"]:
+        rule["name"] = "new_" + rule["name"]
+    cfg = config(state_dir=tmp_path / "state")
+
+    fetch_inputs(cfg, make_client(pipeline_routes(bootstrap=payload)))
+    printed = capsys.readouterr().out
+
+    assert printed.count(orchestrator.CHIP_RULES_GAP) == 1
+    assert "whole-season fallback in force" in printed
+
+
 def test_the_live_chip_rules_say_nothing(tmp_path, capsys):
     fetch_inputs(config(state_dir=tmp_path / "state"), make_client(pipeline_routes()))
 
