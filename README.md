@@ -222,8 +222,9 @@ So the recommendation is solved over the whole six-gameweek horizon
 (`aigaffer/solver/multiweek.py`) as one mixed-integer program: a squad, an XI
 and a captain for every gameweek in the window, with the bank and the
 free-transfer count carried between them under the game's own rules — one
-free transfer a week, never more than five in hand, four points for every
-move past what is held and eight points a gameweek at the very most. Only
+free transfer a week (none in the week after a wildcard or free hit, which
+keeps the bank as it stood), never more than five in hand, four points for
+every move past what is held and eight points a gameweek at the very most. Only
 the first gameweek is ever entered, but it is chosen knowing what it is for.
 Three things follow that a single-week solver cannot reach:
 

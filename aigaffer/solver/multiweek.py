@@ -67,22 +67,27 @@ gameweek's move cap, ``+ SQUAD_SIZE·wc[1]``; the later gameweeks were never
 capped except through that same relaxed pin, so relaxing it uncaps them too.
 
 The carry is where the care goes. The game does not spend a wildcard week's
-free-transfer bank: whatever stood before the gameweek stands after it, plus
-the usual one, capped at five — ``ft[w+1] = min(5, ft[w] + 1)`` however many
-men moved. The ordinary carry reads ``ft[w+1] ≤ ft[w] − transfers[w] +
-paid[w] + 1``, and on a wildcarded gameweek ``paid[w]`` is zero, so that
-right-hand side is ``ft[w] − transfers[w] + 1`` — short of the truth by exactly
-the ``transfers[w]`` the week did not really spend. So the carry gains
-``+ z[w]``, an auxiliary standing for ``transfers[w]·wc[w]``, which adds the
-spend back precisely when the gameweek is wildcarded and not otherwise. ``z``
+free-transfer bank, and FPL's rules give the week after a wildcard (or a free
+hit) no new free transfer either: whatever stood before the gameweek stands
+after it, with no usual +1 — ``ft[w+1] = ft[w]`` however many men moved. The
+ordinary carry reads ``ft[w+1] ≤ ft[w] − transfers[w] + paid[w] + 1``, and on a
+wildcarded gameweek ``paid[w]`` is zero, so that right-hand side is
+``ft[w] − transfers[w] + 1`` — short of the truth by exactly the
+``transfers[w]`` the week did not really spend, and over it by the +1 it did not
+earn. So the carry gains ``+ z[w] − wc[w]``, ``z`` an auxiliary standing for
+``transfers[w]·wc[w]``, which adds the spend back and takes the +1 away
+precisely when the gameweek is wildcarded and not otherwise. ``z``
 is pinned from above alone, ``z ≤ transfers[w]`` and ``z ≤ SQUAD_SIZE·wc[w]``,
 and needs no floor for the same reason ``ft`` itself needs none: it appears
 only on the raise-``ft`` side of the one carry row, so the solver has every
 reason to push it to the smaller of its two ceilings and none to hold it down.
 At ``wc = 0`` that smaller ceiling is zero and the carry is the game's
 unchanged; at ``wc = 1`` it is ``transfers[w]`` and the carry becomes
-``ft[w] + 1`` — exact at both binary points, which is the whole of what the
-formulation has to be.
+``ft[w]`` — exact at both binary points, which is the whole of what the
+formulation has to be. A free-hit gameweek takes the same ``− fh[w]`` off the
+carry (it moves no one, so nothing needs adding back). Both terms are written
+only after a gameweek the chip may be played in, so a window holding neither
+chip builds the carry row it always did.
 
 **A free hit is priced beside the model, not inside it, and that is what
 makes the revert exact.** A free hit fields a whole one-week squad chosen fresh
@@ -112,7 +117,8 @@ transfers — ``moves[w] ≤ SQUAD_SIZE·(1 − fh[w])`` pins the gameweek's mov
 zero, which is the game's rule (a free hit is not a transfer window) and which is
 what carries the standing squad through untouched: ``squad[w]`` equals
 ``squad[w−1]``, the hit pin gives ``paid[w] = 0`` off zero moves, and the free-
-transfer carry is the ordinary ``min(5, ft[w] + 1)`` with nothing special added.
+transfer carry is the ordinary one, less the +1 the week after a free hit does not
+earn: ``ft[w+1] = ft[w]``.
 So the revert needs no machinery of its own — a free-hit gameweek is a hold
 gameweek as far as the squad, the bank and the free transfers are concerned. And
 it *replaces that gameweek's score*: the objective already counts
@@ -784,12 +790,15 @@ def optimize_path(
         problem += paid[w] <= moves[w] - banked[w] + big_m * (1 - owing[w])
         problem += paid[w] <= big_m * owing[w]
         if w > 1:
-            # The carry gains the wildcard add-back only after a gameweek a
-            # wildcard may be played in; otherwise the row is the pre-chip one,
-            # term for term.
+            # The carry gains the wildcard add-back, and loses the week's +1,
+            # only after a gameweek a wildcard (or free hit) may be played in:
+            # FPL's rules give no new free transfer the week after either chip.
+            # Otherwise the row is the pre-chip one, term for term.
             carry = banked[w - 1] - moves[w - 1] + paid[w - 1] + 1
             if w - 1 in z_wc:
-                carry = carry + z_wc[w - 1]
+                carry = carry + z_wc[w - 1] - on(WILDCARD, w - 1)
+            if w - 1 in y_fh:
+                carry = carry - on(FREE_HIT, w - 1)
             problem += banked[w] <= carry
 
         # At most one chip a gameweek, written only where two could clash (a

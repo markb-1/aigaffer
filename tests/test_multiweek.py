@@ -332,10 +332,11 @@ def assert_legal_path(
     holds, and the bank it leaves behind must be
     ``min(5, ft - moves + hits + 1)``.
 
-    A wildcard gameweek is the exception the game writes into both of those: its
-    transfers are all free however many it makes, so it charges no hits at all,
-    and it spends none of its free-transfer bank, so the bank carries as though
-    the gameweek had moved no one — ``min(5, ft + 1)``. The chip is read from
+    A wildcard or free-hit gameweek is the exception the game writes into both of
+    those: a wildcard's transfers are all free however many it makes, so it
+    charges no hits at all (a free hit makes none); neither spends any of the
+    free-transfer bank, and the week after either earns no new free transfer, so
+    the bank carries over exactly as it stood — ``ft``, with no +1. The chip is read from
     ``path.week1_chip`` for the opening gameweek and from each move's ``chip``
     thereafter.
 
@@ -370,9 +371,9 @@ def assert_legal_path(
         assert_legal(players, sorted(squad), cash)
 
         series.append(banked)
-        if chip == WILDCARD:
-            assert hits == 0, f"GW{event}: a wildcard charges no hits"
-            banked = min(MAX_FREE_TRANSFERS, banked + 1)
+        if chip in (WILDCARD, FREE_HIT):
+            assert hits == 0, f"GW{event}: a {chip} charges no hits"
+            # Kept at its pre-week value; the +1 for the next week is not earned.
         else:
             owed = max(0, len(incoming) - banked)
             assert hits == owed, f"GW{event}: {len(incoming)} moves on {banked} free"
@@ -1735,7 +1736,86 @@ def test_a_wildcard_week_spends_no_free_transfers_and_no_hits():
     assert plan.hits == 0
     assert path.moves == []
     banked = assert_legal_path(players, SQUAD, 0, 1, [10, 11, 12], plan, path)
-    assert banked == [1, 2, 3]
+    # FPL's rule: the week after a chip earns no free transfer, so the bank is
+    # kept at 1 through GW11 and only gains again at GW12: 1, 1, 2.
+    assert banked == [1, 1, 2]
+
+
+def _heroes_then_three_better_defenders(events):
+    """A flat current fifteen at 4.0, a full legal fifteen of heroes worth 20.0
+    every gameweek, and five defenders 31..35 worth 30.0 from the window's
+    second gameweek and nothing in its first.
+
+    The wildcard belongs in GW10 (all fifteen heroes). Buying a late defender
+    then and there in place of a starting hero would give up 20.0 in GW10 to gain
+    10.0 x (0.85 + 0.7225) = 15.7 later — a loss — though the wildcard does take
+    the ones that cost it nothing, the benched slots. Five of them is more than
+    the bench holds, so the rest arrive in GW11: three moves worth far more than
+    the four points a hit costs (the solver settles on 32, 34, 35). That is the
+    board on which the bank carried out of a wildcard week shows up as hits, which is all
+    a plan exposes of its bank.
+    """
+    rows = [
+        (pid, FLAT_POSITIONS[pid - 1], 50, {event: 4.0 for event in events})
+        for pid in range(1, 16)
+    ]
+    for pid, position in FIFTEEN_HEROES:
+        rows.append((pid, position, 50, {event: 20.0 for event in events}))
+    for pid in range(31, 36):
+        late = {events[0]: 0.0}
+        late.update({event: 30.0 for event in events[1:]})
+        rows.append((pid, DEF, 50, late))
+    return _build(rows)
+
+
+def test_the_week_after_a_wildcard_gains_no_free_transfer():
+    # Opening bank 2, the wildcard rebuild in GW10. The chip week spends nothing
+    # and the week after earns nothing, so GW11 holds 2 free transfers — not 3.
+    # Its three late defenders therefore owe exactly one 4-point hit (3 moves - 2
+    # free); under the old carry GW11 held 3 and the hit was 0. The replay in
+    # assert_legal_path holds 2 into GW10 and 2 into GW11.
+    players, projections = _heroes_then_three_better_defenders([10, 11, 12])
+
+    plan, path = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=2, events=[10, 11, 12],
+        decay=DECAY, held_chips=whole_season(WILDCARD),
+    )
+
+    assert path.week1_chip == WILDCARD
+    assert len(plan.transfers_in) == 15
+    gw11 = {move.event: move for move in path.moves}[11]
+    assert len(gw11.transfers_in) == 3
+    assert gw11.hits == 1
+    banked = assert_legal_path(players, SQUAD, 0, 2, [10, 11, 12], plan, path)
+    assert banked[:2] == [2, 2]
+
+
+def test_the_week_after_a_free_hit_gains_no_free_transfer():
+    # A free hit in the spiked GW10 makes no permanent transfer. With 2 banked,
+    # GW11 holds 2, not 3, so a GW11 three-move rebuild owes one hit. Heroes
+    # worth 8.0 in GW10 only; three late defenders worth 20.0 from GW11 on.
+    players, projections = flat_with_heroes(
+        [10, 11, 12], spike_event=10, base=4.0, hero_value=8.0
+    )
+    rows = [
+        (pid, players[pid].element_type, 50, projections[pid].per_gw)
+        for pid in players
+    ]
+    for pid in (101, 102, 103):
+        rows.append((pid, DEF, 50, {10: 0.0, 11: 20.0, 12: 20.0}))
+    players, projections = _build(rows)
+
+    plan, path = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=2, events=[10, 11, 12],
+        decay=DECAY, held_chips=whole_season(FREE_HIT),
+    )
+
+    assert path.week1_chip == FREE_HIT
+    gw11 = {move.event: move for move in path.moves}[11]
+    assert len(gw11.transfers_in) == 3
+    assert gw11.hits == 1
+    banked = assert_legal_path(players, SQUAD, 0, 2, [10, 11, 12], plan, path)
+    assert banked[:2] == [2, 2]
 
 
 def test_a_wildcard_and_a_bench_boost_cannot_share_a_gameweek():
