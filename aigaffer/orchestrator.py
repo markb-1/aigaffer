@@ -1077,19 +1077,25 @@ def _entered_actions(executed: Executed, record: dict | None) -> dict:
 def _entered_yardstick(executed: Executed, record: dict | None) -> dict:
     """The verdict he entered, solver-side: what the reminder diffs against.
 
-    A hold with his chip, and the armbands, shape and bench the *solver*
-    gave that verdict before the gaffer touched it (``solver_actions`` and
+    A hold, with the chip, armbands, shape and bench the *solver* gave that
+    verdict before the gaffer touched it (``solver_actions`` and
     ``solver_bench``) — the fresh side is a solver alone, and only solver
-    against solver can mean the news moved. A record without them (gone, or
+    against solver can mean the news moved: a solver chip the gaffer
+    overruled a day ago is not news now. A record without them (gone, or
     written before they were kept) leaves them None, and the diff skips
     what it cannot know.
+
+    The one exception is a chip he entered. It is played, and the fresh
+    side reports it whatever the solver now wants (:func:`played_chip`), so
+    it cannot move; measured against a solver "none" it would cry "Chip
+    changed" all week. Entered against entered, it never does.
     """
     solver = {} if record is None else record.get("solver_actions") or {}
     return {
         "transfers": [],
         "captain": solver.get("captain"),
         "vice": solver.get("vice"),
-        "chip": executed.chip,
+        "chip": executed.chip if executed.chip != NO_CHIP else solver.get("chip"),
         "formation": solver.get("formation"),
         "bench": None if record is None else record.get("solver_bench"),
     }

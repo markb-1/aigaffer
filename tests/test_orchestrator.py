@@ -4179,6 +4179,83 @@ def wanting_a_move(monkeypatch) -> None:
     monkeypatch.setattr(orchestrator, "solve", solve)
 
 
+def wanting_a_chip(monkeypatch, chip: str) -> None:
+    """Have every solve want to play ``chip`` this week, on its own path."""
+    real = orchestrator.solve
+
+    def solve(*args, **kwargs):
+        solved = real(*args, **kwargs)
+        assert solved.choice.path is not None, "the chip rides the plan's path"
+        path = replace(solved.choice.path, week1_chip=chip)
+        return replace(solved, choice=replace(solved.choice, path=path))
+
+    monkeypatch.setattr(orchestrator, "solve", solve)
+
+
+def test_a_solver_chip_the_gaffer_overruled_is_not_news_at_t_minus_3(
+    monkeypatch, tmp_path
+):
+    # Yesterday the solver wanted to bench boost and the gaffer said no, so
+    # he entered no chip. Today the solver, alone, still wants to: solver
+    # against solver, nothing moved. Measured against the "none" he entered
+    # it would cry "Chip changed" over a call settled at T-24h.
+    cfg, store, row = entered_week(tmp_path)
+    assert row.chip == "none"
+    read_back_as(
+        monkeypatch, store,
+        lambda record: record["solver_actions"].update(chip="bench_boost"),
+    )
+    wanting_a_chip(monkeypatch, "bench_boost")
+
+    alert = run_pipeline(cfg, make_client(pipeline_routes()), store, "reminder", send=False)
+    reminder = store.decision(2, "reminder")
+
+    assert reminder["changes"] == {}
+    assert render.RECORDED_CALM in alert
+    assert reminder["full_report_plan"]["chip"] == "none", "shown: his"
+    assert reminder["full_report_solver_plan"]["chip"] == "bench_boost", "diffed: the solver's"
+
+
+def test_a_chip_the_solver_moved_to_is_news_at_t_minus_3(monkeypatch, tmp_path):
+    # The other way about: yesterday's solver played nothing, today's wants
+    # to bench boost — the solver moved, and that is news.
+    cfg, store, _ = entered_week(tmp_path)
+    assert store.decision(2, "deadline")["solver_actions"]["chip"] == "none"
+    wanting_a_chip(monkeypatch, "bench_boost")
+
+    run_pipeline(cfg, make_client(pipeline_routes()), store, "reminder", send=False)
+
+    assert store.decision(2, "reminder")["changes"] == {"chip": ["none", "bench_boost"]}
+
+
+def test_a_chip_he_entered_over_the_solvers_none_is_not_news(monkeypatch, tmp_path):
+    # The gaffer played a wildcard the solver did not want, and he entered
+    # it. An entered chip is played: the fresh side reports it whatever the
+    # solver now wants, so it can never move, and diffing it against the
+    # solver's "none" would cry "Chip changed" every reminder that week.
+    cfg, store, row = entered_week(tmp_path)
+    store.save_executed(replace(row, chip="wildcard"))
+    assert store.decision(2, "deadline")["solver_actions"]["chip"] == "none"
+
+    run_pipeline(cfg, make_client(pipeline_routes()), store, "reminder", send=False)
+    reminder = store.decision(2, "reminder")
+
+    assert "chip" not in reminder["changes"]
+    assert reminder["actions"]["chip"] == "wildcard"
+
+
+def test_a_record_with_no_solver_side_skips_the_chip(monkeypatch, tmp_path):
+    # A record from before solver_actions were kept cannot say what the
+    # solver played, so the chip is not diffed — as with the bench.
+    cfg, store, _ = entered_week(tmp_path)
+    read_back_as(monkeypatch, store, lambda record: record.pop("solver_actions"))
+    wanting_a_chip(monkeypatch, "bench_boost")
+
+    run_pipeline(cfg, make_client(pipeline_routes()), store, "reminder", send=False)
+
+    assert "chip" not in store.decision(2, "reminder")["changes"]
+
+
 def test_a_recorded_free_hit_week_has_no_transfer_news(monkeypatch, tmp_path):
     # The fresh solve plans the standing squad, which he cannot touch in a
     # free-hit week: a move it wants is not news he can act on.
