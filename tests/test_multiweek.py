@@ -1459,12 +1459,47 @@ def test_no_free_hit_the_week_after_a_free_hit():
     assert_legal_path(players, SQUAD, 0, 0, events, plan, path)
 
 
-def test_the_free_hit_rule_adds_nothing_where_it_cannot_bind():
+def test_the_plan_may_play_the_second_free_hit_in_20_and_skip_19():
+    # The mirror board: GW20 is the lucrative week (both fifteens of heroes
+    # worth 8.0 there only) and GW19 is plain. A hit is worth 12.4 x 8.0 - 61.54 = 37.66 in GW20
+    # and the first set's hit has nothing to do in 18 or 19, so the plan plays
+    # the second-set hit in GW20 and none in 19: the row bars the pair, not the
+    # order, and not the later week.
+    events = [18, 19, 20, 21]
+    players, projections = _two_lopsided_weeks(events, 20, 20)
+    held = (HeldChip(FREE_HIT, 2, 19), HeldChip(FREE_HIT, 20, 38))
+    bars = {
+        "free_hit@19": {18: 0.0, 19: 0.0},
+        "free_hit@38": {20: 0.0, 21: 0.0},
+    }
+
+    plan, path = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=0, events=events,
+        decay=DECAY, held_chips=held, bars=bars,
+    )
+
+    played = chips_played(events, path)
+    assert played[20] == FREE_HIT
+    assert played[19] == "none"
+    assert_legal_path(players, SQUAD, 0, 0, events, plan, path)
+
+
+def test_the_free_hit_rule_adds_nothing_where_it_cannot_bind(monkeypatch):
     # Two free hits held but the window, GW10-12, lies wholly inside the first
     # set: the second set's hit has no week here, builds nothing, and no
-    # consecutive-hit row is written. So holding it changes nothing — the same
-    # objective as holding the first set's alone, and the spine gains nothing
-    # from a hit, so it is the plain do-nothing 158.31165 of the other tests.
+    # consecutive-hit row is written. Counted at the solve, the model has the
+    # same variables and rows as the one holding the first set's hit alone, and
+    # the same objective — the spine gains nothing from a hit, so it is the
+    # plain do-nothing 158.31165 of the other tests.
+    sizes: list[tuple[int, int]] = []
+    solve = multiweek.pulp.LpProblem.solve
+
+    def counted(problem, *args, **kwargs):
+        if problem.name == "aigaffer_transfer_path":
+            sizes.append((problem.numVariables(), problem.numConstraints()))
+        return solve(problem, *args, **kwargs)
+
+    monkeypatch.setattr(multiweek.pulp.LpProblem, "solve", counted)
     events = [10, 11, 12]
     players, projections = spine(events)
 
@@ -1478,6 +1513,7 @@ def test_the_free_hit_rule_adds_nothing_where_it_cannot_bind():
         decay=DECAY, held_chips=(HeldChip(FREE_HIT, 2, 19),),
     )
 
+    assert sizes[0] == sizes[1]
     assert both.objective == pytest.approx(plain.objective, abs=1e-4)
     assert both.objective == pytest.approx(158.31165, abs=1e-4)
 
