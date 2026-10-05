@@ -53,6 +53,7 @@ from aigaffer.solver.optimizer import (
 )
 
 if TYPE_CHECKING:  # the manager imports this module, so never the reverse
+    from aigaffer.executed import Executed
     from aigaffer.solver.calendar import ChipCalendar
     from aigaffer.manager.agent import ManagerDecision
     from aigaffer.solver.multiweek import PlannedMove
@@ -686,6 +687,29 @@ def chip_label(chip: str) -> str:
     briefing is a chip nobody can match between the two documents.
     """
     return chip.replace("_", " ").title()
+
+
+def entered_moves(executed: "Executed", players: dict[int, Player]) -> str:
+    """What the owner entered this gameweek, as one clause.
+
+    ``Grant → Reyes``, ``no transfers``, ``Dodd → Kelly, Grant → Reyes``.
+    The pairing is presentational, as it is on the checklist: both lists are
+    sorted, so which sale funded which signing means nothing. A wildcard is
+    counted rather than listed — fifteen arrows is not a clause — and any
+    other chip follows the moves. Shared by the inbox's echo, the reports'
+    "working from" line and the briefing, so all three say it one way.
+    """
+    if executed.chip == WILDCARD:
+        count = plural(len(executed.transfers_in), "transfer")
+        return f"{chip_label(WILDCARD)} played ({count})"
+    pairs = [
+        f"{_who(out, players)} → {_who(bought, players)}"
+        for out, bought in zip(executed.transfers_out, executed.transfers_in)
+    ]
+    moves = ", ".join(pairs) if pairs else "no transfers"
+    if executed.chip != NO_CHIP:
+        moves += f"; {chip_label(executed.chip)} played"
+    return moves
 
 
 def played_chip(choice: Plan, gaffer: "ManagerDecision | None") -> str:
