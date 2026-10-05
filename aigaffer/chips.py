@@ -118,13 +118,33 @@ def held_chips(
     inside it, and closed once ``event`` is past its stop_event. History we
     cannot place — a chip we do not plan, an entry with no gameweek — marks
     nothing: it is somebody else's payload, and guessing would cost a chip.
+
+    The rules also bar a free hit the gameweek after a free hit (the official
+    2026/27 wording: use the first in GW19 and you cannot play the second in
+    GW20). The two sets meet only at that boundary, but it is stated for any
+    gameweek: a still-held free hit whose window opens the week after one the
+    history shows played is held with its window opening a week later. Its id,
+    keyed by stop_event, does not change, so everything downstream — the MILP's
+    eligible weeks, the calendar, ``held_for`` and so the gaffer's belt and the
+    briefing panel — sees the later start and nothing else needs to know.
     """
     played = [
         (_FROM_API.get(str(entry.get("name", "")).strip().lower()), entry.get("event"))
         for entry in chips_used
     ]
+    free_hit_events = {
+        played_at
+        for chip, played_at in played
+        if chip == FREE_HIT and isinstance(played_at, int)
+    }
     held = [
-        HeldChip(window.chip, window.start_event, window.stop_event)
+        HeldChip(
+            window.chip,
+            window.start_event + 1
+            if window.chip == FREE_HIT and window.start_event - 1 in free_hit_events
+            else window.start_event,
+            window.stop_event,
+        )
         for window in windows
         if window.stop_event >= event
         and not any(

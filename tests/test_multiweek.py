@@ -1412,6 +1412,76 @@ def test_each_half_plays_only_inside_its_own_window():
     assert_legal_path(players, SQUAD, 0, 1, events, plan, path)
 
 
+def _two_lopsided_weeks(events, week_a, week_b):
+    """The spine in every gameweek, plus two fifteens of heroes worth 8.0: the
+    first only in ``week_a``, the second only in ``week_b`` (nothing elsewhere)."""
+    rows = [
+        (pid, position, 50, {event: points for event in events})
+        for pid, position, points in SPINE
+    ]
+    for pid, position in FIFTEEN_HEROES:
+        rows.append((pid, position, 50, {e: 8.0 if e == week_a else 0.0 for e in events}))
+    for pid, position in FIFTEEN_HEROES_B:
+        rows.append((pid, position, 50, {e: 8.0 if e == week_b else 0.0 for e in events}))
+    return _build(rows)
+
+
+def test_no_free_hit_the_week_after_a_free_hit():
+    # GW18-21 holding both free hits: the first set's (window to 19) and the
+    # second's (from 20). Heroes A are worth 8.0 only in GW19 and heroes B only
+    # in GW20, so on the board alone each free hit wants its own lopsided
+    # week — GW19 and GW20, back to back, which the official rule forbids.
+    # A free hit is worth 12.4 x 8.0 - 61.54 = 37.66 in either week, undecayed;
+    # GW19 sits second in the window (decay 0.85) and GW20 third (0.7225), so
+    # the plan takes the GW19 hit and cannot also take GW20. The other hit has
+    # no lopsided week left (GW18 and GW21 are the plain spine, a gain of
+    # nothing), so it is never worth a play there.
+    events = [18, 19, 20, 21]
+    players, projections = _two_lopsided_weeks(events, 19, 20)
+    held = (HeldChip(FREE_HIT, 2, 19), HeldChip(FREE_HIT, 20, 38))
+    bars = {
+        "free_hit@19": {18: 0.0, 19: 0.0},
+        "free_hit@38": {20: 0.0, 21: 0.0},
+    }
+
+    plan, path = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=0, events=events,
+        decay=DECAY, held_chips=held, bars=bars,
+    )
+
+    played = chips_played(events, path)
+    hits = [event for event, chip in played.items() if chip == FREE_HIT]
+    assert 19 in hits
+    assert 20 not in hits
+    assert not any(b == a + 1 for a in hits for b in hits)
+    assert sum(1 for event in hits if event <= 19) <= 1
+    assert sum(1 for event in hits if event >= 20) <= 1
+    assert_legal_path(players, SQUAD, 0, 0, events, plan, path)
+
+
+def test_the_free_hit_rule_adds_nothing_where_it_cannot_bind():
+    # Two free hits held but the window, GW10-12, lies wholly inside the first
+    # set: the second set's hit has no week here, builds nothing, and no
+    # consecutive-hit row is written. So holding it changes nothing — the same
+    # objective as holding the first set's alone, and the spine gains nothing
+    # from a hit, so it is the plain do-nothing 158.31165 of the other tests.
+    events = [10, 11, 12]
+    players, projections = spine(events)
+
+    both, _ = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=events,
+        decay=DECAY,
+        held_chips=(HeldChip(FREE_HIT, 2, 19), HeldChip(FREE_HIT, 20, 38)),
+    )
+    plain, _ = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=events,
+        decay=DECAY, held_chips=(HeldChip(FREE_HIT, 2, 19),),
+    )
+
+    assert both.objective == pytest.approx(plain.objective, abs=1e-4)
+    assert both.objective == pytest.approx(158.31165, abs=1e-4)
+
+
 def test_a_chip_whose_window_misses_the_window_gets_no_variables(monkeypatch):
     # A second-set triple captain seen from GW6-8: in hand, but no week of this
     # window may play it, so it builds nothing — no binary, no auxiliary, no

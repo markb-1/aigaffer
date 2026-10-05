@@ -847,6 +847,24 @@ def optimize_path(
         if len(play[chip.id]) > 1:
             problem += pulp.lpSum(play[chip.id].values()) <= 1
 
+    # No free hit the gameweek after a free hit — the official rule (use the
+    # first in GW19 and the second may not follow in GW20). ``held_chips``
+    # already opens a second-set window a week late when the history shows the
+    # first played just before it; this is the same rule for the plan's own
+    # plays, where both free hits are still in hand. Windows of one kind never
+    # overlap, so only the earlier-window chip can come first, but both orders
+    # are written so the rule does not lean on that. Rows exist only where
+    # they can bind: two free hits held, each with a week beside the other's
+    # in consecutive gameweeks. Anything else builds the model it always did.
+    free_hits = [chip for chip in held if chip.chip == FREE_HIT]
+    for first in free_hits:
+        for second in free_hits:
+            if first.id == second.id:
+                continue
+            for w in play[first.id]:
+                if w + 1 in play[second.id] and events[w] == events[w - 1] + 1:
+                    problem += play[first.id][w] + play[second.id][w + 1] <= 1
+
     if forced_first_transfers is None:
         # The opening cap, lifted for a wildcarded first gameweek: fifteen is the
         # most any gameweek can move, so the term uncaps it without unbounding it.

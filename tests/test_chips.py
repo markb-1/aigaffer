@@ -161,3 +161,40 @@ def test_a_new_chip_beside_all_of_ours_is_no_gap():
     # A chip we do not plan, with our four all present, costs the plan nothing.
     extra = LIVE_RULES + [ChipRule(name="assistant_manager", start_event=1, stop_event=38)]
     assert rule_gaps(extra) == ((), ())
+
+
+# --------------------------------------------------------------------------
+# No free hit the week after a free hit
+# --------------------------------------------------------------------------
+
+
+def test_a_free_hit_at_19_holds_the_second_sets_free_hit_back_to_21():
+    # The official rule: a first-set free hit in GW19 bars the second set's in
+    # GW20. The first set's is spent, so only the second remains, its window
+    # opening at 20 + 1 = 21 instead of 20. Its id is unchanged.
+    held = held_chips(WINDOWS, [{"name": "freehit", "event": 19}], 20)
+
+    free_hits = [chip for chip in held if chip.chip == FREE_HIT]
+    assert free_hits == [HeldChip(FREE_HIT, 21, 38)]
+    assert free_hits[0].id == "free_hit@38"
+    assert held_for(held, FREE_HIT, 20) is None
+    assert held_for(held, FREE_HIT, 21) == free_hits[0]
+
+
+def test_a_free_hit_at_18_leaves_the_second_sets_free_hit_alone():
+    # 18 + 1 = 19 is not where the second set opens, so nothing shifts.
+    held = held_chips(WINDOWS, [{"name": "freehit", "event": 18}], 20)
+
+    assert [c for c in held if c.chip == FREE_HIT] == [HeldChip(FREE_HIT, 20, 38)]
+
+
+def test_other_chips_played_at_19_shift_nothing():
+    history = [
+        {"name": "bboost", "event": 19},
+        {"name": "wildcard", "event": 19},
+        {"name": "3xc", "event": 19},
+    ]
+    held = held_chips(WINDOWS, history, 20)
+
+    assert HeldChip(FREE_HIT, 20, 38) in held
+    assert held_for(held, FREE_HIT, 20) is not None
