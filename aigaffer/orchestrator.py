@@ -71,7 +71,7 @@ from typing import TYPE_CHECKING
 
 import httpx
 
-from aigaffer.chips import HeldChip, held_by_rules, held_for
+from aigaffer.chips import HeldChip, held_by_rules, held_for, rule_gaps
 from aigaffer.config import (
     DEADLINE_ANCHOR_HOURS,
     EARLY_SCOUT_HOUR_UTC,
@@ -248,6 +248,12 @@ CHIP_SPENT = "chip not held for this gameweek"
 # the fallback bars; this is how the log says so. A class name follows it,
 # never the exception's own words.
 CALENDAR_FAILED = "chip calendar failed"
+
+# The line a run prints when the bootstrap's chip rules leave out a chip we
+# plan. Trusted either way — an unlisted chip is never planned — but a rename
+# on FPL's side looks exactly like a dropped chip, so the log names both what
+# went missing and what arrived unrecognised (see :func:`~aigaffer.chips.rule_gaps`).
+CHIP_RULES_GAP = "chip rules:"
 
 # A manager with no squad has the whole board and the opening budget: fifteen
 # moves from nothing, £100.0m to make them with, and no hit for any of them.
@@ -991,6 +997,7 @@ def fetch_inputs(cfg: Config, client: FplClient) -> PipelineInputs:
     if event is None:
         raise PipelineError("the API has no gameweek ahead")
     _warn_if_cost_changes_missing(bootstrap)
+    _warn_if_chip_rules_gap(bootstrap)
 
     players = {player.id: player for player in bootstrap.elements}
     squad = _current_squad(client, cfg.team_id, bootstrap)
@@ -1580,6 +1587,22 @@ def _warn_if_cost_changes_missing(bootstrap: Bootstrap) -> None:
         return
     if all(player.cost_change_start == 0 for player in bootstrap.elements):
         print(COST_CHANGES_MISSING)
+
+
+def _warn_if_chip_rules_gap(bootstrap: Bootstrap) -> None:
+    """Say so, once a run, if the chip rules leave out a chip we plan.
+
+    The same kind of payload watch as :func:`_warn_if_cost_changes_missing`:
+    the rules are believed — a chip they do not list is not planned — but a
+    renamed chip would otherwise leave the plan without a word, and the fix
+    is one line in :data:`~aigaffer.chips.CHIP_API_NAMES` once somebody
+    notices. This is how they notice.
+    """
+    missing, unknown = rule_gaps(bootstrap.chips)
+    if not missing:
+        return
+    seen = ", ".join(unknown) if unknown else "none"
+    print(f"{CHIP_RULES_GAP} {', '.join(missing)} not offered (unknown chips: {seen})")
 
 
 def history_pool(players: dict[int, Player], held: list[int]) -> list[int]:

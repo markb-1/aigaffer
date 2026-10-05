@@ -883,6 +883,28 @@ def test_a_deep_season_where_no_price_ever_moved_reads_as_a_missing_field(
     assert printed.count("cost_change_start") == 1
 
 
+def test_a_chip_missing_from_the_rules_is_said_once(tmp_path, capsys):
+    # A rename on FPL's side would drop the chip from the plan without a word:
+    # the run names what is missing and what it did not recognise, once.
+    payload = copy.deepcopy(PIPELINE_BOOTSTRAP_JSON)
+    for rule in payload["chips"]:
+        if rule["name"] == "bboost":
+            rule["name"] = "benchboost"
+    cfg = config(state_dir=tmp_path / "state")
+
+    fetch_inputs(cfg, make_client(pipeline_routes(bootstrap=payload)))
+    printed = capsys.readouterr().out
+
+    assert printed.count(orchestrator.CHIP_RULES_GAP) == 1
+    assert "chip rules: bench_boost not offered (unknown chips: benchboost)" in printed
+
+
+def test_the_live_chip_rules_say_nothing(tmp_path, capsys):
+    fetch_inputs(config(state_dir=tmp_path / "state"), make_client(pipeline_routes()))
+
+    assert orchestrator.CHIP_RULES_GAP not in capsys.readouterr().out
+
+
 def test_a_single_price_that_moved_proves_the_field_alive(tmp_path, capsys):
     payload = deep_season_bootstrap()
     payload["elements"][0]["cost_change_start"] = 2

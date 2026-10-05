@@ -13,6 +13,7 @@ from aigaffer.chips import (
     held_chips,
     held_for,
     playable_in,
+    rule_gaps,
     whole_season,
 )
 from aigaffer.data.models import Bootstrap, ChipRule
@@ -127,3 +128,36 @@ def test_the_bootstrap_reads_its_chips_and_defaults_to_none():
     assert Bootstrap.model_validate(payload).chips == []
     payload["chips"] = [{"name": "bboost", "start_event": 1, "stop_event": 19, "id": 3, "number": 1, "chip_type": "team"}]
     assert Bootstrap.model_validate(payload).chips == [ChipRule(name="bboost", start_event=1, stop_event=19)]
+
+
+def test_the_live_rules_leave_no_gap():
+    assert rule_gaps(LIVE_RULES) == ((), ())
+
+
+def test_no_rules_at_all_is_the_fallback_not_a_gap():
+    # A payload recorded before the field was read: chip_windows falls back to
+    # whole-season windows, which is a known model, not a chip gone missing.
+    assert rule_gaps([]) == ((), ())
+
+
+def test_a_renamed_chip_reads_as_ours_missing_and_theirs_unknown():
+    # The case worth shouting about: FPL renames bboost and our map no longer
+    # matches, so the bench boost silently leaves the plan. Both halves of the
+    # evidence are named, since neither alone says "renamed".
+    renamed = [
+        ChipRule(name="benchboost" if rule.name == "bboost" else rule.name,
+                 start_event=rule.start_event, stop_event=rule.stop_event)
+        for rule in LIVE_RULES
+    ]
+    assert rule_gaps(renamed) == ((BENCH_BOOST,), ("benchboost",))
+
+
+def test_a_chip_the_game_stopped_offering_is_missing_with_nothing_unknown():
+    dropped = [rule for rule in LIVE_RULES if rule.name != "freehit"]
+    assert rule_gaps(dropped) == ((FREE_HIT,), ())
+
+
+def test_a_new_chip_beside_all_of_ours_is_no_gap():
+    # A chip we do not plan, with our four all present, costs the plan nothing.
+    extra = LIVE_RULES + [ChipRule(name="assistant_manager", start_event=1, stop_event=38)]
+    assert rule_gaps(extra) == ((), ())

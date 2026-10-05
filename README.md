@@ -296,7 +296,11 @@ so (`aigaffer/chips.py` reads its `chips` list), and the bot holds each chip
 *per half*: a chip played in the first half does not spend the second-half
 one, and two of a kind can be held at once. The one cross-chip rule is one
 chip a gameweek. `AIGAFFER_CHIPS=off` (and draft mode) holds no chips at all,
-so the solver is the pre-chip model, byte for byte.
+so the solver is the pre-chip model, byte for byte. The rules are trusted: a
+chip they do not list is not planned. Since a chip FPL renamed would look
+exactly like one it dropped, a run whose rules leave out one of the four says
+so on stdout — `chip rules: bench_boost not offered (unknown chips: …)` —
+and the fix for a rename is one line in `CHIP_API_NAMES`.
 
 A chip is free to play, so a model with nothing pulling the other way would
 burn every chip it holds in the best week of the window, however ordinary

@@ -86,6 +86,29 @@ def chip_windows(rules: list[ChipRule]) -> tuple[ChipWindow, ...]:
     return tuple(ChipWindow(chip, FIRST_GW, LAST_GW) for chip in CHIP_ORDER)
 
 
+def rule_gaps(rules: list[ChipRule]) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Our chips the rules leave out, and API chip names we do not know.
+
+    :func:`chip_windows` trusts the rules: a chip they do not list is a chip
+    the game does not offer, and it is never planned. That is right when FPL
+    drops a chip and silently wrong when FPL renames one — ``bboost`` becoming
+    something else would read exactly like a season with no bench boost. The
+    payload cannot tell the two apart, so this only names the evidence for
+    the run to say out loud: which of ours went missing, and which names
+    arrived that the map does not know (a rename shows up as one of each).
+
+    No rules at all is :func:`chip_windows`' fallback, not a gap, and a new
+    chip beside all four of ours costs the plan nothing — both are silent.
+    """
+    if not rules:
+        return (), ()
+    listed = {rule.name for rule in rules}
+    missing = tuple(chip for chip in CHIP_ORDER if CHIP_API_NAMES[chip] not in listed)
+    if not missing:
+        return (), ()
+    return missing, tuple(sorted(listed - set(_FROM_API)))
+
+
 def held_chips(
     windows: tuple[ChipWindow, ...], chips_used: list[dict], event: int
 ) -> tuple[HeldChip, ...]:
