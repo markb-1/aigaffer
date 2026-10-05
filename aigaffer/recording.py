@@ -47,6 +47,10 @@ MODE_NAMES = {"early": "early scout", "scout": "scout", "deadline": "deadline"}
 
 RECORDED = "Recorded for GW{gw} (from {day}'s {mode} verdict):"
 LATER_RUNS = "Later runs this gameweek work from this squad."
+REPLACED = (
+    "This verdict was worked out from the API's squad, so the moves you"
+    " recorded earlier are no longer on record."
+)
 
 # A wildcard or a free hit leaves the free transfers where they were: FPL
 # banks them through either chip.
@@ -237,12 +241,23 @@ def _base(
     raise StaleVerdict("the verdict was solved from a squad nobody recorded")
 
 
-def echo(row: Executed, verdict: Verdict, players: dict[int, Player]) -> str:
+def echo(
+    row: Executed,
+    verdict: Verdict,
+    players: dict[int, Player],
+    replaced: bool = False,
+) -> str:
     """The reply: the whole new position, so a mismatch shows on the phone.
 
     Which verdict it matches (by weekday and report), the moves and the
     armbands, the fifteen by position — and the free-hit team beside it on
     a free-hit week — then the money and the free transfers left.
+
+    ``replaced`` says the verdict was solved from the API's squad over a row
+    already on record — the other scheduler raced the row — so the row was
+    replaced and its earlier moves are gone from the record. The squad
+    echoed is then short of moves he made, and the reply must say why
+    rather than leave him to spot it.
     """
     day = datetime.fromisoformat(verdict.ts).astimezone(UTC).strftime("%A")
     mode = MODE_NAMES.get(verdict.mode, verdict.mode)
@@ -262,6 +277,8 @@ def echo(row: Executed, verdict: Verdict, players: dict[int, Player]) -> str:
             f"Free Hit played: {earlier.strftime('%A')}'s moves ({undone})"
             " are undone for this gameweek."
         )
+    if replaced:
+        lines.append(REPLACED)
     lines.append(
         f"Bank {price(row.bank_after)}"
         f" · {plural(row.ft_after, 'free transfer')} left"
@@ -321,6 +338,15 @@ STALE = (
     " neither the API's nor the one on record. Wait for the next report, enter"
     " it, and text again."
 )
+# FPL never lets the bank go below zero, so a verdict that would is one that
+# no longer adds up at today's prices — a riser since the report — and not
+# what he entered. Clamping would invent money; recording it would solve
+# every later run from a position the game cannot hold.
+NEGATIVE_BANK = (
+    "Not recorded: GW{gw}'s latest verdict leaves your bank negative at"
+    " today's prices (−{short}). Enter the next report's moves instead, and"
+    " text again."
+)
 PUBLISH_MESSAGE = "chore: record transfers made (inbox)"
 
 
@@ -349,7 +375,9 @@ def record_transfers_made(
     one for the gameweek before is a text about a gameweek that has closed.
 
     The sales are priced by the ledger read in memory (``persist=False``):
-    recording writes the row and nothing else.
+    recording writes the row and nothing else. A position whose bank comes
+    out negative at those prices is refused with a reply and never written
+    (see ``NEGATIVE_BANK``); the row on record, if any, stands.
     """
     event = bootstrap.next_event()
     if event is None:
@@ -374,8 +402,23 @@ def record_transfers_made(
         return Outcome(STALE.format(gw=event.id), False)
     if new is row:
         return Outcome(echo(row, verdict, players), False)
+    if new.bank_after < 0:
+        return Outcome(
+            NEGATIVE_BANK.format(gw=event.id, short=price(-new.bank_after)), False
+        )
     store.save_executed(new)
-    return Outcome(echo(new, verdict, players), True)
+    return Outcome(echo(new, verdict, players, replaced=_replaced(row, new)), True)
+
+
+def _replaced(row: Executed | None, new: Executed) -> bool:
+    """Whether ``new`` replaced a row on record rather than building on it.
+
+    A composed row carries the old row's verdicts with the new one on the
+    end; a replacing one starts again from the API's squad with only its
+    own. (A row whose own squad is the API's always composes — :func:`_base`
+    tries the row first — so a replace only ever drops real moves.)
+    """
+    return row is not None and new.verdicts[:-1] != row.verdicts
 
 
 def transfers_made(

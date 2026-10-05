@@ -33,7 +33,9 @@ from aigaffer.executed import StaleVerdict, Verdict
 from aigaffer.orchestrator import run_pipeline
 from aigaffer.recording import (
     CLOSED,
+    NEGATIVE_BANK,
     NOTHING_YET,
+    REPLACED,
     STALE,
     VERDICT_MODES,
     Outcome,
@@ -492,6 +494,105 @@ def test_a_re_send_changes_nothing_and_echoes_again(tmp_path):
     assert once.changed is True and twice.changed is False
     assert twice.reply == once.reply
     assert store.executed(2).ft_after == 0, "one free transfer spent once"
+
+
+# Dodd (£4.0m) for Reyes (£9.5m) off the API's squad: 28 + 40 - 95 = -27,
+# £2.7m short at today's prices.
+OVERSPENT = {"transfers_in": [17], "transfers_out": [4]}
+
+
+def test_a_verdict_that_leaves_the_bank_negative_is_not_recorded(tmp_path):
+    # FPL never lets a bank go below zero, so a negative one means the
+    # verdict no longer adds up at today's prices (a riser since the report):
+    # whatever he entered, it was not this. Clamping to zero would invent
+    # money; recording it would solve every later run from an impossible
+    # position. He is told, and nothing is written.
+    store = Store(tmp_path / "aigaffer.db")
+    run_at(store, 2, "deadline", DEADLINE_TS, verdict(**OVERSPENT).decision)
+
+    outcome = record_transfers_made(store, BOOTSTRAP, SQUAD, [], LATER, NOW)
+
+    assert outcome == Outcome(NEGATIVE_BANK.format(gw=2, short="£2.7m"), False)
+    assert "−£2.7m" in outcome.reply
+    assert store.executed(2) is None
+    assert not store.executed_dir.exists(), "nothing written at all"
+
+
+def test_a_composed_verdict_that_overspends_leaves_the_row_as_it_was(tmp_path):
+    # Tuesday's Grant-for-Reyes left £0.8m; Thursday's Dodd (£4.0m) for Sarr
+    # (£6.0m) off that squad would leave 8 + 40 - 60 = -12, £1.2m short.
+    store = Store(tmp_path / "aigaffer.db")
+    tuesday = first()
+    store.save_executed(tuesday)
+    run_at(
+        store, 2, "deadline", DEADLINE_TS,
+        verdict(
+            transfers_in=[18], transfers_out=[4], free_transfers=0,
+            squad_before=tuesday.squad_after,
+        ).decision,
+    )
+
+    outcome = record_transfers_made(store, BOOTSTRAP, SQUAD, [], LATER, NOW)
+
+    assert outcome == Outcome(NEGATIVE_BANK.format(gw=2, short="£1.2m"), False)
+    assert store.executed(2) == tuesday
+
+
+def test_a_refused_overspend_is_never_pushed(tmp_path):
+    cfg = config(state_dir=tmp_path / "state")
+    store = Store(cfg.state_dir / "aigaffer.db")
+    run_at(store, 2, "deadline", DEADLINE_TS, verdict(**OVERSPENT).decision)
+    lock = tmp_path / "inbox" / "state.lock"
+    sync = FakeSync(lock)
+
+    reply = transfers_made(
+        cfg, make_client(pipeline_routes()), sync, lock, sent_at=LATER, now=NOW
+    )
+
+    assert reply == NEGATIVE_BANK.format(gw=2, short="£2.7m")
+    assert sync.calls == [("pull", True)], "pulled, then nothing to publish"
+
+
+def test_a_verdict_that_replaced_the_row_says_the_earlier_moves_are_gone(tmp_path):
+    # Tuesday's Grant-for-Reyes is on record; Thursday's verdict was solved
+    # from the API's squad (the other scheduler had not seen the row), so it
+    # replaces the row and Tuesday's moves are no longer on record. Said so,
+    # because the squad he sees echoed is missing a move he made.
+    store = Store(tmp_path / "aigaffer.db")
+    store.save_executed(first())
+    run_at(
+        store, 2, "deadline", DEADLINE_TS,
+        verdict(transfers_in=[18], transfers_out=[8]).decision,
+    )
+
+    outcome = record_transfers_made(store, BOOTSTRAP, SQUAD, [], LATER, NOW)
+
+    row = store.executed(2)
+    assert outcome.changed is True
+    assert row.verdicts == [["deadline", DEADLINE_TS]], "replaced, not composed"
+    assert outcome.reply == echo(row, verdict(), PLAYERS, replaced=True)
+    lines = outcome.reply.splitlines()
+    assert REPLACED in lines
+    assert lines.index(REPLACED) == lines.index("Bank £1.8m · 0 free transfers left") - 1
+
+
+def test_a_first_recording_and_a_composed_one_say_nothing_of_replacing(tmp_path):
+    store = Store(tmp_path / "aigaffer.db")
+    run_at(store, 2, "scout", SCOUT_TS, verdict("scout", SCOUT_TS).decision)
+    first_reply = record_transfers_made(store, BOOTSTRAP, SQUAD, [], LATER, NOW).reply
+    run_at(
+        store, 2, "deadline", DEADLINE_TS,
+        verdict(
+            transfers_in=[10], transfers_out=[4], free_transfers=0,
+            squad_before=first().squad_after,
+        ).decision,
+    )
+
+    composed = record_transfers_made(store, BOOTSTRAP, SQUAD, [], LATER, NOW)
+
+    assert len(store.executed(2).verdicts) == 2, "composed onto Tuesday's row"
+    assert first_reply == echo(first(), verdict("scout", SCOUT_TS), PLAYERS)
+    assert REPLACED not in first_reply and REPLACED not in composed.reply
 
 
 def held(path) -> bool:
