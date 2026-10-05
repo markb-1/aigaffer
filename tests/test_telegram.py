@@ -23,7 +23,7 @@ import json
 import httpx
 import pytest
 
-from aigaffer.report.telegram import _utf16_len, send_report
+from aigaffer.report.telegram import _utf16_len, get_updates, send_message, send_report
 
 TOKEN = "123456:fake-bot-token"
 CHAT_ID = "42"
@@ -233,3 +233,80 @@ def test_a_rate_limited_chunk_is_not_resent_into_the_limiter():
 def test_non_200_raises():
     with pytest.raises(httpx.HTTPStatusError):
         send("Hello, gaffer.", status=500)
+
+
+# --- reading -----------------------------------------------------------------
+#
+# The inbox polls once a minute and must never hang a systemd tick: the
+# request asks for messages only (no edits, no channel posts) and for an
+# answer now (timeout 0), and confirms everything before ``offset``.
+
+GET_UPDATES_URL = f"https://api.telegram.org/bot{TOKEN}/getUpdates"
+
+
+def polled(
+    status: int = 200, result: list[dict] | None = None, offset: int | None = None
+) -> tuple[list[httpx.Request], list[dict]]:
+    """Poll through a mock transport; return the requests and the updates."""
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(
+            status, json={"ok": status == 200, "result": result or []}
+        )
+
+    http = httpx.Client(transport=httpx.MockTransport(handler))
+    return seen, get_updates(TOKEN, offset, http=http)
+
+
+def test_get_updates_asks_for_messages_only_and_never_waits():
+    seen, _ = polled(offset=11)
+
+    assert len(seen) == 1
+    assert str(seen[0].url) == GET_UPDATES_URL
+    assert json.loads(seen[0].content) == {
+        "offset": 11,
+        "timeout": 0,
+        "allowed_updates": ["message"],
+    }
+
+
+def test_get_updates_with_no_offset_sends_none():
+    seen, _ = polled(offset=None)
+
+    assert "offset" not in json.loads(seen[0].content)
+
+
+def test_get_updates_hands_back_the_result_list():
+    update = {"update_id": 7, "message": {"chat": {"id": 42}, "text": "help", "date": 1}}
+
+    _, updates = polled(result=[update])
+
+    assert updates == [update]
+
+
+def test_get_updates_raises_on_a_refusal():
+    # A 409 is what Telegram says when a webhook is set; the inbox treats any
+    # status error as "unreachable this minute".
+    with pytest.raises(httpx.HTTPStatusError):
+        polled(status=409)
+
+
+def test_send_message_is_the_report_path_escaped():
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"ok": True})
+
+    http = httpx.Client(transport=httpx.MockTransport(handler))
+    send_message(TOKEN, CHAT_ID, "Bank <£0.5m> & 1 free transfer", http=http)
+
+    assert payloads(seen) == [
+        {
+            "chat_id": CHAT_ID,
+            "text": "Bank &lt;£0.5m&gt; &amp; 1 free transfer",
+            "parse_mode": "HTML",
+        }
+    ]

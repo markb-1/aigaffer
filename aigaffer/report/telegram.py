@@ -32,6 +32,10 @@ report that arrives truncated is still more use than one that never comes.
 The token is part of the URL Telegram publishes for its API, so it travels in
 every request line and comes back inside any ``httpx`` error. That is httpx's
 to say; this module never puts it anywhere else.
+
+The bot also reads. :func:`get_updates` is the VM inbox's one-minute poll
+(``python -m aigaffer inbox``), and :func:`send_message` is how it answers; the
+GitHub workflow never calls either.
 """
 
 from collections.abc import Iterator
@@ -66,6 +70,41 @@ def send_report(
         if response.status_code == 400:
             response = client.post(url, json={"chat_id": chat_id, "text": plain})
         response.raise_for_status()
+
+
+def get_updates(
+    token: str, offset: int | None, http: httpx.Client | None = None
+) -> list[dict]:
+    """The messages waiting for the bot, oldest first, from ``offset`` on.
+
+    ``offset`` is one past the last update already handled: Telegram forgets
+    everything before it, which is how the inbox confirms what it has done.
+    None asks for everything still held (about a day's worth). Messages only
+    — an edit to an old message is not a new instruction — and ``timeout``
+    0, because a systemd tick that long-polls is a tick that overlaps the
+    next one. Raises ``httpx.HTTPStatusError`` on any refusal; the caller
+    reads that as "unreachable this minute" and says nothing more, because
+    the error text carries the token in its URL.
+    """
+    client = http or httpx.Client(timeout=30.0)
+    payload: dict = {"timeout": 0, "allowed_updates": ["message"]}
+    if offset is not None:
+        payload["offset"] = offset
+    response = client.post(f"{BASE_URL}/bot{token}/getUpdates", json=payload)
+    response.raise_for_status()
+    return list(response.json().get("result", []))
+
+
+def send_message(
+    token: str, chat_id: str, text: str, http: httpx.Client | None = None
+) -> None:
+    """A reply to the owner, sent the way a report is.
+
+    The inbox's replies are short, but they carry names and arrows and the
+    odd ``<``, so they go through exactly the chunking, escaping and plain
+    fallback :func:`send_report` already proves — one path, not two.
+    """
+    send_report(token, chat_id, text, http=http)
 
 
 def _utf16_len(text: str) -> int:
