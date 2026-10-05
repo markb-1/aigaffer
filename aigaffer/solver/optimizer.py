@@ -106,7 +106,8 @@ class Week1Lock:
     back a player he has just sold — that is re-recommending, or reversing,
     a decision already in the app. ``keep`` are the signings, ``shun`` the
     sales, and ``hold`` is a recorded free-hit week, whose standing squad
-    makes no transfers at all. Week 1 only: from week 2 the window is as free
+    makes no transfers at all. ``free`` is a recorded wildcard, which covers
+    the whole gameweek: further changes are uncapped and cost no hit. Week 1 only: from week 2 the window is as free
     as ever, and a signing who has since been ruled out is the report's to
     say in words, never the lock's to undo. Empty, it adds nothing to a
     model, so a run with nothing recorded is the model it always was.
@@ -115,6 +116,7 @@ class Week1Lock:
     keep: frozenset[int] = frozenset()
     shun: frozenset[int] = frozenset()
     hold: bool = False
+    free: bool = False
 
 
 def projected_points(xp: dict[int, PlayerProjection], player_id: int) -> float:
@@ -238,12 +240,19 @@ def optimize(
     )
     problem += pulp.lpSum(starting[p] for p in by_position[FORWARD]) >= MIN_XI_FORWARDS
 
+    free_week = lock is not None and lock.free
     if forced_transfers is None:
-        problem += transfers <= max(MAX_TRANSFERS, free_transfers)
+        problem += transfers <= (
+            SQUAD_SIZE if free_week else max(MAX_TRANSFERS, free_transfers)
+        )
     else:
         problem += transfers == forced_transfers
-    problem += hits >= transfers - free_transfers
-    problem += hits <= MAX_HITS
+    if free_week:
+        # A recorded wildcard: nothing this week is a hit.
+        problem += hits == 0
+    else:
+        problem += hits >= transfers - free_transfers
+        problem += hits <= MAX_HITS
 
     status = problem.solve(SOLVER)
     if pulp.LpStatus[status] != "Optimal":

@@ -425,7 +425,9 @@ def optimize_path(
 
     ``lock`` is the owner's recorded week
     (:class:`~aigaffer.solver.optimizer.Week1Lock`): in the first gameweek a
-    kept signing has its sale pinned to zero and a recorded sale its purchase.
+    kept signing has its sale pinned to zero and a recorded sale its purchase,
+    and a recorded wildcard (``lock.free``) makes the week free and uncapped,
+    with no new free transfer after it.
     Later gameweeks are untouched, and so are the free-hit prices, which are
     what-ifs.
 
@@ -608,6 +610,8 @@ def optimize_path(
     # integer without being told to.
     cash = {w: problem.add_variable(f"bank{w}", lowBound=0) for w in weeks}
     moves = {w: pulp.lpSum(buy[w][p] for p in pool) for w in weeks}
+    # A wildcard the owner has already recorded makes week 1 free and uncapped.
+    week1_free = lock is not None and lock.free
 
     # Chips: one binary per held chip per window week inside its window — two
     # of a kind can be held (each half's), so everything here is keyed by the
@@ -794,6 +798,11 @@ def optimize_path(
         if w in z_wc:
             floor = floor - SQUAD_SIZE * on(WILDCARD, w)
             problem += paid[w] <= MAX_HITS * (1 - on(WILDCARD, w))
+        if w == 1 and week1_free:
+            # A recorded wildcard is on for the whole gameweek: what
+            # ``on(WILDCARD, 1) = 1`` does, minus the bar nobody has to clear.
+            floor = floor - SQUAD_SIZE
+            problem += paid[1] == 0
         problem += paid[w] >= floor
         problem += paid[w] <= moves[w] - banked[w] + big_m * (1 - owing[w])
         problem += paid[w] <= big_m * owing[w]
@@ -803,7 +812,11 @@ def optimize_path(
             # FPL's rules give no new free transfer the week after either chip.
             # Otherwise the row is the pre-chip one, term for term.
             carry = banked[w - 1] - moves[w - 1] + paid[w - 1] + 1
-            if w - 1 in z_wc:
+            if w == 2 and week1_free:
+                # The recorded wildcard's add-back and no +1: the carry is
+                # the bank it found, whatever it moved.
+                carry = carry + moves[1] - 1
+            elif w - 1 in z_wc:
                 carry = carry + z_wc[w - 1] - on(WILDCARD, w - 1)
             if w - 1 in y_fh:
                 carry = carry - on(FREE_HIT, w - 1)
@@ -895,7 +908,9 @@ def optimize_path(
         # The opening cap, lifted for a wildcarded first gameweek: fifteen is the
         # most any gameweek can move, so the term uncaps it without unbounding it.
         cap = max(MAX_TRANSFERS, opening_bank)
-        if 1 in z_wc:
+        if week1_free:
+            problem += moves[1] <= cap + SQUAD_SIZE
+        elif 1 in z_wc:
             problem += moves[1] <= cap + SQUAD_SIZE * on(WILDCARD, 1)
         else:
             problem += moves[1] <= cap

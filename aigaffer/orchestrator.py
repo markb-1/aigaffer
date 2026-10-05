@@ -71,7 +71,14 @@ from typing import TYPE_CHECKING
 
 import httpx
 
-from aigaffer.chips import CHIP_ORDER, HeldChip, held_by_rules, held_for, rule_gaps
+from aigaffer.chips import (
+    CHIP_ORDER,
+    WILDCARD,
+    HeldChip,
+    held_by_rules,
+    held_for,
+    rule_gaps,
+)
 from aigaffer.config import (
     DEADLINE_ANCHOR_HOURS,
     EARLY_SCOUT_HOUR_UTC,
@@ -1810,6 +1817,7 @@ def _week1_lock(inputs: PipelineInputs) -> Week1Lock | None:
         keep=frozenset(executed.transfers_in),
         shun=frozenset(executed.transfers_out),
         hold=executed.chip == FREE_HIT,
+        free=executed.chip == WILDCARD,
     )
 
 

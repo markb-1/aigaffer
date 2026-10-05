@@ -2986,3 +2986,66 @@ def test_an_empty_lock_is_no_lock():
 
     assert none[0].objective == empty[0].objective
     assert none[0].transfers_in == empty[0].transfers_in == [8]
+
+
+# A recorded wildcard covers the whole gameweek: what is left of it is free and
+# uncapped, and the week after it earns no new free transfer.
+#
+# six_arrivals with opening=20: six men worth 20 a week against the five
+# midfielders (5.6-6.0) and the forward (3.9) they replace. Unlocked, one free
+# transfer and the three-move cap buy three of them and a two-hit penalty; with
+# the wildcard recorded all six come in, no hit.
+
+
+def test_a_recorded_wildcard_week_is_free_and_uncapped():
+    players, projections = six_arrivals([5, 6], opening=20.0)
+
+    plan, _ = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1,
+        events=[5, 6], decay=DECAY, lock=Week1Lock(free=True),
+    )
+
+    assert sorted(plan.transfers_in) == [16, 17, 18, 19, 20, 21]
+    assert plan.hits == 0
+
+
+# blooming(2): 16 and 17 are worth 20 from week 2 only. With week 1 held to no
+# moves, the bank is 1. Unlocked it carries to 2 in week 2 (1 + the week's +1),
+# so both arrivals are free; after a recorded wildcard it carries as 1, so the
+# second arrival costs a hit: objective 150.124 - 4 = 146.124.
+
+
+def test_the_week_after_a_recorded_wildcard_gains_no_free_transfer():
+    players, projections = blooming([5, 6], 2)
+
+    free, free_path = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1,
+        events=[5, 6], decay=DECAY, forced_first_transfers=0,
+    )
+    after, after_path = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1,
+        events=[5, 6], decay=DECAY, forced_first_transfers=0,
+        lock=Week1Lock(free=True),
+    )
+
+    assert free_path.moves[0].hits == 0 and free.objective == pytest.approx(150.124)
+    assert after_path.moves[0].transfers_in == [16, 17]
+    assert after_path.moves[0].hits == 1
+    assert after.objective == pytest.approx(146.124)
+
+
+def test_a_lock_without_free_is_byte_identical_to_none():
+    players, projections = six_arrivals([5, 6], opening=20.0)
+
+    none = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1,
+        events=[5, 6], decay=DECAY,
+    )
+    plain = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1,
+        events=[5, 6], decay=DECAY, lock=Week1Lock(keep=frozenset({99})),
+    )
+
+    assert none[0].transfers_in == plain[0].transfers_in
+    assert none[0].hits == plain[0].hits == 2
+    assert none[0].objective == plain[0].objective

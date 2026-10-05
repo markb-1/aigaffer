@@ -49,6 +49,7 @@ from aigaffer.orchestrator import (
     _calendar,
     _fielded_lineup,
     _held,
+    _week1_lock,
     _stored_actions,
     build_projections,
     decide_mode,
@@ -3578,3 +3579,25 @@ def test_a_recorded_signing_outside_the_cut_still_gets_a_history(monkeypatch, tm
     assert 18 not in without.histories
     assert 18 in with_row.histories
     assert with_row.executed is None, "the fetch is still the API's truth"
+
+
+def test_week1_lock_reads_the_recorded_week_off_the_inputs(seam):
+    from aigaffer.solver.optimizer import Week1Lock
+    from tests.fixtures import make_executed
+
+    def lock(**fields):
+        return _week1_lock(replace(seam.inputs, executed=make_executed(**fields)))
+
+    assert _week1_lock(replace(seam.inputs, executed=None)) is None
+    assert lock(transfers_in=[17, 18], transfers_out=[6]) == Week1Lock(
+        keep=frozenset({17, 18}), shun=frozenset({6}), hold=False, free=False
+    )
+    assert lock(chip="free_hit") == Week1Lock(
+        keep=frozenset({17}), shun=frozenset({6}), hold=True, free=False
+    )
+    assert lock(chip="wildcard") == Week1Lock(
+        keep=frozenset({17}), shun=frozenset({6}), hold=False, free=True
+    )
+    assert lock(chip="bench_boost") == Week1Lock(
+        keep=frozenset({17}), shun=frozenset({6}), hold=False, free=False
+    )

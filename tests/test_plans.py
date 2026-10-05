@@ -17,7 +17,7 @@ from aigaffer.solver import plans as plans_module
 from aigaffer.solver.multiweek import PlannedMove, PlannedPath
 from aigaffer.solver.optimizer import Plan, Week1Lock
 from aigaffer.solver.plans import SWEEP_TIME_LIMIT, generate_plans, recommend
-from tests.test_multiweek import DECAY, SQUAD as SPINE_SQUAD, spine
+from tests.test_multiweek import DECAY, SQUAD as SPINE_SQUAD, six_arrivals, spine
 
 SQUAD = list(range(1, 16))
 PLAYERS = {"players": "stand-in"}
@@ -661,3 +661,17 @@ def test_the_single_week_fallback_holds_too():
     )
 
     assert len(held) == 1 and held[0].transfers_in == []
+
+
+def test_a_recorded_wildcard_week_is_free_in_both_engines():
+    players, projections = six_arrivals([5, 6], opening=20.0)
+
+    for planner in ("multi", "single"):
+        plans = generate_plans(
+            players, projections, SPINE_SQUAD, 0, 1,
+            projections_events=[5, 6], decay=DECAY, planner=planner,
+            lock=Week1Lock(free=True),
+        )
+        best = recommend(plans)
+        assert best.hits == 0, planner
+        assert len(best.transfers_in) == 3, planner  # the sweep stops at three

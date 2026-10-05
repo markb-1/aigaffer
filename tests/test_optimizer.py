@@ -503,3 +503,25 @@ def test_an_empty_lock_changes_nothing():
 
     assert plan.transfers_in == [16] and plan.transfers_out == [12]
     assert plan.objective == pytest.approx(356.5)
+
+
+# A recorded wildcard week: six_arrivals(opening=20) is a board worth six moves.
+# Unlocked, three moves and two hits (177.4625 on the decayed total); free, all
+# six and no hit.
+
+
+def test_a_recorded_wildcard_lifts_the_cap_and_the_hits_in_the_single_week_solver():
+    from tests.test_multiweek import SQUAD as BOARD, six_arrivals
+
+    players, projections = six_arrivals([5, 6], opening=20.0)
+
+    plain = optimize(players, projections, BOARD, bank=0, free_transfers=1)
+    free = optimize(
+        players, projections, BOARD, bank=0, free_transfers=1,
+        lock=Week1Lock(free=True),
+    )
+
+    assert len(plain.transfers_in) == 3 and plain.hits == 2
+    assert sorted(free.transfers_in) == [16, 17, 18, 19, 20, 21]
+    assert free.hits == 0
+    assert free.objective > plain.objective
