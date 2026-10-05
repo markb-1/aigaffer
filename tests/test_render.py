@@ -42,6 +42,13 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from aigaffer.chips import (
+    BENCH_BOOST,
+    FREE_HIT,
+    TRIPLE_CAPTAIN,
+    WILDCARD,
+    HeldChip,
+)
 from aigaffer.data.models import Bootstrap, Event, Player, Standing
 from aigaffer.manager.agent import ManagerDecision
 from aigaffer.model.xp import PlayerProjection
@@ -52,11 +59,19 @@ from aigaffer.report.render import (
     NEWS_MOVED,
     NO_FULL_REPORT,
     REMINDER_UNCHANGED,
+    chip_line,
+    render_chip_calendar,
     render_digest,
     render_reminder,
     render_reminder_digest,
     render_withheld,
     render_report,
+)
+from aigaffer.solver.calendar import (
+    CalendarEntry,
+    ChipCalendar,
+    calendar_chips,
+    fallback_calendar,
 )
 from aigaffer.solver.lineup import ChipEvs, Lineup
 from aigaffer.solver.multiweek import PlannedMove, PlannedPath
@@ -1389,10 +1404,6 @@ def test_a_stored_plan_the_board_has_never_heard_of_still_renders():
 
 
 def test_the_calendar_section_names_each_chips_week_bar_and_expiry():
-    from aigaffer.chips import BENCH_BOOST, TRIPLE_CAPTAIN, WILDCARD, HeldChip
-    from aigaffer.report.render import render_chip_calendar
-    from aigaffer.solver.calendar import CalendarEntry, ChipCalendar
-
     cal = ChipCalendar(
         entries=(
             CalendarEntry(HeldChip(TRIPLE_CAPTAIN, 1, 19), 15, 10.2, {6: 7.8}),
@@ -1411,38 +1422,16 @@ def test_the_calendar_section_names_each_chips_week_bar_and_expiry():
 
 
 def test_a_fallen_back_calendar_says_it_is_unavailable():
-    from aigaffer.chips import TRIPLE_CAPTAIN, HeldChip
-    from aigaffer.report.render import render_chip_calendar
-    from aigaffer.solver.calendar import fallback_calendar
-
     cal = fallback_calendar((HeldChip(TRIPLE_CAPTAIN, 1, 19),), [6, 7, 8, 9, 10, 11])
     assert "calendar unavailable" in render_chip_calendar(cal, 6)
 
 
 def test_a_calendar_with_no_entries_renders_no_section():
-    from aigaffer.report.render import render_chip_calendar
-    from aigaffer.solver.calendar import ChipCalendar
-
     empty = ChipCalendar(entries=(), discount=0.97, proxy_scale={}, horizon_end=19)
     assert render_chip_calendar(empty, 6) is None
 
 
 # --- the chip calendar in the report, and one line of it on the phone -------
-
-from aigaffer.chips import (  # noqa: E402
-    BENCH_BOOST,
-    FREE_HIT,
-    TRIPLE_CAPTAIN,
-    WILDCARD,
-    HeldChip,
-)
-from aigaffer.report.render import chip_line  # noqa: E402
-from aigaffer.solver.calendar import (  # noqa: E402
-    CalendarEntry,
-    ChipCalendar,
-    calendar_chips,
-    fallback_calendar,
-)
 
 TC = CalendarEntry(HeldChip(TRIPLE_CAPTAIN, 1, 19), 15, 10.0, {6: 7.0})
 BB = CalendarEntry(HeldChip(BENCH_BOOST, 1, 19), 17, 9.0, {6: 6.0})
@@ -1475,6 +1464,18 @@ def test_the_chip_line_follows_the_gaffers_chip_not_the_solvers():
     plan = plan_with_path(week1_chip=TRIPLE_CAPTAIN, moves=[])
     assert "BB now" in chip_line(CAL, plan, BENCH_BOOST, 6)
     assert "TC GW15" in chip_line(CAL, plan, BENCH_BOOST, 6)
+
+
+def test_a_chip_the_gaffer_plays_now_shows_only_now_though_the_path_plans_it_later():
+    # His bench boost goes in this week; the solver's path, drawn for a week
+    # without it, had the boost in GW9. The line follows the week actually
+    # played — "now" — and never also names the week the path had in mind.
+    plan = plan_with_path(moves=[PlannedMove(9, [], [], 0, chip=BENCH_BOOST)])
+    line = chip_line(CAL, plan, BENCH_BOOST, 6)
+
+    assert "BB now" in line
+    assert "GW9" not in line
+    assert line == "Chips: TC GW15 · BB now · FH — · WC — · expire GW19"
 
 
 def test_no_calendar_no_line_and_a_fallback_says_so():
@@ -1515,6 +1516,21 @@ def test_the_digest_carries_the_chip_line_under_the_standing_line():
 
 def test_a_digest_without_a_calendar_has_no_chip_line():
     assert "Chips:" not in digest(view=gaffer(), standing=STANDING)
+
+
+def test_the_reminder_digest_carries_no_chip_line():
+    # Three hours out the phone gets the checklist and whether the news moved
+    # it; the chip calendar was the morning's to show. Calm or changed, and
+    # with a chip on the plan, no Chips: line.
+    stored = actions(chip=BENCH_BOOST)
+    calm = reminder_digest(stored=stored, standing=STANDING, free_transfers=1)
+    changed = reminder_digest(
+        stored=stored, changes={"sells_added": [7]}, standing=STANDING,
+        free_transfers=1,
+    )
+
+    assert "Chips:" not in calm
+    assert "Chips:" not in changed
 
 
 def test_the_full_report_carries_the_calendar_after_the_chip_panel():

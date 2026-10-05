@@ -545,6 +545,14 @@ def test_the_chip_switch_off_is_phase_2_5_to_the_byte(tmp_path):
     # the switch on and no chip left in hand — every window the rules hand out
     # closed before this gameweek. Nothing held is the pre-chip model, however
     # it came about.
+    #
+    # Near-tautological at this level, and kept as the end-to-end smoke for
+    # the switch: both runs hand the window an empty ``held_chips``, so of
+    # course they agree. The guarantee that empty chips build the pre-chip
+    # MILP to the byte is pinned where the model is built, in
+    # tests/test_multiweek.py: test_no_chips_available_is_byte_for_byte_the_old_solve,
+    # test_a_chip_whose_window_misses_the_window_gets_no_variables and
+    # test_generate_plans_with_no_held_chips_is_the_pre_calendar_shortlist.
     off = Store(tmp_path / "off.db")
     closed = [{**rule, "start_event": 1, "stop_event": 1} for rule in HALVES[:4]]
 

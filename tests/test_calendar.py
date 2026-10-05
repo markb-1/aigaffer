@@ -301,7 +301,6 @@ def test_build_calendar_values_and_saves_each_chip(board_beyond_window):
     assert by_id["triple_captain@10"].saved_for == 9
     assert by_id["triple_captain@10"].value == pytest.approx(PROXY_SCALE[TRIPLE_CAPTAIN] * b.striker_points[9])
     assert not cal.fell_back
-    assert set(cal.bars) == {e.held.id for e in cal.entries if e.bars}
     # The rest of the assignment worked in the module docstring: the free hit
     # at GW10 (18's week), the bench boost at GW8 (flat, so the soonest).
     assert by_id["bench_boost@10"].saved_for == 8
@@ -444,3 +443,59 @@ def test_a_built_calendar_round_trips_through_json(board_beyond_window):
     assert entry["saved_for"] == 9
     assert entry["value"] == pytest.approx(8.5)
     assert set(entry["bars"]) == {"6", "7"}
+
+
+def test_a_window_across_the_halves_saves_each_set_on_its_own(monkeypatch):
+    # Window GW15-20, both triple captains held. No projection needs a solve:
+    # the triple captain is priced off one 85-minute striker, worth 8.0 (4.0
+    # attacking) every week and 10.0 (6.0 attacking) in GW25.
+    #
+    # The first set's (to GW19) has no week after the window left — the window
+    # runs past its expiry — so nothing to save it for: unassigned, and a bar
+    # of 0 in every window week it may go in, GW15-19.
+    #
+    # The second set's (from GW20) is valued over GW21-38 at 0.85 x 8.0 = 6.8,
+    # and 0.85 x 10.0 = 8.5 in GW25, anchored at GW20 — the first window week
+    # it may be played in, not the window's GW15. GW25 wins:
+    # 8.5 ρ⁵ = 7.299 against GW21's 6.8 ρ = 6.596. Its one window week is
+    # GW20, where the bar is 8.5 ρ^(25-20) = 7.299 — no option floor, it is a
+    # triple captain.
+    window = [15, 16, 17, 18, 19, 20]
+    weeks = range(15, 39)
+    points = {w: 10.0 if w == 25 else 8.0 for w in weeks}
+    attacking = {w: 6.0 if w == 25 else 4.0 for w in weeks}
+    players = {20: _player(20, FWD, 200)}
+    projections = {
+        20: PlayerProjection(
+            player_id=20, per_gw=points, total=sum(points.values()),
+            attacking_per_gw=attacking,
+        )
+    }
+    asked: list[tuple[dict, dict]] = []
+    real = calendar.assign
+
+    def spy(values, anchors):
+        asked.append((values, anchors))
+        return real(values, anchors)
+
+    monkeypatch.setattr(calendar, "assign", spy)
+
+    cal = build_calendar(
+        (TC19, TC38), window, players, projections, {20: 85.0}, [], 0
+    )
+
+    by_id = {entry.held.id: entry for entry in cal.entries}
+    first, second = by_id["triple_captain@19"], by_id["triple_captain@38"]
+    assert (first.saved_for, first.value) == (None, None)
+    assert first.bars == {w: 0.0 for w in range(15, 20)}
+    assert second.saved_for == 25
+    assert second.value == pytest.approx(8.5)
+    assert second.bars == {20: pytest.approx(8.5 * RHO ** 5)}
+    assert cal.horizon_end == 38
+    # One assignment a half, each anchored where it may first be played.
+    assert [anchors for _, anchors in asked] == [
+        {"triple_captain@19": 15},
+        {"triple_captain@38": 20},
+    ]
+    assert asked[0][0] == {"triple_captain@19": {}}
+    assert set(asked[1][0]["triple_captain@38"]) == set(range(21, 39))

@@ -55,7 +55,8 @@ from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
-from aigaffer.data.models import Bootstrap, Event, Pick, Player, Squad
+from aigaffer.chips import held_by_rules
+from aigaffer.data.models import Bootstrap, ChipRule, Event, Pick, Player, Squad
 from aigaffer.manager.briefing import (
     EARLY_SEASON_GWS,
     EARLY_SEASON_NOTE,
@@ -648,6 +649,33 @@ def test_a_chip_already_played_is_priced_and_marked_gone():
         "- Wildcard: +12.0 xP over 6 GWs (horizon)",
     ]
     assert "not held this gameweek" in section(played, "Chip EV")[-1], "and a guardrail"
+
+
+def test_a_next_set_chip_is_marked_not_held_though_nothing_spent_it():
+    # The live halves, and the first set's bench boost played in GW1. The
+    # second set's is in hand — unspent, the rules hand it out from the start
+    # of the season — but not playable until GW20, so at GW2 the panel marks
+    # the boost exactly as it marks a spent chip: it is not his to play this
+    # gameweek, whatever it is priced at.
+    inputs = pipeline_inputs(chips_used=[{"name": "bboost", "event": 1}])
+    inputs.bootstrap = BOOTSTRAP.model_copy(
+        update={
+            "chips": [
+                ChipRule(name=name, start_event=start, stop_event=stop)
+                for name in ("bboost", "3xc", "freehit", "wildcard")
+                for start, stop in ((1, 19), (20, 38))
+            ]
+        }
+    )
+
+    assert "bench_boost@38" in [chip.id for chip in held_by_rules(inputs)]
+    assert bullets(briefing(inputs=inputs), "Chip EV") == [
+        "- Bench boost: +3.2 (not held this gameweek)",
+        "- Triple captain: +8.4",
+        "- Free hit: -1.5",
+        "- Wildcard: +12.0 xP over 6 GWs (horizon)",
+    ]
+    assert "not held this gameweek" in section(briefing(inputs=inputs), "Chip EV")[-1]
 
 
 def test_a_panel_with_nothing_played_says_nothing_about_it():

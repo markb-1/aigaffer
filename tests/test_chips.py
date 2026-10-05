@@ -1,5 +1,7 @@
 """Which chips are in hand, and when each may be played."""
 
+import pytest
+
 from aigaffer.chips import (
     BENCH_BOOST,
     FREE_HIT,
@@ -50,6 +52,38 @@ def test_a_chip_played_in_the_first_half_spends_only_the_first_half_one():
     held = held_chips(WINDOWS, [{"name": "bboost", "event": 7}], 8)
     assert "bench_boost@19" not in ids(held)
     assert "bench_boost@38" in ids(held)
+
+
+def test_a_chip_played_in_the_second_half_spends_only_the_second_half_one():
+    # Asked from GW6, where both windows are open, so the only thing that can
+    # tell them apart is which one the GW25 play falls inside.
+    held = held_chips(WINDOWS, [{"name": "bboost", "event": 25}], 6)
+    assert "bench_boost@19" in ids(held)
+    assert "bench_boost@38" not in ids(held)
+
+
+@pytest.mark.parametrize(
+    ("played_at", "spent", "kept"),
+    [
+        (19, HeldChip(BENCH_BOOST, 1, 19), HeldChip(BENCH_BOOST, 20, 38)),
+        (20, HeldChip(BENCH_BOOST, 20, 38), HeldChip(BENCH_BOOST, 1, 19)),
+    ],
+)
+def test_a_play_on_the_boundary_spends_the_set_whose_window_holds_it(
+    played_at, spent, kept
+):
+    # GW19 is the first set's last week and GW20 the second's first: a play
+    # on either edge spends exactly the window it is inside, never both.
+    held = held_chips(WINDOWS, [{"name": "bboost", "event": played_at}], 6)
+    assert spent not in held
+    assert kept in held
+
+
+@pytest.mark.parametrize("event", ["7", 7.0, None])
+def test_a_play_with_no_whole_gameweek_marks_nothing(event):
+    # A gameweek that is not an int — a string, a float, missing — cannot be
+    # placed in a window, and guessing would cost a chip.
+    assert len(held_chips(WINDOWS, [{"name": "bboost", "event": event}], 6)) == 8
 
 
 def test_a_closed_window_is_dropped():

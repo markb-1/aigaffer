@@ -1055,9 +1055,10 @@ def test_a_bench_boost_between_the_old_and_new_bar_is_held():
     assert plan.objective == pytest.approx(91.76, abs=1e-4)
 
 
-# The bench boost/triple captain reservation is 12.0 undecayed points: a chip
-# is planned only where its marginal beats that bar, and held otherwise. The
-# boards below straddle it on purpose.
+# With no calendar bars the solver reads its fallback bars — 20.0 undecayed
+# points for the bench boost and 18.0 for the triple captain: a chip is planned
+# only where its marginal beats its bar, and held otherwise. The boards below
+# straddle it on purpose.
 FLAT_POSITIONS = (
     [GK, GK] + [DEF] * 5 + [MID] * 5 + [FWD] * 3
 )
@@ -1081,7 +1082,7 @@ def flat(events: list[int], value: float) -> tuple[dict, dict]:
 def test_bench_boost_below_its_bar_is_held():
     # Two weeks at 3.0 a man: the four-man bench is
     # worth 12.0, boosted 0.9 x 12.0 = 10.8, which does not clear the 20.0
-    # reservation. So the chip is held — not played in any week — and the
+    # fallback bar. So the chip is held — not played in any week — and the
     # objective is exactly the no-bench-boost solve: 12.4 x 3.0 = 37.2 a week,
     # discounted 1 + 0.85 = 1.85, is 68.82.
     players, projections = flat([10, 11], 3.0)
@@ -1103,9 +1104,9 @@ def test_bench_boost_below_its_bar_is_held():
 
 def test_bench_boost_above_its_bar_is_played():
     # The threshold-crossing case past the raised bar, hand-computed. A flat
-    # board at 6.0 a man in two eligible weeks: the bench is worth 24.0, boosted
-    # 0.9 x 24.0 = 21.6, which clears the 20.0 bar by 1.6. It is played in GW10,
-    # the window's first eligible week, where the decay bites least; the
+    # board at 6.0 a man over two weeks: the bench is worth 24.0, boosted
+    # 0.9 x 24.0 = 21.6, which clears the 20.0 fallback bar by 1.6. It is played
+    # in GW10, the window's opening week, where the decay bites least; the
     # objective gains decay^0 x (0.9 x 24.0 - 20.0) = 1.6 over the do-nothing
     # 12.4 x 6.0 x 1.85 = 137.64: 139.24. The bench pays in full only for the
     # objective's ranking; weekly_xp shows the fifteen's 66 + 6 armband + 24
@@ -1126,8 +1127,8 @@ def test_bench_boost_above_its_bar_is_played():
 
 
 def test_triple_captain_below_its_bar_is_held():
-    # The spine over two eligible weeks, whose captain (12) is worth 6.0: a third
-    # of the 18.0 reservation, so the extra armband a triple captain buys is not
+    # The spine over two weeks, whose captain (12) is worth 6.0: a third of the
+    # 18.0 fallback bar, so the extra armband a triple captain buys is not
     # worth the chip. It is held, and the objective is the plain two-gameweek
     # do-nothing 113.849.
     players, projections = spine([10, 11])
@@ -1557,14 +1558,14 @@ def _rebuild_and_arrivals(
 
 def test_a_wildcard_rebuilds_the_whole_squad_in_one_week():
     # Seven men worth 20.0 straight away — five midfielders and two forwards —
-    # and a squad on the spine, one free transfer, one eligible gameweek. Without
+    # and a squad on the spine, one free transfer, a one-gameweek window. Without
     # a chip the opening gameweek moves at most three; the wildcard makes every
     # transfer free and lifts the cap, so all seven arrive at once for no hit.
     #
     # The XI is 1 | 3 4 5 | 16 17 18 19 20 | 21 22: 5.0 + (4.4 + 4.3 + 4.2) +
     # 100.0 + 40.0 = 157.9 started, 20.0 for the captain, and a bench of
     # 2 6 7 13 worth 0.5 + 0.5 + 0.5 + 4.1 = 5.6 at a tenth, 0.56. The week
-    # scores 157.9 + 20.0 + 0.56 = 178.46; the wildcard's 35.0 reservation comes
+    # scores 157.9 + 20.0 + 0.56 = 178.46; the wildcard's 35.0 fallback bar comes
     # off, and seven bought cost seven hundredths of the churn tiebreak:
     # 178.46 - 35.0 - 0.07 = 143.39.
     players, projections = seven_arrivals([10])
@@ -1611,7 +1612,7 @@ def test_a_wildcard_uncaps_the_gameweek():
 
 def test_a_wildcard_week_spends_no_free_transfers_and_no_hits():
     # The carry across a wildcard gameweek, pinned. The rebuild lands in GW10 —
-    # the earliest eligible week, where the horizon's decay bites least — takes
+    # the window's opening week, where the horizon's decay bites least — takes
     # all seven for no hit, and leaves the two later gameweeks with nothing to
     # do. A normal seven-move gameweek would empty the bank; a wildcard spends
     # none of it, so the bank carries as though no one moved: 1 into GW10, then
@@ -1715,7 +1716,7 @@ def test_a_rebuild_worth_less_than_the_bar_holds_the_wildcard():
 
 
 def test_a_wildcard_in_hand_but_unused_matches_the_plain_solve():
-    # The byte-for-byte guarantee at the wildcard's own reservation. The spine has
+    # The byte-for-byte guarantee at the wildcard's own fallback bar. The spine has
     # nothing worth buying, so a wildcard buys nothing and is held; the objective
     # is exactly the do-nothing solve, whether the chip is offered or withheld.
     players, projections = spine([10, 11, 12])
@@ -1784,7 +1785,7 @@ def flat_with_heroes(
     fifteen of heroes worth ``hero_value`` in ``spike_event`` alone.
 
     Chosen so a free hit is worth playing but a capped punt is not: eleven heroes
-    together clear the reservation, while the two a gameweek's hit ceiling allows
+    together clear its fallback bar, while the two a gameweek's hit ceiling allows
     gain less per man than the four points a hit costs, so the no-free-hit solve
     leaves the squad alone and the revert is clean to read.
     """
@@ -1838,9 +1839,9 @@ def test_the_free_hit_xi_is_a_legal_fifteen_drawn_from_the_pool():
 
 
 def test_free_hit_fields_a_temp_squad_that_reverts():
-    # The whole point of the chip, hand-computed and its revert pinned, in
-    # eligible weeks. The current fifteen is flat at 4.0 in every gameweek; GW10
-    # is lopsided — fifteen heroes worth 8.0 there and nothing after — and GW11,
+    # The whole point of the chip, hand-computed and its revert pinned. The
+    # current fifteen is flat at 4.0 in every gameweek; GW10 is lopsided —
+    # fifteen heroes worth 8.0 there and nothing after — and GW11,
     # GW12 are the ordinary 4.0. A free hit fields all fifteen heroes in GW10 for
     # nothing and reverts, which no run of capped transfers can match: two paid
     # heroes gain 2 x (8.0 - 4.0) = 8.0 for their two hits (8 points) and would
@@ -1848,7 +1849,7 @@ def test_free_hit_fields_a_temp_squad_that_reverts():
     #
     # The best one-week squad in GW10 is fifteen heroes: an XI of 11 x 8.0 =
     # 88.0, the armband 8.0 and four benched at a tenth (3.2), 99.2. As a free
-    # hit that is 99.2 less the 25.0 reservation: 74.2 — far past any capped
+    # hit that is 99.2 less the 25.0 fallback bar: 74.2 — far past any capped
     # punt of the same heroes, so the chip is played. GW11 and GW12 are the
     # do-nothing 12.4 x 4.0 = 49.6. Undiscounted GW10, then 0.85 and 0.7225:
     # 74.2 + 0.85 x 49.6 + 0.7225 x 49.6 = 152.196.
@@ -1897,8 +1898,8 @@ def test_free_hit_fields_a_temp_squad_that_reverts():
 def test_a_played_chip_that_is_not_a_free_hit_surfaces_no_temp_squad():
     # The free-hit fields are None on every other opening chip: a bench boost is
     # played on the team as it stands, so there is no temporary eleven to field.
-    # A flat board at 6.0 in eligible weeks plays the boost in GW10 (0.9 x 24.0 =
-    # 21.6, over the 20.0 bar) and holds the free hit, whose best one-week squad
+    # A flat board at 6.0 in both weeks plays the boost in GW10 (0.9 x 24.0 =
+    # 21.6, over the 20.0 fallback bar) and holds the free hit, whose best one-week squad
     # is the board itself and gains nothing.
     players, projections = flat([10, 11], 6.0)
 
@@ -1913,7 +1914,7 @@ def test_a_played_chip_that_is_not_a_free_hit_surfaces_no_temp_squad():
 
 
 def test_a_free_hit_below_its_bar_is_held():
-    # The reservation brake. Heroes worth 6.4 in GW10 against a spine topping
+    # The fallback bar as a brake. Heroes worth 6.4 in GW10 against a spine topping
     # out at 6.0: the best one-week squad is 12.4 x 6.4 = 79.36, a gain of
     # 79.36 - 61.54 = 17.82 over the do-nothing week, which is under the raised
     # 25.0 bar. So the chip is held and the week is the plain 61.54 do-nothing.
@@ -1935,7 +1936,7 @@ def test_a_free_hit_below_its_bar_is_held():
 
 
 def test_a_free_hit_in_hand_but_unused_matches_the_plain_solve():
-    # The byte-for-byte guarantee at free hit's own reservation. The spine has
+    # The byte-for-byte guarantee at the free hit's own fallback bar. The spine has
     # nothing worth signing, so the best one-week squad is the spine itself and a
     # free hit gains exactly nothing over holding — it is held, and the objective
     # is the do-nothing solve whether the chip is offered or withheld.
@@ -1957,10 +1958,10 @@ def test_a_free_hit_in_hand_but_unused_matches_the_plain_solve():
 
 
 def test_a_free_hit_is_played_at_most_once_across_the_horizon():
-    # Two lopsided eligible weeks, each with its own fifteen heroes: 16-30 worth
+    # Two lopsided weeks, each with its own fifteen heroes: 16-30 worth
     # 8.0 in GW10 and nothing in GW11, 31-45 worth 8.0 in GW11 and nothing in
     # GW10, over a static spine. Each week clears the bar on its own (99.2 -
-    # 61.54 = 37.66, over the 25.0 reservation), so each would take a free hit if
+    # 61.54 = 37.66, over the 25.0 fallback bar), so each would take a free hit if
     # it could — the horizon allows one, so it lands on GW10, where the decay
     # bites least, and never twice.
     rows = [
@@ -2017,8 +2018,8 @@ def test_a_free_hit_and_a_bench_boost_cannot_share_a_gameweek():
 
 
 def test_adding_free_hit_to_the_set_changes_nothing_when_it_is_held():
-    # The guard, checked directly, in eligible weeks. On the spine a triple
-    # captain is below its bar (a 6.0 captain against an 18.0 reservation) and a
+    # The guard, checked directly. On the spine a triple captain is below its
+    # bar (a 6.0 captain against an 18.0 fallback bar) and a
     # free hit gains nothing (the spine cannot improve on itself), so neither is
     # played — and offering free hit alongside the triple captain leaves the
     # objective exactly where the triple-captain-only solve left it: the Task 2
@@ -2583,10 +2584,11 @@ def bench_trade() -> tuple[dict[int, Player], dict[int, PlayerProjection]]:
     same money to upgrade — two ways to spend the same 40 and no more.
 
     ``16`` is a midfielder at 90 worth 7.0; ``17`` and ``18`` are defenders at 70
-    worth 3.0, the spine's own bench defenders (6, 7) being at 50 and 0.5. The
-    squad's fifteen costs 750 and the bank holds 40 (a budget of 790), so
-    exactly one of the two upgrades is affordable: the star for 8 (the spine's weakest
-    midfielder, 5.6), or both defenders for 6 and 7.
+    worth 3.0, against the spine's own bench defenders, 6 and 7, at 50 and worth
+    0.5. The squad's fifteen costs 750 and the bank holds 40 (a budget of 790),
+    so exactly one of the two upgrades is affordable, each costing the whole 40:
+    the star for 8 (the spine's weakest midfielder, 5.6), or both defenders for
+    6 and 7.
     """
     rows = [
         (pid, position, 50, {BENCH_TRADE_EVENT: points})
@@ -2642,8 +2644,9 @@ def test_an_unfieldable_week_is_none_and_the_others_still_price(monkeypatch):
     real = multiweek._best_one_week_squad
 
     def fail_gw5(pool, players_, by_position, by_club, week_points, *rest, **kw):
-        # In GW5 the spine's captain is 12 at 6.0 and every week_points is
-        # identical to GW6's, so tell the weeks apart by the order called.
+        # The spine is the same board in GW5 and GW6, so week_points cannot
+        # tell the two weeks apart; the order called can, since the weeks are
+        # priced in the order asked. The first call is GW5's, and it fails.
         fail_gw5.calls += 1
         if fail_gw5.calls == 1:
             return None
