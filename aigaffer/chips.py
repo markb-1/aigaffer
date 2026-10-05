@@ -12,7 +12,7 @@ four ask it the same questions — and depends on nothing but the data models,
 so the dependency always runs towards it.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 from aigaffer.data.models import ChipRule
@@ -179,9 +179,26 @@ def held_by_rules(inputs: "PipelineInputs") -> tuple[HeldChip, ...]:
     while the solver and the calendar ask the orchestrator's switch-aware
     ``_held``. ``inputs`` is read for its fields only (bootstrap rules, chip
     history, gameweek), which keeps this module below everyone who asks.
+    A gameweek with a chip recorded by "Transfers made" plays no other (see
+    the comment below).
     """
-    return held_chips(
+    held = held_chips(
         chip_windows(inputs.bootstrap.chips), inputs.chips_used, inputs.event.id
+    )
+    # One chip a gameweek. When the owner has recorded a chip for this one —
+    # it is in the chip history above already, so that chip is spent — no
+    # other may be played in it either: every held chip opens next week at
+    # the earliest, and one whose window ends this week is gone. So the solver
+    # plans none in week 1, the briefing marks all four, and the belt refuses
+    # whatever the gaffer finalizes but "none" (the recorded chip stands).
+    executed = getattr(inputs, "executed", None)
+    if executed is None or executed.chip not in CHIP_ORDER:
+        return held
+    week = inputs.event.id
+    return tuple(
+        replace(chip, start_event=max(chip.start_event, week + 1))
+        for chip in held
+        if chip.stop_event > week
     )
 
 

@@ -94,6 +94,7 @@ from aigaffer.data.models import (
     Squad,
     Standing,
 )
+from aigaffer.executed import Executed, apply_executed  # noqa: F401
 from aigaffer.ledger import Observation, observe
 from aigaffer.model.minutes import expected_minutes, season_prior
 from aigaffer.model.strength import TeamStrengths, build_team_strengths
@@ -312,6 +313,11 @@ class PipelineInputs:
     manager with no squad — nothing has been played by somebody who has not
     played — and defaults to empty because a fetch that never asked has
     nothing to say about it.
+
+    ``executed`` is the owner's recorded week when these are the *effective*
+    inputs (:func:`aigaffer.executed.apply_executed`) and None on the API's
+    own: the fetch never sets it. The solve reads it to lock the recorded
+    moves, and every renderer to say what it is working from.
     """
 
     bootstrap: Bootstrap
@@ -323,6 +329,7 @@ class PipelineInputs:
     players: dict[int, Player]
     chips_used: list[dict] = field(default_factory=list)
     prior_minutes: dict[int, float] = field(default_factory=dict)
+    executed: Executed | None = None
 
 
 @dataclass
@@ -991,7 +998,7 @@ def diff_actions(stored: dict, fresh: dict) -> dict:
     return diff
 
 
-def fetch_inputs(cfg: Config, client: FplClient) -> PipelineInputs:
+def fetch_inputs(cfg: Config, client: FplClient, store: Store | None = None) -> PipelineInputs:
     """Ask the API everything the run needs, once.
 
     This is the only stage that talks to the network, so everything after it
@@ -1005,6 +1012,10 @@ def fetch_inputs(cfg: Config, client: FplClient) -> PipelineInputs:
     bug :func:`_played` exists to fix. That is why the fixtures are asked for
     ahead of the histories rather than after them — they are what the cut is
     made against.
+
+    ``store``, when given, is read for one thing: the owner's recorded week
+    (:mod:`aigaffer.executed`), whose signings join the history pool. The
+    backtest and most tests call it without one.
     """
     bootstrap = client.bootstrap()
     event = bootstrap.next_event()
@@ -1026,6 +1037,14 @@ def fetch_inputs(cfg: Config, client: FplClient) -> PipelineInputs:
     # /fixtures/ says whether that match has been played.
     fixtures = client.fixtures()
     held = [] if squad is None else squad.player_ids
+    # A signing the owner has recorded for this gameweek is in the squad later
+    # stages solve from, and outside the API's picks: without his history he
+    # projects at zero and the solve's first instinct is to sell him. So is a
+    # recorded free-hit team, whose eleven is fielded this week.
+    if store is not None:
+        row = store.executed(event.id)
+        if row is not None:
+            held = [*held, *row.transfers_in, *(row.freehit_squad or [])]
     summaries = {pid: _summary(client, pid) for pid in history_pool(players, held)}
     fetched = {pid: history for pid, (history, _) in summaries.items()}
     histories = _played(fetched, bootstrap, fixtures)

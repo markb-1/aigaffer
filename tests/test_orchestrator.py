@@ -84,6 +84,7 @@ from tests.fixtures import (
     PIPELINE_FIXTURES_JSON,
     TRANSFERS_JSON,
     fake_fpl_transport,
+    make_executed,
 )
 
 TOKEN = "1234:super-secret-bot-token"
@@ -3558,3 +3559,20 @@ def test_a_chips_run_carries_the_calendar_in_the_report_and_one_line_on_the_phon
     assert "## Chip calendar" not in message
     [line] = [text for text in message.splitlines() if text.startswith("Chips: ")]
     assert line.endswith("expire GW19")
+
+
+def test_a_recorded_signing_outside_the_cut_still_gets_a_history(monkeypatch, tmp_path):
+    # With the cut at one a position, Sarr (FWD, 31 points) is not in the
+    # history pool: Haas tops the forwards. Recorded as signed this week, he
+    # must be — or he projects at zero and the solve sells him at once.
+    monkeypatch.setattr(orchestrator, "CANDIDATES_PER_POSITION", 1)
+    cfg = config(state_dir=tmp_path / "state")
+    store = Store(tmp_path / "aigaffer.db")
+    store.save_executed(make_executed(transfers_in=[18], transfers_out=[8]))
+
+    without = fetch_inputs(cfg, make_client(pipeline_routes()))
+    with_row = fetch_inputs(cfg, make_client(pipeline_routes()), store=store)
+
+    assert 18 not in without.histories
+    assert 18 in with_row.histories
+    assert with_row.executed is None, "the fetch is still the API's truth"
