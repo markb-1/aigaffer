@@ -33,7 +33,7 @@ from aigaffer.chips import HeldChip, playable_in
 from aigaffer.data.free_transfers import MAX_FREE_TRANSFERS
 from aigaffer.data.models import Player
 from aigaffer.model.xp import PlayerProjection
-from aigaffer.solver.multiweek import FREE_HIT, _free_hit_prices, optimize_path
+from aigaffer.solver.multiweek import FREE_HIT, WILDCARD, _free_hit_prices, optimize_path
 from aigaffer.solver.optimizer import MAX_TRANSFERS, Plan, optimize
 
 # The window gets a minute for the one solve a decision is worth; a sweep is
@@ -152,6 +152,38 @@ def generate_plans(
                 )
                 # The path comes back beside the plan and is already on it, so
                 # the second half of the pair is nothing the shortlist carries.
+                opened.append(answer[0] if answer is not None else None)
+
+            # A wildcard played this week lifts the opening cap, and the lift
+            # lives only in the unpinned solve: pinning the count to n pins the
+            # week's moves to n and so keeps the cap at three (five with a big
+            # bank), which no wildcard rebuild fits in. The sweep never takes
+            # that branch, so without this a wildcard the window plans for the
+            # gameweek in hand would be a three-move one. One unpinned solve
+            # lets the chip be played in full; _shortlist drops it by squad if
+            # it declines the wildcard and lands on a plan already there, so
+            # the worst case is the time spent. With no wildcard that may be
+            # played this week there is nothing for it to find and the sweep
+            # is exactly the pinned solves.
+            if any(
+                chip.chip == WILDCARD
+                for chip in playable_in(held_chips, projections_events[:1])
+            ):
+                answer = optimize_path(
+                    players,
+                    xp,
+                    current_squad,
+                    bank,
+                    free_transfers,
+                    projections_events,
+                    decay,
+                    forced_first_transfers=None,
+                    time_limit=SWEEP_TIME_LIMIT,
+                    held_chips=held_chips,
+                    freehit_prices=freehit_prices,
+                    selling_prices=selling_prices,
+                    bars=bars,
+                )
                 opened.append(answer[0] if answer is not None else None)
 
             planned = _shortlist(opened)

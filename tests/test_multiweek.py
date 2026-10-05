@@ -2882,3 +2882,31 @@ def test_a_squad_that_cannot_field_an_eleven_scores_nothing():
     short = SQUAD[:14]
     assert squad_one_week(players, projections, short, 5) == (0.0, short, [])
     assert squad_one_week_score(players, projections, short, 5) == 0.0
+
+
+def test_generate_plans_puts_a_full_week_one_wildcard_on_top():
+    # The sweep pins the opening count, and a pinned count never gets the
+    # wildcard's lift of the opening cap, so a wildcard played this week used
+    # to be capped at three moves. Seven arrivals worth 20.0 (see
+    # test_a_wildcard_rebuilds_the_whole_squad_in_one_week) are the board: the
+    # unpinned wildcard solve takes all seven for no hit and scores 143.39 on
+    # the one-week window, while the best capped plan can seat only three of
+    # them (at most three moves, hits and all) and falls well short of it.
+    players, projections = seven_arrivals([10])
+
+    plans = generate_plans(
+        players, projections, SQUAD, bank=0, free_transfers=1,
+        projections_events=[10], decay=DECAY, held_chips=whole_season(WILDCARD),
+    )
+
+    best = plans[0]
+    assert best.path.week1_chip == WILDCARD
+    assert len(best.transfers_in) == 7
+    assert best.hits == 0
+    assert best.objective == pytest.approx(143.39, abs=1e-4)
+    assert all(
+        len(plan.transfers_in) <= MAX_TRANSFERS
+        for plan in plans
+        if plan.path.week1_chip != WILDCARD
+    )
+    assert best.objective > max(p.objective for p in plans[1:])

@@ -12,7 +12,7 @@ asked the same questions instead, and the plans that come back say which
 engine ran by whether they carry a path.
 """
 
-from aigaffer.chips import BENCH_BOOST, FREE_HIT, HeldChip, whole_season
+from aigaffer.chips import BENCH_BOOST, FREE_HIT, WILDCARD, HeldChip, whole_season
 from aigaffer.solver import plans as plans_module
 from aigaffer.solver.multiweek import PlannedMove, PlannedPath
 from aigaffer.solver.optimizer import Plan
@@ -567,3 +567,62 @@ def test_a_free_hit_held_only_outside_the_window_is_never_priced(monkeypatch):
     assert priced == []
     assert len(calls) == 4
     assert all(call["freehit_prices"] is None for call in calls)
+
+
+def test_a_wildcard_eligible_this_week_adds_one_uncapped_solve(monkeypatch):
+    # The sweep pins the opening count, and a pinned count is capped at three
+    # moves (the wildcard's lift of the cap lives only in the unpinned solve).
+    # So with a wildcard playable in the first event the sweep makes the four
+    # pinned solves 0..3 and then exactly one more, unpinned, with every other
+    # argument the sweep's own: 4 + 1 = 5 calls, the last forced=None.
+    chips = whole_season(WILDCARD)
+    answers = windows(range(4))
+    answers[None] = canned_path(7, 120.0)[0]
+    calls = stub_optimize_path(monkeypatch, answers)
+
+    result = generate_plans(
+        PLAYERS, XP, SQUAD, bank=25, free_transfers=1,
+        projections_events=EVENTS, decay=0.9, held_chips=chips,
+        selling_prices={1: 45}, bars={"wildcard@38": {10: 3.0}},
+    )
+
+    assert [call["forced_first_transfers"] for call in calls] == [0, 1, 2, 3, None]
+    extra = calls[-1]
+    assert extra["time_limit"] == SWEEP_TIME_LIMIT
+    assert extra["held_chips"] == chips
+    assert extra["selling_prices"] == {1: 45}
+    assert extra["bars"] == {"wildcard@38": {10: 3.0}}
+    assert extra["bank"] == 25 and extra["free_transfers"] == 1
+    assert extra["decay"] == 0.9 and extra["events"] is EVENTS
+    # The 120.0 plan beats every capped one (100..103), so it tops the list.
+    assert result[0].objective == 120.0
+
+
+def test_a_wildcard_that_starts_after_this_week_leaves_the_sweep_alone(monkeypatch):
+    # GW12-19 wildcard seen from a GW10-12 window: playable in the window but
+    # not in its first event, so no solve this week could play it and the
+    # sweep is exactly the four pinned solves, none unpinned.
+    calls = stub_optimize_path(monkeypatch, windows(range(4)))
+
+    generate_plans(
+        PLAYERS, XP, SQUAD, bank=0, free_transfers=1,
+        projections_events=EVENTS, held_chips=(HeldChip(WILDCARD, 12, 19),),
+    )
+
+    assert [call["forced_first_transfers"] for call in calls] == [0, 1, 2, 3]
+
+
+def test_no_wildcard_held_leaves_the_sweep_alone(monkeypatch):
+    # Other chips, even ones eligible this week, do not buy the extra solve.
+    calls = stub_optimize_path(monkeypatch, windows(range(4)))
+    stub_free_hit_prices(monkeypatch, {1: (0.0, [], [])})
+
+    generate_plans(
+        PLAYERS, XP, SQUAD, bank=0, free_transfers=1,
+        projections_events=EVENTS, held_chips=whole_season(BENCH_BOOST, FREE_HIT),
+    )
+    generate_plans(
+        PLAYERS, XP, SQUAD, bank=0, free_transfers=1, projections_events=EVENTS,
+    )
+
+    assert [call["forced_first_transfers"] for call in calls] == [0, 1, 2, 3] * 2
