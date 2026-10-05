@@ -38,6 +38,7 @@ from aigaffer.data.fpl_api import FplClient
 from aigaffer.data.models import GwHistory, Player
 from aigaffer.manager import agent
 from aigaffer.manager.agent import ManagerDecision
+from aigaffer.manager.briefing import CHIP_ALREADY_PLAYED
 from aigaffer.model.xp import PlayerProjection, projected_events
 from aigaffer.orchestrator import (
     CALENDAR_FAILED,
@@ -60,7 +61,8 @@ from aigaffer.orchestrator import (
     solve,
 )
 from aigaffer.report import render
-from aigaffer.report.render import render_report
+from aigaffer.recording import record_transfers_made
+from aigaffer.report.render import render_report, working_from
 from aigaffer.report.telegram import send_report
 from aigaffer.solver.calendar import CHIP_DISCOUNT
 from aigaffer.solver.lineup import Lineup, attacking_evs, pick_lineup
@@ -3601,3 +3603,273 @@ def test_week1_lock_reads_the_recorded_week_off_the_inputs(seam):
     assert lock(chip="bench_boost") == Week1Lock(
         keep=frozenset({17}), shun=frozenset({6}), hold=False, free=False
     )
+
+
+# --- after "Transfers made" -----------------------------------------------
+#
+# The owner texted "Transfers made" for the newest verdict on record; the run
+# after it must solve from the squad he entered, say so, never sell what he
+# signed, and leave the ledger on the API's truth.
+
+FH_SQUAD = [1, 9, 3, 4, 10, 12, 13, 5, 6, 11, 14, 17, 7, 15, 18]
+FH_XI = [1, 3, 4, 10, 12, 5, 6, 11, 14, 17, 7]  # 4-5-1
+PLAYERS = {e["id"]: Player.model_validate(e) for e in PIPELINE_ELEMENTS_JSON}
+
+
+def enter_latest(store: Store):
+    """Text "Transfers made" for the newest verdict on record, as the inbox
+    would (no git, no Telegram); return the row it wrote."""
+    client = make_client(pipeline_routes())
+    now = datetime.now(UTC)
+    outcome = record_transfers_made(
+        store, client.bootstrap(), client.picks(TEAM_ID, 1),
+        HISTORY_JSON["chips"], now + timedelta(seconds=1), now,
+    )
+    assert outcome.changed, outcome.reply
+    return store.executed(2)
+
+
+class Entered(NamedTuple):
+    report: str
+    store: Store
+    row: object
+
+
+@pytest.fixture(scope="module")
+def entered_run(tmp_path_factory) -> Entered:
+    """Scout, then "Transfers made" on it, then the deadline report."""
+    state = tmp_path_factory.mktemp("entered_run") / "state"
+    cfg = config(state_dir=state)
+    store = Store(state / "aigaffer.db")
+    client = make_client(pipeline_routes())
+    run_pipeline(cfg, client, store, "scout", send=False)
+    row = enter_latest(store)
+    report = run_pipeline(cfg, client, store, "deadline", send=False)
+    return Entered(report=report, store=store, row=row)
+
+
+def test_a_run_after_transfers_made_says_what_it_works_from(entered_run):
+    line = working_from(entered_run.row, PLAYERS)
+
+    assert entered_run.row.transfers_in, "the scout made a move to enter"
+    assert line in entered_run.report
+    assert entered_run.report.index(line) < entered_run.report.index("## Do this")
+
+
+def test_it_solves_from_the_entered_squad_and_never_undoes_it(entered_run):
+    row = entered_run.row
+    decision = entered_run.store.decision(2, "deadline")
+
+    assert decision["squad_before"] == row.squad_after
+    assert decision["free_transfers"] == row.ft_after
+    assert decision["executed_from"] == row.verdicts
+    assert not set(row.transfers_in) & set(decision["transfers_out"]), "no signing sold"
+    assert not set(row.transfers_out) & set(decision["transfers_in"]), "no sale bought back"
+
+
+def test_the_ledger_never_sees_the_entered_squad(entered_run):
+    store = entered_run.store
+
+    assert set(store.purchases()) == set(PICKS_15_IDS)
+    assert store.squad_record(1) == {"gw": 1, "bank": 28, "player_ids": PICKS_15_IDS}
+
+
+def test_both_ledger_calls_read_the_api_squad(monkeypatch, tmp_path):
+    # The read before the solve prices the sales and the write after the
+    # report keeps the snapshot; both are the ledger's, and the ledger only
+    # ever sees the picks the game has. Grant-for-Reyes is recorded, so the
+    # effective squad holds Reyes and not Grant — neither call may.
+    seen = []
+    real = orchestrator.observe
+
+    def spy(store, squad, *args, **kwargs):
+        seen.append((squad.player_ids, kwargs.get("persist", True)))
+        return real(store, squad, *args, **kwargs)
+
+    monkeypatch.setattr(orchestrator, "observe", spy)
+    store = Store(tmp_path / "aigaffer.db")
+    store.save_executed(make_executed())
+
+    run_pipeline(
+        config(state_dir=tmp_path / "state"), make_client(pipeline_routes()),
+        store, "deadline", send=False,
+    )
+
+    assert seen == [(PICKS_15_IDS, False), (PICKS_15_IDS, True)]
+    assert store.decision(2, "deadline")["squad_before"] == sorted(
+        set(PICKS_15_IDS) - {6} | {17}
+    ), "while the run itself solved from the entered squad"
+
+
+def test_a_row_for_another_gameweek_changes_nothing(tmp_path):
+    # Last gameweek's row is history: the API shows its moves now, and a run
+    # that applied it again would count them twice. Byte for byte the run
+    # with nothing recorded.
+    # Separate directories: each store keeps its recordings beside itself.
+    stale = Store(tmp_path / "stale" / "aigaffer.db")
+    stale.save_executed(make_executed(gw=1))
+
+    plain = run_pipeline(
+        config(state_dir=tmp_path / "plain_state"), make_client(pipeline_routes()),
+        Store(tmp_path / "plain" / "aigaffer.db"), "deadline", send=False,
+    )
+    with_stale = run_pipeline(
+        config(state_dir=tmp_path / "stale_state"), make_client(pipeline_routes()),
+        stale, "deadline", send=False,
+    )
+
+    assert with_stale == plain
+    assert stale.decision(2, "deadline")["executed_from"] is None
+
+
+def test_a_recorded_free_hit_fields_the_entered_team_and_holds(tmp_path):
+    # With one free transfer the solver would sign Reyes for Grant; on a free
+    # hit he entered, the standing squad makes no move and the team on the
+    # sheet is his, with his armbands.
+    store = Store(tmp_path / "aigaffer.db")
+    store.save_executed(
+        make_executed(
+            chip="free_hit", transfers_in=[], transfers_out=[],
+            squad_after=sorted(PICKS_15_IDS), bank_after=28, ft_after=1,
+            buy_prices={}, sell_prices={}, freehit_squad=FH_SQUAD, freehit_xi=FH_XI,
+            arrival_status={9: "a", 10: "a", 12: "a", 17: "a", 18: "a"},
+        )
+    )
+
+    report = run_pipeline(
+        config(state_dir=tmp_path / "state"), make_client(pipeline_routes()),
+        store, "deadline", send=False,
+    )
+    decision = store.decision(2, "deadline")
+
+    assert render.CHIP_ENTERED.format(chip="Free Hit") in report
+    assert "Free Hit XI (this week only)" in report
+    assert decision["chip"] == "free_hit"
+    assert decision["solver_actions"]["chip"] == "free_hit", "the overlay reaches plan_actions"
+    assert decision["freehit_squad"] == FH_SQUAD and decision["freehit_xi"] == FH_XI
+    assert decision["transfers_in"] == [] and decision["transfers_out"] == []
+    assert decision["captain"] == 5 and decision["vice"] == 17
+    # The sheet prints the eleven he entered, in his order, and his armbands —
+    # not an eleven re-picked over his fifteen, and not the standing squad's.
+    # Ferrer is captain and Reyes, whom only the free hit brings in, vice.
+    eleven = ", ".join(PLAYERS[pid].web_name for pid in FH_XI)
+    assert f"{render.FREE_HIT_XI}: {eleven}" in report
+    assert "CAPTAIN Ferrer · VICE Reyes" in report
+    assert "Ferrer (C)" in report and "Reyes (V)" in report
+    assert decision["formation"] == "4-5-1"
+    # The four left over, keeper first: Jarvis, then the three outfielders.
+    assert decision["bench"][0] == 9
+    assert set(decision["bench"]) == {9, 13, 15, 18}
+
+
+def test_a_recorded_free_hit_with_no_team_on_record_fields_the_standing_eleven(
+    tmp_path,
+):
+    # The gaffer finalized a free hit the solver had built no team for, and
+    # the owner entered it: the row has the chip and no fifteen. There is no
+    # other team to field, so the sheet is the standing squad's best eleven —
+    # never a crash — and the checklist says the chip is played already
+    # rather than telling him to play it.
+    store = Store(tmp_path / "aigaffer.db")
+    store.save_executed(
+        make_executed(
+            chip="free_hit", transfers_in=[], transfers_out=[],
+            squad_after=sorted(PICKS_15_IDS), bank_after=28, ft_after=1,
+            buy_prices={}, sell_prices={}, arrival_status={},
+        )
+    )
+
+    report = run_pipeline(
+        config(state_dir=tmp_path / "state"), make_client(pipeline_routes()),
+        store, "deadline", send=False,
+    )
+    decision = store.decision(2, "deadline")
+
+    assert render.CHIP_ENTERED.format(chip="Free Hit") in report
+    assert "PLAY Free Hit" not in report
+    assert render.FREE_HIT_XI not in report, "no temporary team to name"
+    assert decision["chip"] == "free_hit"
+    assert decision["freehit_squad"] is None and decision["freehit_xi"] is None
+    assert decision["transfers_in"] == [] and decision["transfers_out"] == []
+    # The standing fifteen's eleven: Ferrer, our own premium, wears the
+    # armband, and Ito — injured — sits on the bench.
+    assert decision["captain"] == FERRER
+    assert set(decision["bench"]) < set(PICKS_15_IDS)
+    assert 8 in decision["bench"]
+
+
+def test_an_entered_free_hit_is_fielded_as_entered(seam):
+    # His eleven in his order and his armbands, whatever the projections
+    # would pick over his fifteen; the bench is the four left over, the
+    # keeper first and the outfielders by this week's projection — the order
+    # the app auto-subs them in.
+    _, projections = build_projections(seam.inputs, seam.cfg)
+    event_id = seam.inputs.event.id
+    positions = {pid: p.element_type for pid, p in seam.inputs.players.items()}
+    gw_xp = {pid: pr.per_gw.get(event_id, 0.0) for pid, pr in projections.items()}
+    standing_squad = seam.inputs.squad.player_ids
+    standing = pick_lineup(standing_squad, positions, gw_xp)
+    # A forced-hold solve: no path, so no free-hit squad of the solver's own.
+    choice = Plan(
+        squad=standing_squad, xi=[], transfers_in=[], transfers_out=[], hits=0,
+        xp_total=0.0, objective=0.0,
+    )
+    executed = make_executed(
+        chip="free_hit", transfers_in=[], transfers_out=[],
+        squad_after=sorted(PICKS_15_IDS), freehit_squad=FH_SQUAD, freehit_xi=FH_XI,
+        captain=FERRER, vice=REYES,
+    )
+
+    fielded = _fielded_lineup(
+        "free_hit", choice, standing, seam.inputs.players, projections, event_id,
+        executed,
+    )
+
+    assert fielded.xi == FH_XI
+    assert (fielded.captain, fielded.vice) == (FERRER, REYES)
+    outfield = sorted([13, 15, 18], key=lambda pid: -gw_xp.get(pid, 0.0))
+    assert fielded.bench == [9, *outfield]
+    # Without a team on the row there is nothing else to field: the decided
+    # eleven comes straight back.
+    bare = replace(executed, freehit_squad=None, freehit_xi=None)
+    assert _fielded_lineup(
+        "free_hit", choice, standing, seam.inputs.players, projections, event_id,
+        bare,
+    ) is standing
+
+
+def recorded_wildcard_store(tmp_path) -> Store:
+    store = Store(tmp_path / "aigaffer.db")
+    store.save_executed(make_executed(chip="wildcard", ft_after=1))
+    return store
+
+
+def test_the_gaffer_cannot_play_a_second_chip_in_a_recorded_chip_week(
+    monkeypatch, tmp_path
+):
+    store = recorded_wildcard_store(tmp_path)
+    stub_gaffer(monkeypatch, partial(decided, chip="bench_boost"))
+
+    run_pipeline(
+        gaffer_cfg(tmp_path), make_client(pipeline_routes()), store, "scout",
+        send=False, now=PAST_THE_FLOOR,
+    )
+    decision = store.decision(2, "scout")
+
+    assert decision["decision_source"] == f"solver-fallback: {CHIP_SPENT}"
+    assert decision["chip"] == "wildcard", "the recorded chip stands"
+
+
+def test_the_gaffers_none_in_a_recorded_chip_week_stands(monkeypatch, tmp_path):
+    store = recorded_wildcard_store(tmp_path)
+    gaffer = stub_gaffer(monkeypatch)
+
+    run_pipeline(
+        gaffer_cfg(tmp_path), make_client(pipeline_routes()), store, "scout",
+        send=False, now=PAST_THE_FLOOR,
+    )
+    decision = store.decision(2, "scout")
+
+    assert decision["decision_source"] == "manager"
+    assert decision["chip"] == "wildcard"
+    assert CHIP_ALREADY_PLAYED.format(chip="Wildcard") in gaffer.consults[0].briefing

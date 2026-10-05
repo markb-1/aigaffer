@@ -59,6 +59,13 @@ no diary, no run row, no phone digest — tells the phone once why, and leaves
 the next tick to ask him again. Only at the floor (:data:`RETRY_FLOORS`), at
 the retry limit, or on a run a person forced does the labelled week go out
 and count, so that a week is never left without a report.
+
+One more input can sit beside the fetch: what the owner told the inbox he
+entered (:mod:`aigaffer.executed`). It is laid over the fetch as the
+*effective* inputs, which every stage reads — except the purchase ledger,
+which keeps the API's truth so it never records a purchase the game has not
+seen. The solve holds the entered moves still in week 1, and every document
+says what squad it is working from.
 """
 
 from collections import defaultdict
@@ -101,7 +108,7 @@ from aigaffer.data.models import (
     Squad,
     Standing,
 )
-from aigaffer.executed import Executed, apply_executed  # noqa: F401
+from aigaffer.executed import Executed, apply_executed
 from aigaffer.ledger import Observation, observe
 from aigaffer.model.minutes import expected_minutes, season_prior
 from aigaffer.model.strength import TeamStrengths, build_team_strengths
@@ -137,6 +144,7 @@ from aigaffer.solver.multiweek import FREE_HIT, PlannedMove
 from aigaffer.solver.optimizer import (
     AVAILABLE,
     CANDIDATES_PER_POSITION,
+    GOALKEEPER,
     SQUAD_SIZE,
     Plan,
     Week1Lock,
@@ -484,13 +492,19 @@ def run_pipeline(
     tags. ``save`` gates the ledger's writes exactly as it gates the report's
     — and a withheld tick, which saves nothing, persists none of them either:
     a dry run prices its sales in memory and persists none of it.
+
+    After "Transfers made" the run works from the squad the owner entered
+    (:func:`aigaffer.executed.apply_executed`): everything from the
+    projections to the phone reads the effective inputs, and both of the
+    ledger's calls read the API's own, so a move the game has not yet seen is
+    never ledgered as a purchase.
     """
     if mode == REMINDER_MODE:
         return _run_reminder(
             cfg, client, store, send=send, save=save, overtaken=overtaken
         )
 
-    inputs = fetch_inputs(cfg, client)
+    inputs = fetch_inputs(cfg, client, store=store)
     # Priced now, persisted below with everything else: the ledger's one
     # reconciliation line per gameweek fires on the first run to see the
     # squad, and a withheld tick that had written the snapshot would have
@@ -498,18 +512,30 @@ def run_pipeline(
     ledger = observe(
         store, inputs.squad, inputs.players, inputs.chips_used, persist=False
     )
+    # What the owner has told the inbox he entered this gameweek, laid over
+    # the API's squad (aigaffer.executed). ``inputs`` stay the API's truth and
+    # are read by the ledger alone — both of its calls — so it never records a
+    # virtual purchase or a virtual squad; ``effective`` feeds everything
+    # else: projections, calendar, solve, gaffer, briefing and every renderer.
+    # With nothing recorded the two are the same object.
+    effective, executed = apply_executed(inputs, store.executed(inputs.event.id))
     # One fit of the team strengths a run, read by every projection the run
     # makes: the week's, the calendar's and each of the gaffer's re-solves.
-    strengths = _strengths(inputs, cfg)
-    xmins, projections = build_projections(inputs, cfg, strengths=strengths)
+    strengths = _strengths(effective, cfg)
+    xmins, projections = build_projections(effective, cfg, strengths=strengths)
     # The chip calendar, once a run and before the solve it shapes; the
     # gaffer's re-solves are judged against this same one (see _calendar).
     calendar = _calendar(
-        inputs, cfg, projections, ledger.selling_prices, strengths=strengths
+        effective, cfg, projections, ledger.selling_prices, strengths=strengths
     )
-    solved = solve(inputs, projections, cfg, ledger.selling_prices, calendar)
+    solved = solve(effective, projections, cfg, ledger.selling_prices, calendar)
+    # In a week the owner has already played a chip in, the belt inside
+    # _consult refuses any chip the gaffer finalizes — held_by_rules on the
+    # effective chip history holds none for this gameweek — and passes his
+    # ``none``, after which played_chip below makes the recorded chip the
+    # week's.
     gaffer = _consult(
-        cfg, inputs, solved, projections, xmins, ledger.selling_prices,
+        cfg, effective, solved, projections, xmins, ledger.selling_prices,
         strengths=strengths,
     )
 
@@ -517,7 +543,7 @@ def run_pipeline(
     # the eleven that goes with it, in every place the solver's own would have
     # gone. A recommendation the report prints and a decision the store keeps
     # have to be the same recommendation.
-    event = inputs.event
+    event = effective.event
     choice = solved.choice if gaffer is None else gaffer.plan
     lineup = solved.lineup if gaffer is None else gaffer.lineup
     # And costed on the projections the decision was made on: his, if he
@@ -528,8 +554,12 @@ def run_pipeline(
     # week that eleven is the temporary team the plan built, not the standing
     # squad, so the fielded lineup — and the armbands, and the record's captain
     # — come off it; ``choice`` still reports the standing squad, which reverts.
-    chip = played_chip(choice, gaffer)
-    lineup = _fielded_lineup(chip, choice, lineup, inputs.players, costed, event.id)
+    # A chip the owner has already entered is the week's whoever planned what,
+    # and a free hit he entered fields the team he built, with his armbands.
+    chip = played_chip(choice, gaffer, executed)
+    lineup = _fielded_lineup(
+        chip, choice, lineup, effective.players, costed, event.id, executed
+    )
     report = render_report(
         _label(mode, drafting=solved.draft_mode),
         event,
@@ -537,7 +567,7 @@ def run_pipeline(
         choice,
         lineup,
         solved.chips,
-        inputs.bootstrap,
+        effective.bootstrap,
         costed,
         gaffer,
         # Asked for, which is not the same as answered. The report needs both
@@ -547,11 +577,12 @@ def run_pipeline(
         engine_expected=cfg.planner != SINGLE and not solved.draft_mode,
         # The bank the action block names when the week rolls. None on a draft,
         # which has no action block to read it.
-        free_transfers=inputs.free_transfers,
+        free_transfers=effective.free_transfers,
         # What each sale actually raises, for the SELL tags that differ from
         # the listed price.
         selling_prices=ledger.selling_prices,
         calendar=calendar,
+        executed=executed,
     )
     # Asked for, and not there at all. Not the same as the kill switch, no key
     # or a draft — those are choices, and the invariant is that they render
@@ -572,18 +603,18 @@ def run_pipeline(
     # overrode the solver would shout at T-3h about a disagreement that was
     # settled at T-24h. His verdict stays the operative plan everywhere it is
     # shown — this is only the yardstick the reminder measures the news with.
-    solver_chip = played_chip(solved.choice, None)
+    solver_chip = played_chip(solved.choice, None, executed)
     solver_lineup = _fielded_lineup(
-        solver_chip, solved.choice, solved.lineup, inputs.players, projections,
-        event.id,
+        solver_chip, solved.choice, solved.lineup, effective.players, projections,
+        event.id, executed,
     )
 
-    freehit_squad, freehit_xi = _freehit_team(chip, choice)
+    freehit_squad, freehit_xi = _freehit_team(chip, choice, executed)
     decision = {
         "mode": mode,
         "event": event.id,
         "initial_draft": solved.draft_mode,
-        "free_transfers": inputs.free_transfers,
+        "free_transfers": effective.free_transfers,
         "transfers_in": choice.transfers_in,
         "transfers_out": choice.transfers_out,
         "hits": choice.hits,
@@ -596,16 +627,19 @@ def run_pipeline(
         # verdict onto the recorded position only when it was solved from that
         # position (aigaffer.recording.compose); None for a draft.
         "squad_before": (
-            None if inputs.squad is None else sorted(inputs.squad.player_ids)
+            None if effective.squad is None else sorted(effective.squad.player_ids)
         ),
         # On a free-hit week, the temporary team the chip fields — top-level,
         # never inside solver_actions, which the reminder diffs as five fields.
         "freehit_squad": freehit_squad,
         "freehit_xi": freehit_xi,
+        # Which recorded verdicts this run solved on top of, or None: the
+        # trail a later reader needs to see why a report rolled.
+        "executed_from": None if executed is None else executed.verdicts,
         # The shape of the eleven, kept so the reminder can diff it: a plan
         # whose swaps and armbands held but whose eleven swapped a defender
         # for a forward is still a plan that changed on the sheet.
-        "formation": formation(lineup, inputs.players),
+        "formation": formation(lineup, effective.players),
         "xp_total": choice.xp_total,
         "objective": choice.objective,
         # The chip this week actually plays: the manager's if he decided, the
@@ -620,7 +654,7 @@ def run_pipeline(
         "chip_baseline": _baseline_label(solved),
         "engine": _engine(choice),
         "solver_actions": plan_actions(
-            solved.choice, solver_lineup, solver_chip, inputs.players
+            solved.choice, solver_lineup, solver_chip, effective.players
         ),
     }
     # The rest of the window, when there was one: ids and gameweeks, which is
@@ -680,12 +714,13 @@ def run_pipeline(
                 cfg,
                 render_withheld(
                     _label(mode, drafting=solved.draft_mode),
-                    event, choice, lineup, inputs.bootstrap, undecided,
+                    event, choice, lineup, effective.bootstrap, undecided,
                     until=event.deadline_time - timedelta(hours=RETRY_FLOORS[mode]),
                     attempts=MANAGER_RETRY_LIMIT,
-                    free_transfers=inputs.free_transfers,
+                    free_transfers=effective.free_transfers,
                     selling_prices=ledger.selling_prices,
-                    standing=_standing(inputs),
+                    standing=_standing(effective),
+                    executed=executed,
                 ),
                 unconfigured=ALERT_NOT_CONFIGURED,
             )
@@ -703,6 +738,7 @@ def run_pipeline(
         send = False
 
     if save:
+        # The real inputs, never the effective: the ledger keeps the API's truth.
         observe(store, inputs.squad, inputs.players, inputs.chips_used)
         _write_report(cfg, event.id, mode, report)
         store.save_run(event.id, mode, report, decision)
@@ -712,11 +748,12 @@ def run_pipeline(
         # diary and the store, which is where the pointer sends the reader.
         digest = render_digest(
             _label(mode, drafting=solved.draft_mode),
-            event, choice, lineup, inputs.bootstrap, gaffer,
-            free_transfers=inputs.free_transfers,
+            event, choice, lineup, effective.bootstrap, gaffer,
+            free_transfers=effective.free_transfers,
             selling_prices=ledger.selling_prices,
-            standing=_standing(inputs),
+            standing=_standing(effective),
             calendar=calendar,
+            executed=executed,
         )
         # The two lines the report carries that the renderer cannot know
         # about ride the digest too, under the same conditions: the accident
@@ -1764,6 +1801,7 @@ def _fielded_lineup(
     players: dict[int, Player],
     projections: dict[int, PlayerProjection],
     event_id: int,
+    executed: Executed | None = None,
 ) -> Lineup:
     """The eleven actually taken to the deadline.
 
@@ -1774,10 +1812,21 @@ def _fielded_lineup(
     (and armbands) that plays this week. The standing squad reverts and is left
     to ``choice`` and the record; here it is the team on the sheet that changes.
 
+    A free hit the owner has already entered fields the team he entered
+    (:func:`_entered_free_hit`) — a forced-hold solve has no free-hit squad of
+    its own.
+
     A free hit with no temporary squad behind it — a chip a manager finalized
-    that the solver never built a free-hit team for — leaves the standing eleven
-    standing, because there is no other to field.
+    that the solver never built a free-hit team for, entered or not — leaves
+    the standing eleven standing, because there is no other to field.
     """
+    if (
+        chip == FREE_HIT
+        and executed is not None
+        and executed.chip == FREE_HIT
+        and executed.freehit_xi
+    ):
+        return _entered_free_hit(executed, players, projections, event_id)
     if chip != FREE_HIT or choice.path is None or not choice.path.week1_freehit_squad:
         return lineup
     positions = {pid: player.element_type for pid, player in players.items()}
@@ -1791,15 +1840,54 @@ def _fielded_lineup(
     )
 
 
-def _freehit_team(chip: str, choice: Plan) -> tuple[list[int] | None, list[int] | None]:
+def _entered_free_hit(
+    executed: Executed,
+    players: dict[int, Player],
+    projections: dict[int, PlayerProjection],
+    event_id: int,
+) -> Lineup:
+    """The free-hit team the owner entered: his eleven, his armbands.
+
+    Not re-picked. He built this team in the app off a verdict and said so;
+    a report that fielded a different eleven over it would be telling him to
+    change a chip week he has already played. The four left over are the
+    bench, keeper first and then by this week's projection, which is the
+    order the app would auto-sub them in.
+    """
+    xi = list(executed.freehit_xi or [])
+    chosen = set(xi)
+
+    def points(pid: int) -> float:
+        projection = projections.get(pid)
+        return 0.0 if projection is None else projection.per_gw.get(event_id, 0.0)
+
+    def keeper(pid: int) -> bool:
+        player = players.get(pid)
+        return player is not None and player.element_type == GOALKEEPER
+
+    bench = sorted(
+        (pid for pid in executed.freehit_squad or [] if pid not in chosen),
+        key=lambda pid: (not keeper(pid), -points(pid), pid),
+    )
+    return Lineup(xi=xi, captain=executed.captain, vice=executed.vice, bench=bench)
+
+
+def _freehit_team(
+    chip: str, choice: Plan, executed: Executed | None = None
+) -> tuple[list[int] | None, list[int] | None]:
     """The temporary fifteen and eleven a free-hit week fields, or two Nones.
 
     Kept on the decision record as top-level keys, beside the standing
     squad's moves rather than among them: "Transfers made" on a free-hit
     verdict records the team the owner built, and ``solver_actions`` must
-    stay the five-field shape the reminder diffs.
+    stay the five-field shape the reminder diffs. A free hit he has entered
+    is his team, and wins over whatever the path built.
     """
-    if chip != FREE_HIT or choice.path is None or not choice.path.week1_freehit_squad:
+    if chip != FREE_HIT:
+        return None, None
+    if executed is not None and executed.chip == FREE_HIT and executed.freehit_squad:
+        return executed.freehit_squad, executed.freehit_xi
+    if choice.path is None or not choice.path.week1_freehit_squad:
         return None, None
     return choice.path.week1_freehit_squad, choice.path.week1_freehit_xi
 
