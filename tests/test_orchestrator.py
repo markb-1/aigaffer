@@ -311,6 +311,8 @@ def test_the_window_the_projections_cover_is_the_window_the_planner_plans(
             # No calendar handed in, so no bars: the window's fallback.
             "bars": None,
             "selling_prices": None,
+            # Nothing recorded this week, so nothing locked.
+            "lock": None,
         }
     ]
 

@@ -15,8 +15,9 @@ engine ran by whether they carry a path.
 from aigaffer.chips import BENCH_BOOST, FREE_HIT, WILDCARD, HeldChip, whole_season
 from aigaffer.solver import plans as plans_module
 from aigaffer.solver.multiweek import PlannedMove, PlannedPath
-from aigaffer.solver.optimizer import Plan
+from aigaffer.solver.optimizer import Plan, Week1Lock
 from aigaffer.solver.plans import SWEEP_TIME_LIMIT, generate_plans, recommend
+from tests.test_multiweek import DECAY, SQUAD as SPINE_SQUAD, spine
 
 SQUAD = list(range(1, 16))
 PLAYERS = {"players": "stand-in"}
@@ -50,7 +51,7 @@ def stub_optimize(monkeypatch, answers: dict[int, Plan | None]) -> list[dict]:
 
     def fake_optimize(
         players, xp, current_squad, bank, free_transfers, forced_transfers=None,
-        selling_prices=None,
+        selling_prices=None, lock=None,
     ):
         calls.append(
             {
@@ -113,6 +114,7 @@ def stub_optimize_path(monkeypatch, answers: dict[int, Plan | None]) -> list[dic
         freehit_prices=None,
         selling_prices=None,
         bars=None,
+        lock=None,
     ):
         calls.append(
             {
@@ -626,3 +628,36 @@ def test_no_wildcard_held_leaves_the_sweep_alone(monkeypatch):
     )
 
     assert [call["forced_first_transfers"] for call in calls] == [0, 1, 2, 3] * 2
+
+
+def test_a_recorded_free_hit_week_is_a_hold_week():
+    # A free hit was entered: the standing squad makes no transfers this
+    # week, whatever the board would otherwise buy. Unlocked, the spine with
+    # 8 sold for 16 buys 8 straight back.
+    players, projections = spine([5, 6, 7])
+    current = [pid for pid in SPINE_SQUAD if pid != 8] + [16]
+
+    free = generate_plans(
+        players, projections, current, 0, 1,
+        projections_events=[5, 6, 7], decay=DECAY,
+    )
+    held = generate_plans(
+        players, projections, current, 0, 1,
+        projections_events=[5, 6, 7], decay=DECAY, lock=Week1Lock(hold=True),
+    )
+
+    assert recommend(free).transfers_in == [8]
+    assert len(held) == 1 and held[0].transfers_in == [] and held[0].transfers_out == []
+
+
+def test_the_single_week_fallback_holds_too():
+    players, projections = spine([5, 6, 7])
+    current = [pid for pid in SPINE_SQUAD if pid != 8] + [16]
+
+    held = generate_plans(
+        players, projections, current, 0, 1,
+        projections_events=[5, 6, 7], decay=DECAY, planner="single",
+        lock=Week1Lock(hold=True),
+    )
+
+    assert len(held) == 1 and held[0].transfers_in == []

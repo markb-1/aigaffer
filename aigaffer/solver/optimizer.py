@@ -97,6 +97,26 @@ class Plan:
     path: "PlannedPath | None" = None
 
 
+@dataclass(frozen=True)
+class Week1Lock:
+    """Moves the owner has already entered this gameweek, held still in week 1.
+
+    "Transfers made" records what he did; the run after it solves from the
+    squad it left, and must neither sell a signing he has just made nor buy
+    back a player he has just sold — that is re-recommending, or reversing,
+    a decision already in the app. ``keep`` are the signings, ``shun`` the
+    sales, and ``hold`` is a recorded free-hit week, whose standing squad
+    makes no transfers at all. Week 1 only: from week 2 the window is as free
+    as ever, and a signing who has since been ruled out is the report's to
+    say in words, never the lock's to undo. Empty, it adds nothing to a
+    model, so a run with nothing recorded is the model it always was.
+    """
+
+    keep: frozenset[int] = frozenset()
+    shun: frozenset[int] = frozenset()
+    hold: bool = False
+
+
 def projected_points(xp: dict[int, PlayerProjection], player_id: int) -> float:
     """A player with no projection is worth nothing, not a guess."""
     projection = xp.get(player_id)
@@ -142,6 +162,7 @@ def optimize(
     free_transfers: int,
     forced_transfers: int | None = None,
     selling_prices: dict[int, int] | None = None,
+    lock: Week1Lock | None = None,
 ) -> Plan | None:
     """Best squad and XI reachable from ``current_squad``, or None.
 
@@ -160,6 +181,10 @@ def optimize(
     the market charges, a kept player at his selling price — which appears on
     both sides of the inequality and cancels, so holding a riser at a paper
     loss costs nothing, exactly as it does in the app.
+
+    ``lock`` holds the recorded moves still — this solver has no per-player
+    buy and sell binaries, so a kept signing is pinned into the squad and a
+    recorded sale out of it.
     """
     pool = candidate_pool(players, xp, current_squad)
     current = {pid for pid in current_squad if pid in players}
@@ -193,6 +218,13 @@ def optimize(
         problem += pulp.lpSum(squad[p] for p in by_position[position]) == quota
     for club_mates in by_club.values():
         problem += pulp.lpSum(squad[p] for p in club_mates) <= MAX_PER_CLUB
+    if lock is not None:
+        for p in sorted(lock.keep & set(pool)):
+            if p in current:
+                problem += squad[p] == 1
+        for p in sorted(lock.shun & set(pool)):
+            if p not in current:
+                problem += squad[p] == 0
     problem += pulp.lpSum(value[p] * squad[p] for p in pool) <= budget
 
     problem += pulp.lpSum(starting.values()) == XI_SIZE

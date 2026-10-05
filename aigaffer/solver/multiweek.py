@@ -202,6 +202,7 @@ from aigaffer.solver.optimizer import (
     XI_GOALKEEPERS,
     XI_SIZE,
     Plan,
+    Week1Lock,
     _chosen,
     _grouped,
     candidate_pool,
@@ -377,6 +378,7 @@ def optimize_path(
     freehit_prices: dict[int, tuple[float, list[int], list[int]]] | None = None,
     selling_prices: dict[int, int] | None = None,
     bars: dict[str, dict[int, float]] | None = None,
+    lock: Week1Lock | None = None,
 ) -> tuple[Plan, PlannedPath] | None:
     """The best sequence of squads over ``events``, or None.
 
@@ -420,6 +422,12 @@ def optimize_path(
     dict has no entry for, or a week its entry is missing. Even with the
     calendar the window cannot see the season whole: the bars are its only
     window onto what lies past the horizon.
+
+    ``lock`` is the owner's recorded week
+    (:class:`~aigaffer.solver.optimizer.Week1Lock`): in the first gameweek a
+    kept signing has its sale pinned to zero and a recorded sale its purchase.
+    Later gameweeks are untouched, and so are the free-hit prices, which are
+    what-ifs.
 
     ``forced_first_transfers`` pins the opening gameweek's moves; left alone,
     the opening gameweek moves at most ``max(MAX_TRANSFERS, ft)`` times, which
@@ -873,6 +881,15 @@ def optimize_path(
             for w in play[first.id]:
                 if w + 1 in play[second.id] and events[w] == events[w - 1] + 1:
                     problem += play[first.id][w] + play[second.id][w + 1] <= 1
+
+    # The owner's recorded moves, held still in the gameweek being decided:
+    # no signing of his sold, no sale of his bought back. Sorted, so the same
+    # board always writes the same model; nothing at all without a lock.
+    if lock is not None:
+        for p in sorted(lock.keep & set(pool)):
+            problem += sell[1][p] == 0
+        for p in sorted(lock.shun & set(pool)):
+            problem += buy[1][p] == 0
 
     if forced_first_transfers is None:
         # The opening cap, lifted for a wildcarded first gameweek: fifteen is the

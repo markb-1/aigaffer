@@ -132,6 +132,7 @@ from aigaffer.solver.optimizer import (
     CANDIDATES_PER_POSITION,
     SQUAD_SIZE,
     Plan,
+    Week1Lock,
     optimize,
 )
 from aigaffer.solver.plans import generate_plans, recommend
@@ -1217,6 +1218,7 @@ def solve(
         held,
         bars,
         selling_prices,
+        _week1_lock(inputs),
     )
     positions = {pid: player.element_type for pid, player in inputs.players.items()}
     gw_xp = {
@@ -1795,6 +1797,22 @@ def _freehit_team(chip: str, choice: Plan) -> tuple[list[int] | None, list[int] 
     return choice.path.week1_freehit_squad, choice.path.week1_freehit_xi
 
 
+def _week1_lock(inputs: PipelineInputs) -> Week1Lock | None:
+    """The owner's recorded moves as the solve's week-1 lock, or None.
+
+    Read off the effective inputs, so the gaffer's re-solves — which reuse
+    the same inputs — are held to the same lock as the first solve.
+    """
+    executed = inputs.executed
+    if executed is None:
+        return None
+    return Week1Lock(
+        keep=frozenset(executed.transfers_in),
+        shun=frozenset(executed.transfers_out),
+        hold=executed.chip == FREE_HIT,
+    )
+
+
 def _plans(
     players: dict[int, Player],
     xp: dict[int, PlayerProjection],
@@ -1804,6 +1822,7 @@ def _plans(
     held_chips: tuple[HeldChip, ...] = (),
     bars: dict[str, dict[int, float]] | None = None,
     selling_prices: dict[int, int] | None = None,
+    lock: Week1Lock | None = None,
 ) -> tuple[list[Plan], Plan]:
     """The shortlist, and the plan to recommend from it.
 
@@ -1842,6 +1861,7 @@ def _plans(
         held_chips=held_chips,
         bars=bars,
         selling_prices=selling_prices,
+        lock=lock,
     )
     if not plans:
         raise PipelineError("no legal squad is reachable from the current one")

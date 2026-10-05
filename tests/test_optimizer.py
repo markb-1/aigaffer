@@ -44,7 +44,7 @@ import pytest
 
 from aigaffer.data.models import Player
 from aigaffer.model.xp import PlayerProjection
-from aigaffer.solver.optimizer import MAX_HITS, candidate_pool, optimize
+from aigaffer.solver.optimizer import MAX_HITS, Week1Lock, candidate_pool, optimize
 
 GK, DEF, MID, FWD = 1, 2, 3, 4
 
@@ -473,3 +473,33 @@ def test_holding_risers_costs_nothing_even_at_a_paper_loss():
     assert plan is not None
     assert plan.squad == CURRENT
     assert plan.xp_total == pytest.approx(CURRENT_XP)
+
+
+# The week-1 lock. Unlocked, the best move on this board is 16 in for the
+# injured 12 (356.5). A recorded 12 — signed this week — cannot be sold, and
+# a recorded sale of 16 cannot be bought back.
+
+
+def test_a_recorded_signing_stays_in_the_squad():
+    plan = optimize(
+        PLAYERS, XP, CURRENT, bank=0, free_transfers=1,
+        lock=Week1Lock(keep=frozenset({12})),
+    )
+
+    assert 12 in plan.squad and 12 not in plan.transfers_out
+
+
+def test_a_recorded_sale_is_not_bought_back():
+    plan = optimize(
+        PLAYERS, XP, CURRENT, bank=0, free_transfers=1,
+        lock=Week1Lock(shun=frozenset({16})),
+    )
+
+    assert 16 not in plan.squad
+
+
+def test_an_empty_lock_changes_nothing():
+    plan = optimize(PLAYERS, XP, CURRENT, bank=0, free_transfers=1, lock=Week1Lock())
+
+    assert plan.transfers_in == [16] and plan.transfers_out == [12]
+    assert plan.objective == pytest.approx(356.5)

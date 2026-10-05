@@ -84,6 +84,7 @@ from aigaffer.solver.optimizer import (
     MAX_TRANSFERS,
     SQUAD_QUOTAS,
     SQUAD_SIZE,
+    Week1Lock,
     _grouped,
     candidate_pool,
     optimize,
@@ -2910,3 +2911,78 @@ def test_generate_plans_puts_a_full_week_one_wildcard_on_top():
         if plan.path.week1_chip != WILDCARD
     )
     assert best.objective > max(p.objective for p in plans[1:])
+
+
+# --------------------------------------------------------------------------
+# The week-1 lock: moves the owner has already entered
+# --------------------------------------------------------------------------
+#
+# The spine with a recorded move: he sold 8 (MID, 5.6 a week) for 16 (MID,
+# 0.4) — say 16 was fit when he signed him and has since been ruled out. The
+# window's instinct is to reverse it at once. Locked, week 1 holds and the
+# reversal waits for week 2, where it is free.
+#
+# Week 1 without 8: XI 1 | 3 4 5 | 9 10 11 12 | 13 14 15 = 53.3, captain 12
+# (6.0) twice = 59.3, bench 2, 6, 7, 16 = 1.9 x 0.1 = 0.19 -> 59.49.
+# Weeks 2 and 3 with 8 back: the spine's 61.54 each.
+# Objective 59.49 + 0.85 x 61.54 + 0.7225 x 61.54 - 0.01 churn = 156.25165.
+
+RECORDED = [pid for pid in SQUAD if pid != 8] + [16]
+
+
+def test_a_recorded_signing_is_not_sold_and_a_sale_not_reversed_in_week_one():
+    players, projections = spine([5, 6, 7])
+
+    free, _ = optimize_path(
+        players, projections, RECORDED, bank=0, free_transfers=1,
+        events=[5, 6, 7], decay=DECAY,
+    )
+    plan, path = optimize_path(
+        players, projections, RECORDED, bank=0, free_transfers=1,
+        events=[5, 6, 7], decay=DECAY,
+        lock=Week1Lock(keep=frozenset({16}), shun=frozenset({8})),
+    )
+
+    assert free.transfers_in == [8] and free.transfers_out == [16], "unlocked, it reverses"
+    assert plan.transfers_in == [] and plan.transfers_out == []
+    assert path.moves[0].event == 6
+    assert path.moves[0].transfers_in == [8] and path.moves[0].transfers_out == [16]
+    assert plan.objective == pytest.approx(156.25165, abs=1e-4)
+
+
+def test_the_sale_alone_is_locked_against_buying_back():
+    players, projections = spine([5, 6, 7])
+
+    plan, _ = optimize_path(
+        players, projections, RECORDED, bank=0, free_transfers=1,
+        events=[5, 6, 7], decay=DECAY, lock=Week1Lock(shun=frozenset({8})),
+    )
+
+    assert 8 not in plan.squad
+
+
+def test_the_signing_alone_is_locked_against_selling():
+    players, projections = spine([5, 6, 7])
+
+    plan, _ = optimize_path(
+        players, projections, RECORDED, bank=0, free_transfers=1,
+        events=[5, 6, 7], decay=DECAY, lock=Week1Lock(keep=frozenset({16})),
+    )
+
+    assert 16 in plan.squad
+
+
+def test_an_empty_lock_is_no_lock():
+    players, projections = spine([5, 6, 7])
+
+    none = optimize_path(
+        players, projections, RECORDED, bank=0, free_transfers=1,
+        events=[5, 6, 7], decay=DECAY,
+    )
+    empty = optimize_path(
+        players, projections, RECORDED, bank=0, free_transfers=1,
+        events=[5, 6, 7], decay=DECAY, lock=Week1Lock(),
+    )
+
+    assert none[0].objective == empty[0].objective
+    assert none[0].transfers_in == empty[0].transfers_in == [8]

@@ -34,7 +34,7 @@ from aigaffer.data.free_transfers import MAX_FREE_TRANSFERS
 from aigaffer.data.models import Player
 from aigaffer.model.xp import PlayerProjection
 from aigaffer.solver.multiweek import FREE_HIT, WILDCARD, _free_hit_prices, optimize_path
-from aigaffer.solver.optimizer import MAX_TRANSFERS, Plan, optimize
+from aigaffer.solver.optimizer import MAX_TRANSFERS, Plan, Week1Lock, optimize
 
 # The window gets a minute for the one solve a decision is worth; a sweep is
 # half a dozen of them and the deadline does not move. Twenty seconds is enough
@@ -66,6 +66,7 @@ def generate_plans(
     held_chips: tuple[HeldChip, ...] = (),
     bars: dict[str, dict[int, float]] | None = None,
     selling_prices: dict[int, int] | None = None,
+    lock: Week1Lock | None = None,
 ) -> list[Plan]:
     """Candidate plans, best objective first.
 
@@ -93,6 +94,10 @@ def generate_plans(
     free-hit pricing, and to every single-week fallback solve, so no engine
     can be selling at money another engine was refused.
 
+    ``lock`` is the owner's recorded week, carried to every solve; a recorded
+    free hit (``lock.hold``) is a hold week, so each engine is asked the one
+    count it allows: none.
+
     A transfer count the budget or the pool cannot support comes back from
     the optimizer as None and is simply left out — infeasible is an answer,
     and a squad with nothing worth buying should say so by offering fewer
@@ -101,6 +106,7 @@ def generate_plans(
     surviving plan is enough to keep it out of it, since a shortlist of one
     real window beats a shortlist of four guesses at the wrong question.
     """
+    hold = lock is not None and lock.hold
     if planner != "single" and projections_events:
         # Only a free hit some week of this window may play is priced: one held
         # for the other half of the season builds no binary here, and has no
@@ -134,7 +140,10 @@ def generate_plans(
             # sixth forced opening move is a question about a board it does not
             # believe in. Below that the counts are the single-week solver's own.
             opened: list[Plan | None] = []
-            for count in transfer_counts(min(free_transfers, MAX_FREE_TRANSFERS)):
+            for count in (
+                (0,) if hold
+                else transfer_counts(min(free_transfers, MAX_FREE_TRANSFERS))
+            ):
                 answer = optimize_path(
                     players,
                     xp,
@@ -149,6 +158,7 @@ def generate_plans(
                     freehit_prices=freehit_prices,
                     selling_prices=selling_prices,
                     bars=bars,
+                    lock=lock,
                 )
                 # The path comes back beside the plan and is already on it, so
                 # the second half of the pair is nothing the shortlist carries.
@@ -193,9 +203,9 @@ def generate_plans(
     return _shortlist(
         optimize(
             players, xp, current_squad, bank, free_transfers,
-            forced_transfers=count, selling_prices=selling_prices,
+            forced_transfers=count, selling_prices=selling_prices, lock=lock,
         )
-        for count in transfer_counts(free_transfers)
+        for count in ((0,) if hold else transfer_counts(free_transfers))
     )
 
 
