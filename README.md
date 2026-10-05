@@ -153,11 +153,12 @@ watching the picks for every arrival and departure, and audited once a
 gameweek against the bank the game publishes, with one line in the report
 when the two disagree. The public picks endpoint lags to the last deadline,
 so a transfer you make mid-gameweek is invisible until the next deadline
-passes — unless you text the bot "Transfers made" (see *Telling it what you
-entered*), which also records what you paid — which is also the ledger's error bar, since a buy it first sights
-then is recorded at that day's price, not your click's. And nothing in the
-payload knows about this afternoon's press conference — which is the half of
-the job the model cannot do, and the reason there is a manager at all.
+passes, unless you text the bot "Transfers made" (see *Telling it what you
+entered*), which also records what you paid. That lag is also the ledger's
+error bar: a buy it first sights after the deadline is recorded at that
+day's price, not your click's. And nothing in the payload knows about this
+afternoon's press conference — which is the half of the job the model
+cannot do, and the reason there is a manager at all.
 
 ### The model
 

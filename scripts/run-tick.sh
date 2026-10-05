@@ -31,15 +31,24 @@ main() {
   # held for the whole tick — pull, run, commit, push — so a "Transfers made"
   # recording never interleaves with a report. fd 9 stays open until the
   # script exits, which is what releases it. A box without util-linux's
-  # flock (a Mac) runs no inbox, and so needs no lock.
+  # flock runs the tick unlocked rather than not at all — stopping the
+  # reports is the worse failure — and says so on stderr every tick. The
+  # inbox refuses to run without flock, so there is no recording to collide
+  # with; the lock is lost only against a hand-run one.
   if command -v flock >/dev/null 2>&1; then
     lockdir=${AIGAFFER_INBOX_DIR:-$HOME/.aigaffer}
     mkdir -p "$lockdir"
     exec 9>"$lockdir/state.lock"
     flock 9
+  else
+    echo "run-tick: flock(1) not found (util-linux) — running without the state lock" >&2
   fi
 
-  git pull --rebase -q origin main
+  # --autostash: an inbox that died between writing a recorded week and
+  # committing it leaves a dirty state/executed/ file, and once the remote
+  # moves on a plain rebase pull refuses — every tick after would die here.
+  # Stashed across the pull, the row is committed below like any other.
+  git pull --rebase -q --autostash origin main
   .venv/bin/python -m aigaffer auto
 
   # state/ includes state/executed/, the inbox's recorded weeks.

@@ -1,9 +1,11 @@
 """Tests for the box's two tick scripts and the inbox's systemd units.
 
-``sh -n`` for both scripts; a scratch repository for the one behaviour of
-``run-tick.sh`` this change adds — pushing a commit the inbox could not —
-with a stub interpreter standing in for the gaffer, so the tick's git dance
-runs for real and nothing else does; and, where util-linux ``flock(1)`` is
+``sh -n`` for both scripts; a scratch repository for what ``run-tick.sh``
+does with the inbox's leftovers — pushing a commit the inbox could not,
+pulling past a row it never committed — with a stub interpreter standing in
+for the gaffer, so the tick's git dance runs for real and nothing else does;
+both scripts' stand-downs and their answers to a box without ``flock(1)``,
+under a PATH of our own making; and, where util-linux ``flock(1)`` is
 installed (the VM and the ubuntu CI runner, not a Mac), the lock the tick
 and the inbox share.
 """
@@ -85,16 +87,37 @@ def box(tmp_path):
     return clone, remote
 
 
-def tick(clone: Path, tmp_path: Path) -> None:
+def tick(
+    clone: Path, tmp_path: Path, *, path: str | None = None, check: bool = True
+) -> subprocess.CompletedProcess:
     env = {
         **os.environ,
         "HOME": str(tmp_path),
         "AIGAFFER_INBOX_DIR": str(tmp_path / "inbox"),
     }
-    subprocess.run(
+    if path is not None:
+        env["PATH"] = path
+    return subprocess.run(
         ["sh", str(clone / "scripts" / "run-tick.sh")],
-        cwd=clone, env=env, check=True, capture_output=True,
+        cwd=clone, env=env, check=check, capture_output=True, text=True,
     )
+
+
+def path_without_flock(tmp_path: Path) -> str:
+    """A PATH holding only the tools the two scripts use, flock left out.
+
+    A Mac has no flock(1) at all and the VM always has one, so the only way
+    to test the no-flock branches the same everywhere is to hand the
+    scripts a PATH of our own making: one directory of symlinks to the real
+    git, grep and friends."""
+    bin_dir = tmp_path / "bin-without-flock"
+    bin_dir.mkdir()
+    for tool in ("sh", "git", "dirname", "grep", "mkdir", "ls", "date", "cat"):
+        real = shutil.which(tool)
+        assert real is not None, tool
+        (bin_dir / tool).symlink_to(real)
+    assert shutil.which("flock", path=str(bin_dir)) is None
+    return str(bin_dir)
 
 
 def test_a_commit_the_inbox_could_not_push_goes_with_the_next_tick(box, tmp_path):
@@ -144,3 +167,106 @@ def test_the_inbox_waits_while_a_tick_holds_the_state_lock(tmp_path):
     holder.wait()
 
     assert waited >= 1.0
+
+
+def test_a_tick_without_flock_warns_and_still_runs(box, tmp_path):
+    # No flock means no state lock — but a tick that stood down would stop
+    # the reports, the worse failure, so it says so on stderr and runs.
+    clone, remote = box
+    (clone / "state" / "executed").mkdir()
+    (clone / "state" / "executed" / "gw2.json").write_text('{"gw": 2}\n')
+
+    result = tick(clone, tmp_path, path=path_without_flock(tmp_path))
+
+    assert "flock" in result.stderr
+    assert len(result.stderr.strip().splitlines()) == 1
+    assert git("rev-list", "--count", "main", cwd=remote).strip() == "2"
+
+
+def test_a_crashed_inbox_left_uncommitted_cannot_wedge_the_tick(box, tmp_path):
+    # An inbox that died between writing state/executed/gw2.json and
+    # committing it leaves a dirty tracked file; once the remote moves on, a
+    # plain ``git pull --rebase`` refuses ("cannot pull with rebase: You have
+    # unstaged changes") and, under set -e, every tick after it dies there.
+    # --autostash on the first pull carries the row across the rebase.
+    clone, remote = box
+    (clone / "state" / "executed").mkdir()
+    row = clone / "state" / "executed" / "gw2.json"
+    row.write_text('{"gw": 2}\n')
+    git("add", ".", cwd=clone)
+    git("commit", "-qm", "chore: record transfers made (inbox)", cwd=clone)
+    git("push", "-q", "origin", "HEAD:main", cwd=clone)
+    row.write_text('{"gw": 2, "verdicts": 2}\n')  # the crashed inbox's write
+    elsewhere = tmp_path / "elsewhere"
+    git("clone", "-q", str(remote), str(elsewhere), cwd=tmp_path)
+    (elsewhere / "GW2.md").write_text("report\n")
+    git("add", "GW2.md", cwd=elsewhere)
+    git(
+        "-c", "user.name=Other", "-c", "user.email=other@example.invalid",
+        "commit", "-qm", "chore: gaffer run (github)", cwd=elsewhere,
+    )
+    git("push", "-q", "origin", "HEAD:main", cwd=elsewhere)
+
+    tick(clone, tmp_path)
+
+    assert git("show", "main:state/executed/gw2.json", cwd=remote) == (
+        '{"gw": 2, "verdicts": 2}\n'
+    )
+    assert git("show", "main:GW2.md", cwd=remote) == "report\n"
+
+
+@pytest.fixture
+def inbox_box(tmp_path):
+    """The real inbox-tick.sh in a checkout of its own, with a stub
+    interpreter that leaves a mark when the inbox would have run."""
+    clone = tmp_path / "box"
+    (clone / "scripts").mkdir(parents=True)
+    shutil.copy(SCRIPTS / "inbox-tick.sh", clone / "scripts" / "inbox-tick.sh")
+    python = clone / ".venv" / "bin" / "python"
+    python.parent.mkdir(parents=True)
+    python.write_text('#!/bin/sh\necho ran > "$AIGAFFER_INBOX_DIR/ran"\n')
+    python.chmod(0o755)
+    return clone
+
+
+def inbox_tick(clone: Path, tmp_path: Path, *, path: str | None = None):
+    env = {
+        **os.environ,
+        "HOME": str(tmp_path),
+        "AIGAFFER_INBOX_DIR": str(tmp_path / "inbox"),
+    }
+    if path is not None:
+        env["PATH"] = path
+    return subprocess.run(
+        ["sh", str(clone / "scripts" / "inbox-tick.sh")],
+        cwd=clone, env=env, capture_output=True, text=True,
+    )
+
+
+def test_the_inbox_without_flock_fails_loudly_and_reads_nothing(inbox_box, tmp_path):
+    # Unlike the tick, the inbox has no reason to run unlocked: a minute's
+    # inbox overlapping the last could answer one message twice. exit 1 puts
+    # it in systemctl's failed units, where a silent exit 0 would not.
+    (inbox_box / ".env").write_text("TELEGRAM_BOT_TOKEN=test\n")
+
+    result = inbox_tick(inbox_box, tmp_path, path=path_without_flock(tmp_path))
+
+    assert result.returncode == 1
+    assert "flock" in result.stderr
+    assert len(result.stderr.strip().splitlines()) == 1
+    assert not (tmp_path / "inbox" / "ran").exists()
+
+
+@pytest.mark.parametrize("env_file", [None, "TELEGRAM_BOT_TOKEN=FILL_ME\n"])
+def test_the_inbox_stands_down_without_secrets_and_says_so(
+    inbox_box, tmp_path, env_file
+):
+    if env_file is not None:
+        (inbox_box / ".env").write_text(env_file)
+
+    result = inbox_tick(inbox_box, tmp_path)
+
+    assert result.returncode == 0
+    assert ".env" in result.stderr
+    assert len(result.stderr.strip().splitlines()) == 1
+    assert not (tmp_path / "inbox" / "ran").exists()
