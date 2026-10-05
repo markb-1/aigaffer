@@ -57,6 +57,7 @@ SOMETHING_WRONG = "Something went wrong recording that — try again in a minute
 NOT_CONFIGURED = "aigaffer inbox: telegram not configured — nothing to read"
 UNREACHABLE = "aigaffer inbox: telegram unreachable ({reason})"
 FAILED = "aigaffer inbox: an update failed ({reason})"
+SKIPPED = "aigaffer inbox: an update skipped ({reason})"
 
 
 def inbox_dir() -> Path:
@@ -107,15 +108,24 @@ def run_inbox(
         # (ValueError, AttributeError, TypeError, KeyError) both mean "try
         # next minute", and httpx's own message carries the bot-token URL, so
         # only the class name is ever printed.
-        updates = sorted(
-            get(token, None if last is None else last + 1),
-            key=lambda u: u["update_id"],
-        )
+        fetched = list(get(token, None if last is None else last + 1))
     except Exception as error:
         print(UNREACHABLE.format(reason=type(error).__name__))
         return 0
 
-    for update in updates:
+    # An update without an integer id cannot be handled, retried or passed —
+    # the id is what the offset is made of — so it is skipped with one line,
+    # and the rest are handled in id order. Sorting or reading the id inside
+    # the loop instead would fail the whole batch on it, every minute, for
+    # ever: the offset could never move past it.
+    numbered = []
+    for update in fetched:
+        fault = _id_fault(update)
+        if fault is None:
+            numbered.append(update)
+        else:
+            print(SKIPPED.format(reason=fault))
+    for update in sorted(numbered, key=lambda u: u["update_id"]):
         uid = update["update_id"]
         message = update.get("message")
         try:
@@ -138,6 +148,21 @@ def run_inbox(
         _write_int(directory / OFFSET_FILE, uid)
         (directory / FAILED_FILE).unlink(missing_ok=True)
     return 0
+
+
+def _id_fault(update: object) -> str | None:
+    """None for an update with an integer ``update_id``, else the class of
+    fault to log: KeyError for a dict without one, TypeError for anything
+    else (not a dict at all, or an id that is not an int — a bool counts as
+    not one)."""
+    if not isinstance(update, dict):
+        return TypeError.__name__
+    if "update_id" not in update:
+        return KeyError.__name__
+    uid = update.get("update_id")
+    if not isinstance(uid, int) or isinstance(uid, bool):
+        return TypeError.__name__
+    return None
 
 
 def _apologise(

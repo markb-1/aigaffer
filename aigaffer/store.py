@@ -168,12 +168,28 @@ class Store:
         os.replace(temporary, directory / f"gw{row.gw}.json")
 
     def executed(self, gw: int) -> Executed | None:
-        """The recorded position for ``gw``, or None when he texted nothing."""
+        """The recorded position for ``gw``, or None when he texted nothing.
+
+        Also None — with one line saying so — when the file is there but
+        cannot be read as a row: truncated, hand-edited, or written by a
+        version of the code with another schema. Every live run reads this
+        row, and a recorded week is a convenience on top of the API's squad,
+        never a dependency of it: a bad file must cost the owner his
+        "Transfers made", not the deadline report. The line names the
+        exception's class only, never its words, which can quote the file.
+        """
+        path = self.executed_dir / f"gw{gw}.json"
         try:
-            text = (self.executed_dir / f"gw{gw}.json").read_text(encoding="utf-8")
+            return Executed.from_json(json.loads(path.read_text(encoding="utf-8")))
         except FileNotFoundError:
             return None
-        return Executed.from_json(json.loads(text))
+        # ValueError covers UnicodeDecodeError too: bytes that are not UTF-8.
+        except (json.JSONDecodeError, KeyError, ValueError, TypeError) as error:
+            print(
+                f"recorded week gw{gw} unreadable: {type(error).__name__}"
+                " — running from the API's squad"
+            )
+            return None
 
     def latest_verdict(
         self,

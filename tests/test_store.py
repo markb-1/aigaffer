@@ -1,5 +1,7 @@
 import json
 import sqlite3
+
+import pytest
 from datetime import UTC, datetime, timedelta
 
 from aigaffer.executed import Verdict
@@ -307,6 +309,47 @@ def test_no_row_for_another_gameweek(tmp_path):
     store.save_executed(make_executed())
 
     assert store.executed(3) is None
+
+
+def _drifted(field: str) -> str:
+    """A whole, valid row with one key gone — a file written by another
+    version of the code, or edited by hand."""
+    data = json.loads(json.dumps(make_executed().to_json()))
+    del data[field]
+    return json.dumps(data)
+
+
+@pytest.mark.parametrize(
+    ("text", "fault"),
+    [
+        ('{"gw": 2, "mode": "dead', "JSONDecodeError"),  # truncated mid-write
+        (_drifted("bank_after"), "KeyError"),  # schema drift
+        (json.dumps({**json.loads(_drifted("ft_after")), "gw": "two"}), "ValueError"),
+        ("[1, 2, 3]", "TypeError"),  # JSON, but not a row
+        (b"\xff\xfe{", "UnicodeDecodeError"),  # not even text
+    ],
+    ids=["truncated", "missing-key", "bad-value", "not-a-row", "not-utf8"],
+)
+def test_an_unreadable_recorded_week_reads_as_none_with_one_line(
+    tmp_path, capsys, text, fault
+):
+    # A recorded week is a convenience on top of the API's squad, never a
+    # dependency of it: a gw2.json that will not parse must cost the owner
+    # his "Transfers made", not the deadline report. One line names the
+    # class of the fault — never its words, which could quote the file.
+    store = Store(tmp_path / "aigaffer.db")
+    (tmp_path / "executed").mkdir()
+    path = tmp_path / "executed" / "gw2.json"
+    if isinstance(text, bytes):
+        path.write_bytes(text)
+    else:
+        path.write_text(text)
+
+    assert store.executed(2) is None
+
+    assert capsys.readouterr().out.splitlines() == [
+        f"recorded week gw2 unreadable: {fault} — running from the API's squad"
+    ]
 
 
 MODES = ("early", "scout", "deadline")

@@ -3724,6 +3724,34 @@ def test_a_row_for_another_gameweek_changes_nothing(tmp_path):
     assert stale.decision(2, "deadline")["executed_from"] is None
 
 
+@pytest.mark.parametrize("mode", ["deadline", "reminder"])
+def test_an_unreadable_recorded_week_runs_from_the_api_squad(tmp_path, capsys, mode):
+    # A gw2.json cut off mid-write (or written by another schema) must cost
+    # the owner his "Transfers made", never the run: it goes ahead from the
+    # API's squad — byte for byte the run with nothing recorded — and says
+    # in one line why it ignored the row.
+    broken = Store(tmp_path / "broken" / "aigaffer.db")
+    broken.executed_dir.mkdir(parents=True)
+    (broken.executed_dir / "gw2.json").write_text('{"gw": 2, "mode": "dead')
+
+    plain = run_pipeline(
+        config(state_dir=tmp_path / "plain_state"), make_client(pipeline_routes()),
+        Store(tmp_path / "plain" / "aigaffer.db"), mode, send=False,
+    )
+    capsys.readouterr()
+    with_broken = run_pipeline(
+        config(state_dir=tmp_path / "broken_state"), make_client(pipeline_routes()),
+        broken, mode, send=False,
+    )
+
+    assert with_broken == plain
+    assert broken.decision(2, mode).get("executed_from") is None
+    assert (
+        "recorded week gw2 unreadable: JSONDecodeError — running from the API's squad"
+        in capsys.readouterr().out
+    )
+
+
 def test_a_recorded_free_hit_fields_the_entered_team_and_holds(tmp_path):
     # With one free transfer the solver would sign Reyes for Grant; on a free
     # hit he entered, the standing squad makes no move and the team on the

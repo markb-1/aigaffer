@@ -263,6 +263,41 @@ def test_a_malformed_update_is_a_failure_not_a_crash(tmp_path, capsys):
     assert "AttributeError" in capsys.readouterr().out
 
 
+class Unnumbered(Phone):
+    """Telegram serving updates some of which carry no usable ``update_id``:
+    served whole, whatever the offset, as a garbled payload would be."""
+
+    def get(self, token, offset):
+        self.asked.append(offset)
+        return list(self.updates)
+
+
+@pytest.mark.parametrize(
+    ("bad", "reason"),
+    [
+        ({"message": {"chat": {"id": int(CHAT)}, "date": DATE, "text": "help"}}, "KeyError"),
+        ({"update_id": "11", "message": None}, "TypeError"),
+        ("not-an-update", "TypeError"),
+    ],
+)
+def test_an_update_without_an_id_is_skipped_and_the_rest_handled(
+    tmp_path, capsys, bad, reason
+):
+    # The id is what the offset is made of, so an update without an integer
+    # one cannot be handled, retried or passed: it is skipped with one line
+    # naming the class of the fault, and the good update behind it is
+    # answered and moves the offset — rather than the whole batch failing
+    # every minute, for ever, on the same unreadable update.
+    phone = Unnumbered([bad, update(12, "Transfers made")])
+
+    assert run(tmp_path, phone) == 0
+
+    assert phone.sent == [recorded(datetime.fromtimestamp(DATE, UTC))]
+    assert (tmp_path / "offset").read_text() == "12"
+    out = capsys.readouterr().out
+    assert out.strip().splitlines() == [f"aigaffer inbox: an update skipped ({reason})"]
+
+
 # --- the command line ---------------------------------------------------------
 
 
