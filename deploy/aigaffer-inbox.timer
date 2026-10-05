@@ -1,0 +1,12 @@
+# Copy to /etc/systemd/system/, then: systemctl enable --now aigaffer-inbox.timer
+[Unit]
+Description=Gaffer inbox, once a minute — the only reader of the bot's messages
+
+[Timer]
+# On the minute, to the second: a "Transfers made" is answered within about
+# a minute. A tick finding the last one still at work exits (flock -n).
+OnCalendar=*-*-* *:*:00
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target

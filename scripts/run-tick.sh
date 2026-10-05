@@ -2,7 +2,9 @@
 # One tick of the gaffer on a box of your own: pull the latest code and
 # state, ask auto, commit what changed, push. The store makes a duplicate
 # tick (GitHub's :50 backup, a hand-run) harmless, and the late-open windows
-# mean a missed tick costs lateness, never a report.
+# mean a missed tick costs lateness, never a report. It holds the state lock
+# it shares with the inbox for the whole tick, and pushes any commit an inbox
+# recording could not.
 #
 # Fired hourly at :35 by deploy/aigaffer.timer. Git auth is the box's own —
 # a deploy key with write access is the usual answer — so nothing here names
@@ -25,13 +27,31 @@ main() {
   fi
   set -a; . ./.env; set +a
 
+  # The state lock, shared with the one-minute inbox (scripts/inbox-tick.sh):
+  # held for the whole tick — pull, run, commit, push — so a "Transfers made"
+  # recording never interleaves with a report. fd 9 stays open until the
+  # script exits, which is what releases it. A box without util-linux's
+  # flock (a Mac) runs no inbox, and so needs no lock.
+  if command -v flock >/dev/null 2>&1; then
+    lockdir=${AIGAFFER_INBOX_DIR:-$HOME/.aigaffer}
+    mkdir -p "$lockdir"
+    exec 9>"$lockdir/state.lock"
+    flock 9
+  fi
+
   git pull --rebase -q origin main
   .venv/bin/python -m aigaffer auto
 
+  # state/ includes state/executed/, the inbox's recorded weeks.
   git add state/
   if ls GW*.md >/dev/null 2>&1; then git add GW*.md; fi
   git add README.md
   if git diff --cached --quiet; then
+    # Nothing new from this run — but an inbox recording whose push failed
+    # left a commit behind, and this tick is the one that sends it.
+    if [ -n "$(git rev-list origin/main..HEAD 2>/dev/null)" ]; then
+      git push -q origin HEAD:main
+    fi
     exit 0
   fi
   # A fresh clone has no identity to commit as; the box's own, if it has

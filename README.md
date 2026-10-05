@@ -153,7 +153,8 @@ watching the picks for every arrival and departure, and audited once a
 gameweek against the bank the game publishes, with one line in the report
 when the two disagree. The public picks endpoint lags to the last deadline,
 so a transfer you make mid-gameweek is invisible until the next deadline
-passes — which is also the ledger's error bar, since a buy it first sights
+passes — unless you text the bot "Transfers made" (see *Telling it what you
+entered*), which also records what you paid — which is also the ledger's error bar, since a buy it first sights
 then is recorded at that day's price, not your click's. And nothing in the
 payload knows about this afternoon's press conference — which is the half of
 the job the model cannot do, and the reason there is a manager at all.
@@ -595,6 +596,34 @@ off-season, when nothing is being committed and the bot is standing down
 anyway; re-enable it from the Actions tab (or push any commit) before the
 first deadline of the new season.
 
+### Telling it what you entered
+
+FPL's public API cannot see a transfer until the deadline it was made for,
+so on its own the bot would spend the rest of a gameweek recommending moves
+you have already made. Text the bot **Transfers made** straight after you
+enter the latest recommendation exactly — its transfers and its chip — and
+every later report that gameweek works from the squad you entered: it says
+so near the top, it never sells a player you have just bought or buys back
+one you have just sold, and the T-3h reminder checks your armbands, your
+shape, your bench order and the fitness of the players you signed instead
+of re-recommending the moves. If you changed anything, don't send it; the
+runs then behave exactly as before. A second "Transfers made" after a later
+report you also acted on adds that report's moves on top; the same one twice
+changes nothing. The reply echoes the whole position — moves, armbands,
+squad, bank, free transfers — so a mismatch shows at once. Text it straight
+away: prices are taken when you text, and an overnight price move between
+entering and texting is the one gap.
+
+Only your own box reads Telegram: `python -m aigaffer inbox`, once a minute,
+from `deploy/aigaffer-inbox.timer`. It obeys the configured chat and nobody
+else, answers `help` (or anything it does not know) with the list of
+commands, and keeps its place in `~/.aigaffer/` (`AIGAFFER_INBOX_DIR`),
+outside the checkout. Recording takes the same lock the hourly tick holds,
+pulls, writes the row (a small text file, `state/executed/gw{n}.json`),
+commits and pushes it — so the GitHub workflow,
+which never reads Telegram, sees what you entered through the store like
+everything else. A push that fails is sent by the next hourly tick.
+
 ### Your own box
 
 Any always-on Linux machine will do — a free-tier cloud VM is plenty. On
@@ -623,6 +652,11 @@ cp .env.example .env && chmod 600 .env   # then fill it in
   `sudo systemctl enable --now aigaffer.timer`. `systemctl list-timers
   aigaffer.timer` shows the next tick and `journalctl -u aigaffer` what the
   last one said.
+- **The inbox.** Copy `deploy/aigaffer-inbox.service` and
+  `deploy/aigaffer-inbox.timer` beside the tick's, fill in the same user and
+  path, then `sudo systemctl enable --now aigaffer-inbox.timer`. Both scripts
+  share one state lock through util-linux's `flock`, standard on any Linux;
+  `journalctl -u aigaffer-inbox` shows what the inbox last said.
 
 `run-tick.sh` stands down while `.env` is missing or still holds a
 `FILL_ME`, pulls before it runs so a fix pushed from your laptop is live
@@ -701,10 +735,14 @@ These are deliberate. Do not "fix" them without revisiting the design:
    happened in between. The bank-reconciliation line in the report is the
    drift detector for exactly that: its first appearance after a week of
    manual transfers is the system working, not a bug, and the game's own
-   published bank stays authoritative everywhere either way.
+   published bank stays authoritative everywhere either way. A signing
+   recorded with "Transfers made" is ledgered at the price when you texted
+   instead.
 2. **Pre-deadline transfers by the user are invisible.** The public picks
    endpoint lags to the last deadline, so any transfer you make during the
    current gameweek is not reflected until the next deadline passes.
+   Texting "Transfers made" closes the gap for a week you entered exactly as
+   recommended; a week you deviated from stays invisible until the deadline.
 3. **The opening weekend has no minutes to read, for a new face.** Expected
    minutes are a mean over the matches a player has actually played. The API
    adds a history row the moment a deadline goes — 0 minutes for a match that

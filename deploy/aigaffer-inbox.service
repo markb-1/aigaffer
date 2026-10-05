@@ -1,0 +1,15 @@
+# Copy to /etc/systemd/system/ beside aigaffer-inbox.timer and replace the
+# two placeholders: the user that owns the clone, and the clone's path.
+[Unit]
+Description=AI Gaffer inbox (read the owner's texts, answer, record "Transfers made")
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=YOUR_USER
+ExecStart=/path/to/aigaffer/scripts/inbox-tick.sh
+# A recording waits for the state lock, which the hourly tick holds for a
+# whole run — up to forty minutes (aigaffer.service). Forty-five lets it wait
+# that out rather than be killed and start the wait again.
+TimeoutStartSec=2700
