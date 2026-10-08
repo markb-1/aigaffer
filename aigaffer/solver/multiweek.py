@@ -354,6 +354,17 @@ class PlannedPath:
     priced by :func:`_best_one_week_squad`, the same one-week squad the free-hit
     value was measured on, so the number in the panel and the team on the sheet
     are the same team.
+
+    ``proven`` says whether CBC proved this the best path or stopped on its
+    time limit with a path in hand: both come back as "Optimal" (see the solve
+    in :func:`optimize_path`), and only the solution status tells them apart.
+    A caller that compares two solves — the chip what-ifs do — needs to know
+    when the difference between them might be the solver's and not the
+    board's. ``bars_paid`` is the chip bar the objective paid, decayed as the
+    objective decays it: the sum, over every gameweek a chip is played in, of
+    that chip's bar there. ``objective + bars_paid`` is what the window scores
+    with no bars at all, which is the number a "what does the chip buy"
+    question wants and the objective, by design, is not.
     """
 
     moves: list[PlannedMove]
@@ -362,6 +373,8 @@ class PlannedPath:
     week1_chip: str = "none"
     week1_freehit_squad: list[int] | None = None
     week1_freehit_xi: list[int] | None = None
+    proven: bool = True
+    bars_paid: float = 0.0
 
 
 def optimize_path(
@@ -379,6 +392,7 @@ def optimize_path(
     selling_prices: dict[int, int] | None = None,
     bars: dict[str, dict[int, float]] | None = None,
     lock: Week1Lock | None = None,
+    pin_chip: tuple[str, bool] | None = None,
 ) -> tuple[Plan, PlannedPath] | None:
     """The best sequence of squads over ``events``, or None.
 
@@ -430,6 +444,17 @@ def optimize_path(
     with no new free transfer after it.
     Later gameweeks are untouched, and so are the free-hit prices, which are
     what-ifs.
+
+    ``pin_chip`` fixes one chip's week-1 decision: ``(kind, True)`` plays the
+    held chip of that kind in the gameweek being decided, ``(kind, False)``
+    forbids it there — leaving it free to be played later in the window,
+    against its bars, like any other week. Everything else about the model is
+    untouched, which is the point: the chip what-ifs
+    (:mod:`aigaffer.whatif`) solve the same board twice, one pin each way,
+    and read the difference as what playing the chip now is worth. A pin
+    with no binary to fix — a kind not held, not one this solver plans, or
+    held but not playable in week 1 — is None, the same "no answer" an
+    infeasible board gets. None, the default, adds nothing to the model.
 
     ``forced_first_transfers`` pins the opening gameweek's moves; left alone,
     the opening gameweek moves at most ``max(MAX_TRANSFERS, ft)`` times, which
@@ -626,6 +651,20 @@ def optimize_path(
         }
         for chip in held
     }
+
+    # The what-ifs' one lever: a held chip's week-1 binary, fixed either way.
+    # A kind's windows never overlap, so at most one held chip of it can have
+    # a week-1 binary; none means there is nothing to pin, and the question
+    # has no answer here.
+    if pin_chip is not None:
+        kind, played = pin_chip
+        pinned = next(
+            (chip for chip in held if chip.chip == kind and 1 in play[chip.id]),
+            None,
+        )
+        if pinned is None:
+            return None
+        problem += play[pinned.id][1] == (1 if played else 0)
 
     def on(kind: str, w: int):
         """Whether ``kind`` is played in week ``w``: the sum of its held chips'
@@ -922,8 +961,11 @@ def optimize_path(
     # here, and that is the answer we want: a plan the solver could not prove
     # best is still a plan, and the alternative is the single-week solver.
     # A timeout with nothing found reports as not-solved, and that is None.
+    # The solution status is what tells the two Optimals apart, and it rides
+    # on the path as ``proven`` for a caller comparing one solve with another.
     if pulp.LpStatus[status] != "Optimal":
         return None
+    proven = problem.sol_status == pulp.const.LpSolutionOptimal
 
     # The objective is added back up from the solution rather than read off the
     # solver, so that the number a report prints is the one its own squads earn
@@ -932,6 +974,7 @@ def optimize_path(
     objective = 0.0
     hits = 0
     bought = 0
+    bars_spent = 0.0
     weekly_xp: dict[int, float] = {}
     path_moves: list[PlannedMove] = []
     opening: list[int] = []
@@ -964,6 +1007,10 @@ def optimize_path(
             None,
         )
         chip = played_here.chip if played_here else "none"
+        # The bar this week's chip cleared, decayed as the objective decays
+        # it: exactly what the week_score lines below subtract.
+        if played_here is not None:
+            bars_spent += decay ** (w - 1) * bar(played_here, w)
         bb_on, tc_on, wc_on, fh_on = (
             chip == kind for kind in (BENCH_BOOST, TRIPLE_CAPTAIN, WILDCARD, FREE_HIT)
         )
@@ -1030,6 +1077,8 @@ def optimize_path(
         week1_chip=opening_chip,
         week1_freehit_squad=freehit_squad,
         week1_freehit_xi=freehit_xi,
+        proven=proven,
+        bars_paid=bars_spent,
     )
     plan = Plan(
         squad=opening,

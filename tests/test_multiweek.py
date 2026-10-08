@@ -3049,3 +3049,250 @@ def test_a_lock_without_free_is_byte_identical_to_none():
     assert none[0].transfers_in == plain[0].transfers_in
     assert none[0].hits == plain[0].hits == 2
     assert none[0].objective == plain[0].objective
+
+
+# --------------------------------------------------------------------------
+# Pinning a chip, proving the answer, and the bars a path paid: what the chip
+# what-ifs ask of the window (aigaffer.whatif)
+# --------------------------------------------------------------------------
+
+
+def _rebuild_inside_the_cap() -> tuple[dict, dict]:
+    """The spine in GW10 plus three midfielders worth 20.0: the board of
+    ``test_a_rebuild_worth_less_than_the_bar_holds_the_wildcard``. Three moves
+    fit inside the opening cap, so left to itself the window holds the wildcard
+    and pays two hits for them."""
+    rows = [(pid, position, 50, {10: points}) for pid, position, points in SPINE]
+    for pid in (16, 17, 18):
+        rows.append((pid, MID, 50, {10: 20.0}))
+    return _build(rows)
+
+
+def test_a_wildcard_pinned_on_is_played_even_below_its_bar():
+    # Left alone, the window holds the wildcard: it would save the two hits
+    # (8.0) the three moves cost, far short of its 35.0 bar, so it makes the
+    # same three moves and pays for them, an objective of 110.41. Pinned on, it
+    # must play it. The same three come in, now free: 110.41 + 8.0 for the
+    # hits spared, less the 35.0 bar the chip pays = 83.41. Same squad, same
+    # churn, so the hits and the bar are the whole difference.
+    players, projections = _rebuild_inside_the_cap()
+
+    alone, alone_path = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[10],
+        decay=DECAY, held_chips=whole_season(WILDCARD),
+    )
+    pinned, pinned_path = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[10],
+        decay=DECAY, held_chips=whole_season(WILDCARD), pin_chip=(WILDCARD, True),
+    )
+
+    assert alone_path.week1_chip == "none"
+    assert alone.objective == pytest.approx(110.41, abs=1e-4)
+    assert pinned_path.week1_chip == WILDCARD
+    assert sorted(pinned.transfers_in) == [16, 17, 18]
+    assert pinned.hits == 0
+    assert pinned.objective == pytest.approx(83.41, abs=1e-4)
+    # The bar it paid, undiscounted in week 1, and none on the other side.
+    assert pinned_path.bars_paid == pytest.approx(35.0, abs=1e-9)
+    assert alone_path.bars_paid == 0.0
+    # objective + bars_paid is the window's score with no bars: 118.41 on the
+    # pinned side, which is exactly 8.0 — the two hits — better than holding.
+    assert pinned.objective + pinned_path.bars_paid - (
+        alone.objective + alone_path.bars_paid
+    ) == pytest.approx(8.0, abs=1e-4)
+
+
+def test_a_wildcard_pinned_off_is_the_plain_solve_in_a_one_week_window():
+    # Seven arrivals worth 20.0: left alone the window wildcards (143.39, the
+    # rebuild test above). Pinned off in a one-week window, there is no later
+    # week to play it in, so it is held and the answer is the no-chip solve to
+    # the hundredth: three moves under the cap, two hits, 113.83.
+    players, projections = seven_arrivals([10])
+
+    pinned, path = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[10],
+        decay=DECAY, held_chips=whole_season(WILDCARD), pin_chip=(WILDCARD, False),
+    )
+    plain, _ = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[10],
+        decay=DECAY, held_chips=(),
+    )
+
+    assert path.week1_chip == "none"
+    assert len(pinned.transfers_in) <= MAX_TRANSFERS
+    assert pinned.objective == pytest.approx(plain.objective, abs=1e-4)
+    assert pinned.objective == pytest.approx(113.83, abs=1e-4)
+    assert path.bars_paid == 0.0
+
+
+def test_a_wildcard_pinned_on_moves_the_bench_boost_to_the_next_week():
+    # Flat at 6.0 a man over GW10-11, both chips held. Left alone the bench
+    # boost takes GW10 (0.9 x 24.0 = 21.6 over its 20.0 bar, 139.24; see
+    # test_bench_boost_above_its_bar_is_played) and the wildcard, which can buy
+    # nothing on a board whose pool is the squad, is held. Pinning the
+    # wildcard on in GW10 takes the week, one chip a gameweek, so the boost
+    # goes in GW11 instead:
+    #   GW10: 66 started + 6 armband + 0.1 x 24 bench = 74.4, less the 35.0
+    #         wildcard bar = 39.4
+    #   GW11: 0.85 x (74.4 + 0.9 x 24.0 - 20.0) = 0.85 x 76.0 = 64.6
+    #   total 104.0
+    # Both bars it paid: 35.0 + 0.85 x 20.0 = 52.0.
+    players, projections = flat([10, 11], 6.0)
+
+    plan, path = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[10, 11],
+        decay=DECAY, held_chips=whole_season(BENCH_BOOST, WILDCARD),
+        pin_chip=(WILDCARD, True),
+    )
+
+    assert path.week1_chip == WILDCARD
+    assert path.moves == [
+        PlannedMove(event=11, transfers_in=[], transfers_out=[], hits=0, chip=BENCH_BOOST)
+    ]
+    assert plan.objective == pytest.approx(104.0, abs=1e-4)
+    assert path.bars_paid == pytest.approx(52.0, abs=1e-9)
+    assert_legal_path(players, SQUAD, 0, 1, [10, 11], plan, path)
+
+
+def test_a_free_hit_pinned_on_pays_its_bar_on_a_board_it_cannot_improve():
+    # The spine, GW10-12: the best one-week squad is the spine itself, so a free
+    # hit gains nothing and is never played unpinned (158.31165, the plain
+    # do-nothing). Pinned on, GW10 is worth the one-week squad's 61.54 —
+    # bench share included, which is why weekly_xp reads 61.54 and not the
+    # XI's 61.0 — less the 25.0 bar, and the other two weeks are untouched:
+    # 158.31165 - 25.0 = 133.31165.
+    players, projections = spine([10, 11, 12])
+
+    plan, path = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[10, 11, 12],
+        decay=DECAY, held_chips=whole_season(FREE_HIT), pin_chip=(FREE_HIT, True),
+    )
+
+    assert path.week1_chip == FREE_HIT
+    assert plan.objective == pytest.approx(133.31165, abs=1e-4)
+    assert path.weekly_xp[10] == pytest.approx(61.54, abs=1e-4)
+    assert path.bars_paid == pytest.approx(25.0, abs=1e-9)
+    assert plan.squad == SQUAD
+
+
+def test_bars_paid_is_the_decayed_sum_of_every_played_chips_bar():
+    # Whatever the window plays, bars_paid must be exactly the bars its
+    # objective subtracted: week 1's chip, plus each later move's, decayed.
+    # The pinned-off wildcard over three weeks of seven arrivals is free to
+    # play the chip in GW11 or GW12, so the expected sum is read off the path
+    # it chose, using the fallback bars (no calendar here).
+    players, projections = seven_arrivals([10, 11, 12])
+
+    _, path = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[10, 11, 12],
+        decay=DECAY, held_chips=whole_season(WILDCARD, BENCH_BOOST),
+        pin_chip=(WILDCARD, False),
+    )
+
+    assert path.week1_chip != WILDCARD
+    index = {10: 0, 11: 1, 12: 2}
+    played = [(10, path.week1_chip)] + [(m.event, m.chip) for m in path.moves]
+    expected = sum(
+        DECAY ** index[event] * multiweek.FALLBACK_BARS[chip]
+        for event, chip in played
+        if chip != "none"
+    )
+    assert path.bars_paid == pytest.approx(expected, abs=1e-9)
+
+
+def test_pinning_a_chip_the_window_cannot_play_in_week_one_is_no_answer():
+    players, projections = spine([10, 11])
+
+    # Not held at all.
+    assert optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[10, 11],
+        decay=DECAY, held_chips=whole_season(WILDCARD), pin_chip=(FREE_HIT, True),
+    ) is None
+    # Held, but its window opens at GW20: no week-1 binary exists to pin.
+    assert optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[10, 11],
+        decay=DECAY, held_chips=(HeldChip(WILDCARD, 20, 38),),
+        pin_chip=(WILDCARD, False),
+    ) is None
+    # Held, but in no window week at all: still nothing to pin.
+    assert optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[10, 11],
+        decay=DECAY, held_chips=(), pin_chip=(WILDCARD, True),
+    ) is None
+
+
+def test_a_pin_adds_one_row_and_no_pin_adds_nothing(monkeypatch):
+    # The fallback guarantee: pin_chip=None builds exactly the model the
+    # solver built before, variable for variable and row for row, with the
+    # same answer. A pin adds one row — the binary fixed — and no variable.
+    sizes: list[tuple[int, int]] = []
+    solve = multiweek.pulp.LpProblem.solve
+
+    def counted(problem, *args, **kwargs):
+        if problem.name == "aigaffer_transfer_path":
+            sizes.append((problem.numVariables(), problem.numConstraints()))
+        return solve(problem, *args, **kwargs)
+
+    monkeypatch.setattr(multiweek.pulp.LpProblem, "solve", counted)
+    players, projections = spine([10, 11, 12])
+    held = whole_season(WILDCARD, BENCH_BOOST)
+
+    omitted = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[10, 11, 12],
+        decay=DECAY, held_chips=held,
+    )
+    none = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[10, 11, 12],
+        decay=DECAY, held_chips=held, pin_chip=None,
+    )
+    pinned = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[10, 11, 12],
+        decay=DECAY, held_chips=held, pin_chip=(WILDCARD, False),
+    )
+
+    assert sizes[0] == sizes[1]
+    assert sizes[2] == (sizes[0][0], sizes[0][1] + 1)
+    assert omitted[0].objective == none[0].objective
+    assert omitted[1] == none[1]
+    # The spine wildcards nothing, so pinning it off changes no answer either.
+    assert pinned[0].objective == pytest.approx(omitted[0].objective, abs=1e-4)
+
+
+def test_a_proven_answer_says_so():
+    players, projections = spine([10, 11])
+
+    _, path = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[10, 11],
+        decay=DECAY,
+    )
+
+    assert path.proven is True
+
+
+def test_an_answer_cbc_stopped_on_its_time_limit_says_it_is_unproven(monkeypatch):
+    # The cheapest honest stand-in for a time-limited stop: the real solve
+    # runs, then the problem's solution status is set to what pulp 3.3.2's
+    # COIN_CMD sets when CBC reports "Stopped on time" with an incumbent —
+    # LpSolutionIntegerFeasible — while the status it returns stays Optimal,
+    # exactly as on a real stop. The plan is still returned (a plan the
+    # solver could not prove best is still a plan), and it says so.
+    solve = multiweek.pulp.LpProblem.solve
+
+    def stopped_on_time(problem, *args, **kwargs):
+        status = solve(problem, *args, **kwargs)
+        if problem.name == "aigaffer_transfer_path":
+            problem.sol_status = multiweek.pulp.const.LpSolutionIntegerFeasible
+        return status
+
+    monkeypatch.setattr(multiweek.pulp.LpProblem, "solve", stopped_on_time)
+    players, projections = spine([10, 11])
+
+    result = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[10, 11],
+        decay=DECAY,
+    )
+
+    assert result is not None
+    plan, path = result
+    assert path.proven is False
+    assert plan.objective == pytest.approx(113.849, abs=1e-4)
