@@ -71,7 +71,7 @@ class Config:
     # An opt-out, not an opt-in: the manager runs whenever there is a key to run
     # it with, and __post_init__ clamps this to the key either way.
     manager_enabled: bool = True
-    manager_model: str = "claude-opus-5"
+    manager_model: str = "claude-opus-5-5"
     # "multi" plans the window and falls back on the single-week solver when it
     # has no answer; "single" is that solver and nothing else. An escape hatch
     # for a run that has to be quick or a week the window is misbehaving.
@@ -110,7 +110,7 @@ class Config:
             anthropic_api_key=os.environ.get("ANTHROPIC_API_KEY"),
             # Only "0" turns it off; unset or anything else leaves the key to decide.
             manager_enabled=os.environ.get("AIGAFFER_MANAGER") != "0",
-            manager_model=os.environ.get("AIGAFFER_MANAGER_MODEL", "claude-opus-5"),
+            manager_model=os.environ.get("AIGAFFER_MANAGER_MODEL", "claude-opus-5-5"),
             # AIGAFFER_MANAGER's convention: one literal value switches, and
             # everything else — a typo, a "0", an empty export — leaves the
             # default standing. Turning the better planner off by accident is

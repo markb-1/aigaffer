@@ -95,7 +95,7 @@ def test_manager_enabled_for_any_value_but_zero(manager_env):
 
 
 def test_manager_model_default_and_override(manager_env):
-    assert Config.from_env().manager_model == "claude-opus-5"
+    assert Config.from_env().manager_model == "claude-opus-5-5"
     manager_env.setenv("AIGAFFER_MANAGER_MODEL", "claude-sonnet-5")
     assert Config.from_env().manager_model == "claude-sonnet-5"
 

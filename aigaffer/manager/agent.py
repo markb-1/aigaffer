@@ -83,16 +83,18 @@ OUT_OF_TIME = "out of time"
 
 # Non-streaming, because the loop reads whole messages and shows nobody a
 # partial one. What that costs is a request the client has to wait out in
-# silence: a turn at this effort runs its searches on the server before a single
-# token comes back, and it is minutes rather than seconds. The orchestrator's
+# silence: a turn at this effort can run its searches on the server before a
+# single token comes back, and it is minutes rather than seconds. The orchestrator's
 # five-minute timeout is what makes it safe, and the two-minute one this was
 # first written with is what made it fail every time. Effort is the depth
 # control on this model; thinking is adaptive by default and an explicit
 # configuration risks a 400, so the parameter is not sent at all.
+#
+# Medium is Opus 5.5's own default and is set explicitly anyway, so that a
+# change of default on the platform's side is never a change of behaviour on
+# ours.
 MAX_TOKENS = 16000
-EFFORT = {"effort": "high"}
-
-FORCE_FINALIZE = {"type": "tool", "name": "finalize_decision"}
+EFFORT = {"effort": "medium"}
 
 MANAGER = "manager"
 FALLBACK = "solver-fallback"
@@ -102,12 +104,34 @@ FALLBACK = "solver-fallback"
 # to refresh a spent search allowance — and this message's bare demand
 # talked it into finalizing instead, after which it wrote "my allowance
 # ran out and it did not refresh" into the rationale, wrongly. The demand
-# stays: a model that merely talks, twice running, is still forced.
+# stays: a model that merely talks, twice running, is still told outright to decide.
 NUDGE = (
     "That is not a decision yet. If you ended your turn to refresh your"
     " search allowance, it is fresh now — continue the research you paused"
     " for. Otherwise finish the job: call finalize_decision with the plan id"
     " you have settled on, your captain and vice from that plan's eleven, a"
+    " chip (or 'none'), and the rationale."
+)
+
+# The decision, asked for in words, because Opus 5.5 answers a forced
+# ``tool_choice`` ("tool" or "any") with an HTTP 400 and so the request never
+# carries one. This is what stands in for it on the three turns that used to be
+# forced: a second consecutive stall, the turn after one cut off at max_tokens,
+# and the last turn. It is strict about the shape of the turn — one call, no
+# searches, no other tool, no prose-only reply — because those are the ways an
+# unforced model can still avoid deciding, and ``finalize_decision`` is a
+# strict tool, so a call that does come is well-formed.
+#
+# It is appended to the conversation and stays there. Opus 5.5 binds its
+# thinking blocks to the history they were produced in, so an earlier message
+# is never edited or removed; the instruction is one more user turn at the end,
+# and "one turn's worth of insistence, not a mode" is now a matter of not
+# appending it again rather than of leaving a parameter off.
+FINALIZE_NOW = (
+    "Decide now. This turn must be exactly one finalize_decision call and"
+    " nothing else: no searches, no other tools, and no reply that is only"
+    " text. Give the plan id you have settled on (or the solver's pick, if you"
+    " have settled on none), your captain and vice from that plan's eleven, a"
     " chip (or 'none'), and the rationale."
 )
 
@@ -320,16 +344,22 @@ class _Conversation:
         its answer is paid for either way, and the client's own timeout is what
         bounds it.
         """
-        forced = False
+        # Whether FINALIZE_NOW is already the last thing in the conversation,
+        # put there by the turn before. The last turn asks for the decision
+        # whether or not anything else has, and must not ask twice in a row.
+        asked = False
         nudged = False
 
         for turn in range(1, MAX_TURNS + 1):
             if self._expired():
                 return self.fallback(OUT_OF_TIME)
-            response = self._ask(forced or turn == MAX_TURNS)
-            # Forcing is one turn's worth of insistence, not a mode: a turn cut
+            if turn == MAX_TURNS and not asked:
+                self._ask_for_decision()
+            response = self._ask()
+            # Asking is one turn's worth of insistence, not a mode: a turn cut
             # off mid-sentence should not cost him the rest of his research.
-            forced = False
+            # The words stay in the history, but nothing repeats them.
+            asked = False
             if response is None:
                 # Either the pauses ran out or the clock did, and the two are
                 # different weeks to explain: one is a turn that would not come
@@ -345,7 +375,8 @@ class _Conversation:
                 # A turn cut off mid-sentence is a turn that never happened: its
                 # half-written tool call cannot be answered, so it is dropped
                 # rather than sent back, and the next turn asks for the decision.
-                forced = True
+                self._ask_for_decision()
+                asked = True
                 continue
 
             decision, results = self._act(response)
@@ -362,24 +393,36 @@ class _Conversation:
                 continue
 
             # He talked instead of deciding. Once is worth a word; after that
-            # the decision is taken out of his hands with tool_choice, and stays
-            # out of them for as long as he keeps talking.
+            # the decision is asked for outright, in place of the word and not
+            # on top of it, and is asked for again after every further stall.
             self._append(response)
-            # A block list rather than a bare string, like every other message
-            # this loop writes: the request marks the last block of the last
-            # message, and a string has no blocks to mark.
-            self.messages.append({"role": "user", "content": [_text(NUDGE)]})
             if nudged:
-                forced = True
+                self._ask_for_decision()
+                asked = True
+            else:
+                # A block list rather than a bare string, like every other
+                # message this loop writes: the request marks the last block of
+                # the last message, and a string has no blocks to mark.
+                self.messages.append({"role": "user", "content": [_text(NUDGE)]})
             nudged = True
 
         return self.fallback(f"no decision in {MAX_TURNS} turns")
+
+    def _ask_for_decision(self) -> None:
+        """Append :data:`FINALIZE_NOW` as the next user turn, and change nothing else.
+
+        Append-only on purpose: an earlier message is never edited or removed,
+        because Opus 5.5 binds its thinking blocks to the conversation they
+        were written in. A user turn straight after another is fine for the
+        API, which reads the two as one.
+        """
+        self.messages.append({"role": "user", "content": [_text(FINALIZE_NOW)]})
 
     def fallback(self, reason: str) -> ManagerDecision:
         """Give the week back to the solver, from inside the loop."""
         return _abandoned(self.solve0, self, reason)
 
-    def _ask(self, forced: bool) -> Any:
+    def _ask(self) -> Any:
         """One assistant turn, resumed as often as the server pauses it.
 
         A pause is not a failure and not a fresh start: the server has stopped
@@ -402,7 +445,7 @@ class _Conversation:
         for attempt in range(MAX_RESUMPTIONS + 1):
             if attempt and self._expired():
                 return None
-            response = self.client.messages.create(**self._request(forced))
+            response = self.client.messages.create(**self._request())
             # Before the stop reason is read, and on every answer: a paused turn
             # opens the container just as a finished one does, and the request
             # that resumes it is already replaying the blocks that need it.
@@ -417,7 +460,7 @@ class _Conversation:
         """Has the conversation outrun :data:`TIME_BUDGET_SECONDS`?"""
         return monotonic() - self.started > TIME_BUDGET_SECONDS
 
-    def _request(self, forced: bool) -> dict:
+    def _request(self) -> dict:
         """The request, byte-stable where it can be: the system block never
         moves, so the prefix caches, and the messages are copied so that a
         request already sent cannot be edited by the turn after it.
@@ -438,6 +481,10 @@ class _Conversation:
         is not optional then: see :meth:`_note_container` for what the
         conversation is carrying by that point and why the API refuses to take
         it without being told which container it belongs to.
+
+        There is no ``tool_choice``, on any request: Opus 5.5 rejects a forced
+        one, and the decision is asked for in words instead (see
+        :data:`FINALIZE_NOW`).
         """
         messages = list(self.messages)
         if messages:
@@ -452,8 +499,6 @@ class _Conversation:
         }
         if self.container is not None:
             request["container"] = self.container
-        if forced:
-            request["tool_choice"] = FORCE_FINALIZE
         return request
 
     def _act(self, response: Any) -> tuple[ManagerDecision | None, list[dict]]:

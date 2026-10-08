@@ -498,7 +498,7 @@ the `GW{n}.md` verdicts back.
 
 Beyond the secrets, `Config.from_env()` also reads `AIGAFFER_STATE_DIR`
 (state directory, default `state`) and `AIGAFFER_MANAGER_MODEL` (which model
-the manager is, default `claude-opus-5`).
+the manager is, default `claude-opus-5-5`).
 
 The state the workflow commits back is the bot's memory, and not all of it
 is regenerable. The SQLite DB in `state/` holds the run history beside two

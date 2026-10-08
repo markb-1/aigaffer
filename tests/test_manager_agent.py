@@ -3,8 +3,8 @@
 Nothing here talks to Anthropic. ``FakeClient`` is handed a script — a list of
 canned responses, or exceptions to raise instead — and records the keyword
 arguments of every request, because half of what this module has to get right
-is the shape of the request: the cached system block, the forced tool choice on
-the last turn, and the rule that every tool result from one assistant turn
+is the shape of the request: the cached system block, the absence of any tool
+choice (Opus 5.5 rejects a forced one, so the decision is asked for in words), and the rule that every tool result from one assistant turn
 comes back in one user message.
 
 The universe is eighteen players over the six clubs of the pipeline fixture,
@@ -54,7 +54,7 @@ import pytest
 from aigaffer.config import Config
 from aigaffer.data.models import Bootstrap, Pick, Player, Squad
 from aigaffer.manager import agent
-from aigaffer.manager.agent import NUDGE, ManagerDecision, run_manager
+from aigaffer.manager.agent import FINALIZE_NOW, NUDGE, ManagerDecision, run_manager
 from aigaffer.manager.tools import (
     CHIP_FIELD_DROPPED,
     MIN_RATIONALE,
@@ -868,13 +868,41 @@ def test_every_request_carries_the_same_cached_system_block():
     assert blocks[0] == blocks[1], "a system block that moves is a cache that misses"
 
 
+def last_text(request: dict) -> str:
+    """The text of the last block of the last message of a request."""
+    return request["messages"][-1]["content"][-1].get("text", "")
+
+
+def assert_append_only(client) -> None:
+    """Every request's messages begin with the previous request's, unchanged.
+
+    Opus 5.5 binds thinking blocks to the conversation, so editing or dropping
+    an earlier message breaks them. The cache marker rides the last block of the
+    last message of each request, so the comparison skips the previous
+    request's final message and compares everything before it.
+    """
+    for before, after in zip(client.requests, client.requests[1:]):
+        kept = before["messages"][:-1]
+        assert after["messages"][: len(kept)] == kept
+        assert len(after["messages"]) >= len(before["messages"])
+
+
+def test_finalize_decision_is_a_strict_tool():
+    # Strict is what keeps a schema-valid call once tool_choice is gone.
+    tool = next(t for t in TOOLS if t["name"] == "finalize_decision")
+
+    assert tool["strict"] is True
+    assert tool["input_schema"]["additionalProperties"] is False
+
+
 def test_the_request_is_the_one_the_api_reference_specifies():
     client, _ = converse([reply(use("finalize_decision", finalize()))])
     request = client.requests[0]
 
     assert request["model"] == CFG.manager_model
     assert request["max_tokens"] == 16000
-    assert request["output_config"] == {"effort": "high"}
+    assert request["output_config"] == {"effort": "medium"}
+    assert request["model"] == "claude-opus-5-5"
     assert request["tools"] is TOOLS
     # Adaptive thinking is the default on this model and an explicit config
     # risks a 400; sampling parameters are rejected outright.
@@ -1495,7 +1523,7 @@ def test_the_assistant_turn_goes_back_before_its_results():
 # --- the stop reasons ------------------------------------------------------
 
 
-def test_a_turn_that_ends_without_a_decision_is_nudged_once_and_then_forced():
+def test_a_turn_that_ends_without_a_decision_is_nudged_once_and_then_asked_outright():
     client, decision = converse(
         [
             reply(text("I think plan 1 is right."), stop="end_turn"),
@@ -1504,13 +1532,20 @@ def test_a_turn_that_ends_without_a_decision_is_nudged_once_and_then_forced():
         ]
     )
 
-    nudge = client.requests[1]["messages"][-1]["content"]
-    assert "finalize_decision" in nudge[-1]["text"]
-    assert "tool_choice" not in client.requests[1]
-    assert client.requests[2]["tool_choice"] == {
-        "type": "tool",
-        "name": "finalize_decision",
-    }
+    assert last_text(client.requests[1]) == NUDGE
+    # On the second stall FINALIZE_NOW stands in for the nudge, not beside it.
+    assert last_text(client.requests[2]) == FINALIZE_NOW
+    texts = [
+        block["text"]
+        for message in client.requests[2]["messages"]
+        if message["role"] == "user"
+        for block in message["content"]
+        if isinstance(block, dict) and block.get("type") == "text"
+    ]
+    assert texts.count(NUDGE) == 1
+    assert texts.count(FINALIZE_NOW) == 1
+    assert all("tool_choice" not in request for request in client.requests)
+    assert_append_only(client)
     assert decision.source == "manager"
 
 
@@ -1544,12 +1579,13 @@ def test_a_productive_turn_buys_back_the_right_to_pause():
         ]
     )
 
-    assert "tool_choice" not in client.requests[1]  # first stall: a word
-    assert "tool_choice" not in client.requests[3]  # a stall after real work: a word again
+    assert last_text(client.requests[1]) == NUDGE  # first stall: a word
+    assert last_text(client.requests[3]) == NUDGE  # a stall after real work: a word again
+    assert all(FINALIZE_NOW not in str(r["messages"]) for r in client.requests)
     assert decision.source == "manager"
 
 
-def test_a_truncated_turn_is_dropped_and_the_decision_forced():
+def test_a_truncated_turn_is_dropped_and_the_decision_asked_for():
     client, decision = converse(
         [
             reply(use("adjust_players", adjust()), stop="max_tokens"),
@@ -1557,15 +1593,21 @@ def test_a_truncated_turn_is_dropped_and_the_decision_forced():
         ]
     )
 
-    assert client.requests[1]["messages"] == client.requests[0]["messages"]
-    assert client.requests[1]["tool_choice"]["name"] == "finalize_decision"
+    # The truncated turn is dropped, so the second request is the first with
+    # FINALIZE_NOW appended and nothing else changed.
+    first = client.requests[0]["messages"]
+    assert client.requests[1]["messages"][: len(first) - 1] == first[:-1]
+    assert len(client.requests[1]["messages"]) == len(first) + 1
+    assert last_text(client.requests[1]) == FINALIZE_NOW
+    assert all("tool_choice" not in request for request in client.requests)
+    assert_append_only(client)
     assert decision.source == "manager"
 
 
-def test_forcing_the_decision_is_one_turn_of_insistence_and_not_a_mode():
+def test_asking_for_the_decision_is_one_turn_of_insistence_and_not_a_mode():
     # A truncated turn costs him that turn, not the rest of his research: the
-    # forced turn is asked for once, and if it comes back illegal the
-    # conversation carries on as it was.
+    # decision is asked for once, and if it comes back illegal the
+    # conversation carries on without asking again.
     client, decision = converse(
         [
             reply(use("adjust_players", adjust()), stop="max_tokens"),
@@ -1574,8 +1616,11 @@ def test_forcing_the_decision_is_one_turn_of_insistence_and_not_a_mode():
         ]
     )
 
-    assert "tool_choice" in client.requests[1]
-    assert "tool_choice" not in client.requests[2]
+    assert last_text(client.requests[1]) == FINALIZE_NOW
+    assert last_text(client.requests[2]) != FINALIZE_NOW
+    assert str(client.requests[2]["messages"]).count(FINALIZE_NOW) == 1
+    assert all("tool_choice" not in request for request in client.requests)
+    assert_append_only(client)
     assert decision.source == "manager"
 
 
@@ -1624,19 +1669,31 @@ def test_a_refusal_falls_back_without_reading_the_response():
 # --- the cap ---------------------------------------------------------------
 
 
-def test_the_twelfth_turn_is_forced_to_finalize():
+def test_the_twelfth_turn_is_asked_to_finalize():
     client, decision = converse([reply(use("adjust_players", adjust()))] * 12)
 
     assert len(client.requests) == 12
-    assert "tool_choice" not in client.requests[10]
-    assert client.requests[11]["tool_choice"] == {
-        "type": "tool",
-        "name": "finalize_decision",
-    }
+    assert FINALIZE_NOW not in str(client.requests[10]["messages"])
+    assert last_text(client.requests[11]) == FINALIZE_NOW
+    assert all("tool_choice" not in request for request in client.requests)
+    assert_append_only(client)
     assert decision.source.startswith("solver-fallback:")
 
 
-def test_a_decision_on_the_forced_turn_still_counts():
+def test_the_last_turn_is_not_asked_twice_after_an_escalated_stall():
+    # Stalls on turns 10 and 11: the second appends FINALIZE_NOW, and the last
+    # turn must not stack a second copy straight after it.
+    script = [reply(use("adjust_players", adjust()))] * 9
+    script += [reply(text("Hmm."), stop="end_turn")] * 2
+    script.append(reply(use("finalize_decision", finalize())))
+    client, decision = converse(script)
+
+    assert str(client.requests[11]["messages"]).count(FINALIZE_NOW) == 1
+    assert last_text(client.requests[11]) == FINALIZE_NOW
+    assert decision.source == "manager"
+
+
+def test_a_decision_on_the_last_turn_still_counts():
     script = [reply(use("adjust_players", adjust()))] * 11
     script.append(reply(use("finalize_decision", finalize())))
     _, decision = converse(script)
