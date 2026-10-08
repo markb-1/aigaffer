@@ -479,6 +479,9 @@ def converse(script: list[Any], resolver: FakeResolver | None = None):
     decision = run_manager(
         client, CFG, INPUTS, SOLVE0, XP, BRIEFING, resolver or FakeResolver()
     )
+    # Every conversation any test runs must alternate: two user turns running
+    # is a request the API is not promised to take.
+    assert_roles_alternate(client)
     return client, decision
 
 
@@ -873,18 +876,51 @@ def last_text(request: dict) -> str:
     return request["messages"][-1]["content"][-1].get("text", "")
 
 
+def _bare(message: dict) -> dict:
+    """``message`` with the cache marker taken off its last block."""
+    content = message["content"]
+    if isinstance(content, list) and content and isinstance(content[-1], dict):
+        last = {k: v for k, v in content[-1].items() if k != "cache_control"}
+        return {**message, "content": [*content[:-1], last]}
+    return message
+
+
 def assert_append_only(client) -> None:
     """Every request's messages begin with the previous request's, unchanged.
 
     Opus 5.5 binds thinking blocks to the conversation, so editing or dropping
-    an earlier message breaks them. The cache marker rides the last block of the
-    last message of each request, so the comparison skips the previous
-    request's final message and compares everything before it.
+    an earlier message breaks them. Two allowances, and no more: the cache
+    marker rides the last block of each request's last message, so it is
+    stripped before comparing; and that last message, not yet answered, may
+    have gained FINALIZE_NOW as a trailing text block.
     """
     for before, after in zip(client.requests, client.requests[1:]):
-        kept = before["messages"][:-1]
-        assert after["messages"][: len(kept)] == kept
-        assert len(after["messages"]) >= len(before["messages"])
+        old, new = before["messages"], after["messages"]
+        assert len(new) >= len(old)
+        assert new[: len(old) - 1] == old[:-1]
+        was = _bare(old[-1])
+        # The old last block carried the rolling marker and lost it above; in
+        # the new request it is no longer last, so a block that is the briefing
+        # may still carry its own permanent one. Strip both the same way.
+        grown = _bare({**new[len(old) - 1], "content": new[len(old) - 1]["content"][: len(was["content"])]})
+        assert grown["role"] == was["role"]
+        assert grown["content"] == was["content"]
+        extra = [
+            {k: v for k, v in block.items() if k != "cache_control"}
+            for block in new[len(old) - 1]["content"][len(was["content"]):]
+        ]
+        assert extra in ([], [{"type": "text", "text": FINALIZE_NOW}])
+
+
+def assert_roles_alternate(client) -> None:
+    """No request has two user messages in a row.
+
+    User turns only: a resumed pause_turn legitimately puts one assistant turn
+    after another, and that is the API's own continuation, not ours.
+    """
+    for request in client.requests:
+        roles = [message["role"] for message in request["messages"]]
+        assert not any(a == b == "user" for a, b in zip(roles, roles[1:])), roles
 
 
 def test_finalize_decision_is_a_strict_tool():
@@ -1597,7 +1633,10 @@ def test_a_truncated_turn_is_dropped_and_the_decision_asked_for():
     # FINALIZE_NOW appended and nothing else changed.
     first = client.requests[0]["messages"]
     assert client.requests[1]["messages"][: len(first) - 1] == first[:-1]
-    assert len(client.requests[1]["messages"]) == len(first) + 1
+    # The briefing is the last message here, so the words ride in it as a
+    # second block rather than as a user message of their own.
+    assert len(client.requests[1]["messages"]) == len(first) == 1
+    assert len(client.requests[1]["messages"][0]["content"]) == 2
     assert last_text(client.requests[1]) == FINALIZE_NOW
     assert all("tool_choice" not in request for request in client.requests)
     assert_append_only(client)
@@ -1675,9 +1714,35 @@ def test_the_twelfth_turn_is_asked_to_finalize():
     assert len(client.requests) == 12
     assert FINALIZE_NOW not in str(client.requests[10]["messages"])
     assert last_text(client.requests[11]) == FINALIZE_NOW
+    # Turn 11's tool results are intact and FINALIZE_NOW is one more block at
+    # the end of that same user message, after the tool_result blocks.
+    after = client.requests[11]["messages"][-1]
+    assert after["role"] == "user"
+    assert client.requests[11]["messages"][-2]["role"] == "assistant"
+    results = [b for b in after["content"] if b.get("type") == "tool_result"]
+    assert results and all(b["type"] == "tool_result" for b in after["content"][:-1])
+    assert after["content"][-1]["text"] == FINALIZE_NOW
+    assert len(client.requests[11]["messages"]) == len(client.requests[10]["messages"]) + 2
     assert all("tool_choice" not in request for request in client.requests)
     assert_append_only(client)
     assert decision.source.startswith("solver-fallback:")
+
+
+def test_consecutive_truncations_ask_for_the_decision_only_once():
+    # Each truncated turn is dropped, so the conversation is the same one asked
+    # again: the words must not pile up on it.
+    client, decision = converse(
+        [
+            reply(use("adjust_players", adjust()), stop="max_tokens"),
+            reply(use("adjust_players", adjust()), stop="max_tokens"),
+            reply(use("finalize_decision", finalize())),
+        ]
+    )
+
+    assert str(client.requests[2]["messages"]).count(FINALIZE_NOW) == 1
+    assert client.requests[2]["messages"][-1]["role"] == "user"
+    assert_append_only(client)
+    assert decision.source == "manager"
 
 
 def test_the_last_turn_is_not_asked_twice_after_an_escalated_stall():

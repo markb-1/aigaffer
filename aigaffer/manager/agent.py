@@ -344,22 +344,17 @@ class _Conversation:
         its answer is paid for either way, and the client's own timeout is what
         bounds it.
         """
-        # Whether FINALIZE_NOW is already the last thing in the conversation,
-        # put there by the turn before. The last turn asks for the decision
-        # whether or not anything else has, and must not ask twice in a row.
-        asked = False
         nudged = False
 
         for turn in range(1, MAX_TURNS + 1):
             if self._expired():
                 return self.fallback(OUT_OF_TIME)
-            if turn == MAX_TURNS and not asked:
+            if turn == MAX_TURNS:
                 self._ask_for_decision()
             response = self._ask()
             # Asking is one turn's worth of insistence, not a mode: a turn cut
             # off mid-sentence should not cost him the rest of his research.
             # The words stay in the history, but nothing repeats them.
-            asked = False
             if response is None:
                 # Either the pauses ran out or the clock did, and the two are
                 # different weeks to explain: one is a turn that would not come
@@ -376,7 +371,6 @@ class _Conversation:
                 # half-written tool call cannot be answered, so it is dropped
                 # rather than sent back, and the next turn asks for the decision.
                 self._ask_for_decision()
-                asked = True
                 continue
 
             decision, results = self._act(response)
@@ -398,7 +392,6 @@ class _Conversation:
             self._append(response)
             if nudged:
                 self._ask_for_decision()
-                asked = True
             else:
                 # A block list rather than a bare string, like every other
                 # message this loop writes: the request marks the last block of
@@ -409,14 +402,37 @@ class _Conversation:
         return self.fallback(f"no decision in {MAX_TURNS} turns")
 
     def _ask_for_decision(self) -> None:
-        """Append :data:`FINALIZE_NOW` as the next user turn, and change nothing else.
+        """Put :data:`FINALIZE_NOW` at the end of the conversation, once.
 
-        Append-only on purpose: an earlier message is never edited or removed,
-        because Opus 5.5 binds its thinking blocks to the conversation they
-        were written in. A user turn straight after another is fine for the
-        API, which reads the two as one.
+        Append-only on purpose: Opus 5.5 binds its thinking blocks to the
+        conversation they were written in, so nothing already answered is ever
+        edited or removed. Two shapes of end need two shapes of append:
+
+        * It ends on a user message, which is the usual case: tool results, the
+          nudge, or the briefing itself. Nobody has answered that message yet,
+          so no thinking block follows it, and the instruction goes after its
+          last block as one more text block. A second user message instead
+          would be two user turns running, which the API is not promised to
+          accept. The message is replaced by a copy with the longer list rather
+          than extended in place, because the request already sent holds the
+          same dict and must not be edited behind its back.
+        * It ends on an assistant turn, as it does after a second stall: then
+          the instruction is a user message of its own.
+
+        And if the conversation already ends in the instruction, nothing is
+        done: a run of truncated turns is each of them dropped, so each would
+        otherwise add another copy. That is what keeps asking "one turn's
+        worth of insistence, not a mode".
         """
-        self.messages.append({"role": "user", "content": [_text(FINALIZE_NOW)]})
+        block = _text(FINALIZE_NOW)
+        last = self.messages[-1] if self.messages else None
+        if last is not None and last["role"] == "user":
+            content = last["content"]
+            if content and content[-1] == block:
+                return
+            self.messages[-1] = {"role": "user", "content": [*content, block]}
+        else:
+            self.messages.append({"role": "user", "content": [block]})
 
     def fallback(self, reason: str) -> ManagerDecision:
         """Give the week back to the solver, from inside the loop."""

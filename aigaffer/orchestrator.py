@@ -1632,7 +1632,7 @@ def _consult(
             #
             # Five minutes, not the two this was first written with. Two was
             # chosen against a turn that hangs and never against a turn that
-            # works: a turn of this model at high effort, running its web
+            # works: a turn of this model at medium effort, running its web
             # searches on the server before a single token comes back, takes
             # minutes on purpose. Live it never once finished — two attempts of
             # two minutes each, no searches, no turns, and the fallback every
