@@ -7,7 +7,7 @@ on the live chip rules (wildcard and free hit from GW2, a second set from
 GW20).
 """
 
-from aigaffer.chips import CHIP_ORDER, held_by_rules, held_for
+from aigaffer.chips import CHIP_ORDER, held_by_rules, held_for, held_in_week
 from aigaffer.data.models import Bootstrap, Player, Squad, Standing
 from aigaffer.executed import apply_executed
 from aigaffer.orchestrator import PipelineInputs
@@ -117,3 +117,15 @@ def test_a_draft_has_nothing_to_apply_to():
     effective, executed = apply_executed(inputs, make_executed())
 
     assert effective is inputs and executed is None
+
+
+def test_held_by_rules_is_held_in_week_on_the_inputs_fields():
+    # The gate in the what-if handler asks held_in_week directly, from three
+    # requests rather than a full fetch; the briefing, the belt and the solver
+    # ask held_by_rules. They must never disagree.
+    inputs = real_inputs()
+    for row in (None, make_executed(), make_executed(chip="wildcard", ft_after=1)):
+        effective, _ = apply_executed(inputs, row)
+        assert held_by_rules(effective) == held_in_week(
+            effective.bootstrap, effective.chips_used, effective.event.id, effective.executed
+        )

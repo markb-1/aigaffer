@@ -12,11 +12,13 @@ from aigaffer.chips import (
     chip_windows,
     held_chips,
     held_for,
+    held_in_week,
     playable_in,
     rule_gaps,
     whole_season,
 )
 from aigaffer.data.models import Bootstrap, ChipRule
+from tests.fixtures import make_executed
 
 # The live 2026-27 rules, as the bootstrap serves them.
 LIVE_RULES = [
@@ -198,3 +200,45 @@ def test_other_chips_played_at_19_shift_nothing():
 
     assert HeldChip(FREE_HIT, 20, 38) in held
     assert held_for(held, FREE_HIT, 20) is not None
+
+
+def board(rules=LIVE_RULES):
+    # held_in_week reads only the bootstrap's chip rules, so a bootstrap with
+    # no events, teams or players is the whole of what it needs.
+    return Bootstrap(events=[], teams=[], elements=[], chips=rules)
+
+
+def test_held_in_week_with_nothing_recorded_is_held_chips_on_the_rules():
+    assert ids(held_in_week(board(), [], 6)) == ids(held_chips(WINDOWS, [], 6))
+    played = [{"name": "wildcard", "event": 3}]
+    assert ids(held_in_week(board(), played, 6)) == ids(held_chips(WINDOWS, played, 6))
+
+
+def test_held_in_week_with_a_chip_recorded_plays_no_other_that_week():
+    # The owner has entered a bench boost for GW6 ("Transfers made"): the
+    # chip history the effective inputs carry already spends it, and one chip
+    # a gameweek means nothing else may go in GW6 either.
+    row = make_executed(gw=6, chip="bench_boost")
+    played = [{"name": "bboost", "event": 6}]
+
+    held = held_in_week(board(), played, 6, row)
+
+    assert all(held_for(held, chip, 6) is None for chip in (BENCH_BOOST, TRIPLE_CAPTAIN, WILDCARD, FREE_HIT))
+    assert held_for(held, WILDCARD, 7) is not None, "next week it is his again"
+    assert "bench_boost@19" not in ids(held), "and the boost itself is spent"
+
+
+def test_held_in_week_with_no_chip_recorded_changes_nothing():
+    row = make_executed(gw=6, chip="none")
+    assert held_in_week(board(), [], 6, row) == held_in_week(board(), [], 6)
+
+
+def test_held_in_week_drops_a_chip_whose_window_ends_in_the_recorded_week():
+    # A free hit recorded in GW19: every first-set chip ends at 19, so none of
+    # them can move to GW20 — they are gone, not postponed.
+    row = make_executed(gw=19, chip="free_hit")
+    played = [{"name": "freehit", "event": 19}]
+
+    held = held_in_week(board(), played, 19, row)
+
+    assert all(chip.stop_event == 38 for chip in held)

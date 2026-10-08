@@ -15,9 +15,10 @@ so the dependency always runs towards it.
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
-from aigaffer.data.models import ChipRule
+from aigaffer.data.models import Bootstrap, ChipRule
 
 if TYPE_CHECKING:  # read for its fields only; the import never runs
+    from aigaffer.executed import Executed
     from aigaffer.orchestrator import PipelineInputs
 
 BENCH_BOOST = "bench_boost"
@@ -168,6 +169,43 @@ def held_for(held: tuple[HeldChip, ...], chip: str, event: int) -> HeldChip | No
     )
 
 
+def held_in_week(
+    bootstrap: Bootstrap,
+    chips_used: list[dict],
+    event_id: int,
+    executed: "Executed | None" = None,
+) -> tuple[HeldChip, ...]:
+    """The chips in hand at ``event_id``, by the bootstrap's rules and the
+    chip history alone — whatever the chip switch says.
+
+    The body of :func:`held_by_rules`, taking the four facts it reads rather
+    than the run's inputs, for the one caller that has no inputs to hand: the
+    chip what-if's gate, which answers "is this chip yours this week?" from
+    the bootstrap, the picks and the chip history — three requests — before
+    the full fetch's two hundred are worth making for a chip he cannot play.
+
+    ``executed`` is the owner's recorded week, if any; ``chips_used`` must
+    already include its chip (the effective inputs' history does —
+    :func:`aigaffer.executed.apply_executed` adds it — and the gate adds it
+    itself). A gameweek with a chip recorded by "Transfers made" plays no
+    other (see the comment below).
+    """
+    held = held_chips(chip_windows(bootstrap.chips), chips_used, event_id)
+    # One chip a gameweek. When the owner has recorded a chip for this one —
+    # it is in the chip history above already, so that chip is spent — no
+    # other may be played in it either: every held chip opens next week at
+    # the earliest, and one whose window ends this week is gone. So the solver
+    # plans none in week 1, the briefing marks all four, and the belt refuses
+    # whatever the gaffer finalizes but "none" (the recorded chip stands).
+    if executed is None or executed.chip not in CHIP_ORDER:
+        return held
+    return tuple(
+        replace(chip, start_event=max(chip.start_event, event_id + 1))
+        for chip in held
+        if chip.stop_event > event_id
+    )
+
+
 def held_by_rules(inputs: "PipelineInputs") -> tuple[HeldChip, ...]:
     """The chips in hand at the run's gameweek, by the rules and the history
     alone — whatever the chip switch says.
@@ -178,27 +216,14 @@ def held_by_rules(inputs: "PipelineInputs") -> tuple[HeldChip, ...]:
     that refuses a chip and the briefing panel that marks one both ask this,
     while the solver and the calendar ask the orchestrator's switch-aware
     ``_held``. ``inputs`` is read for its fields only (bootstrap rules, chip
-    history, gameweek), which keeps this module below everyone who asks.
-    A gameweek with a chip recorded by "Transfers made" plays no other (see
-    the comment below).
+    history, gameweek, recorded week), which keeps this module below everyone
+    who asks; :func:`held_in_week` is the same answer from those fields.
     """
-    held = held_chips(
-        chip_windows(inputs.bootstrap.chips), inputs.chips_used, inputs.event.id
-    )
-    # One chip a gameweek. When the owner has recorded a chip for this one —
-    # it is in the chip history above already, so that chip is spent — no
-    # other may be played in it either: every held chip opens next week at
-    # the earliest, and one whose window ends this week is gone. So the solver
-    # plans none in week 1, the briefing marks all four, and the belt refuses
-    # whatever the gaffer finalizes but "none" (the recorded chip stands).
-    executed = getattr(inputs, "executed", None)
-    if executed is None or executed.chip not in CHIP_ORDER:
-        return held
-    week = inputs.event.id
-    return tuple(
-        replace(chip, start_event=max(chip.start_event, week + 1))
-        for chip in held
-        if chip.stop_event > week
+    return held_in_week(
+        inputs.bootstrap,
+        inputs.chips_used,
+        inputs.event.id,
+        getattr(inputs, "executed", None),
     )
 
 
