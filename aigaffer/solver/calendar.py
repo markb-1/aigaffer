@@ -27,7 +27,10 @@ Four consequences worth stating, so nobody files them as bugs:
   equals its proxy faces a bar of about 0.65 × that gain, so the window plays
   it. That is the owner's "lean towards now", taken as the principal's
   decision. The free hit is held by its option floor until a week clearly
-  beats it or expiry nears; the wildcard by its ramp.
+  beats it or expiry nears — the floor tapers over the chip's last five weeks
+  to nothing at its expiry, so a first-set free hit still in hand in late
+  December is readier to be played than one in October; the wildcard is held
+  by its ramp.
 
 The calendar is computed once per run from base-minute projections — never the
 gaffer's minutes, which are for the coming gameweek — so his re-solves cannot
@@ -52,8 +55,13 @@ from aigaffer.solver.optimizer import AVAILABLE, BENCH_WEIGHT
 CHIP_DISCOUNT = 0.97
 # What a free hit is worth before any week is priced: insurance against a
 # blank or mass absences nobody can see yet. Added to its bar while a later
-# week remains, so a flat board does not fire it in GW6; 0 at expiry.
+# week remains, so a flat board does not fire it in GW6 — and tapered over the
+# chip's last FLOOR_TAPER_WEEKS weeks to 0 at expiry (see _floor), because by
+# late December the alternative to playing a first-set free hit is losing it.
 OPTION_FLOOR = {FREE_HIT: 10.0}
+# Over how many weeks before its last the option floor falls to nothing: flat
+# to GW14 and 0 at GW19 for the first set, GW33 to GW38 for the second.
+FLOOR_TAPER_WEEKS = 5
 PROXY_SCALE = {BENCH_BOOST: 0.7, TRIPLE_CAPTAIN: 0.85, FREE_HIT: 0.85}
 # A triple captain is only worth earmarking on a player who plays the match.
 TC_MIN_MINUTES = 80.0
@@ -160,6 +168,17 @@ def assign(values: dict[str, dict[int, float]], anchors: dict[str, int]) -> dict
     return best
 
 
+def _floor(chip: HeldChip, window: list[int], w: int) -> float:
+    """The option floor ``chip`` carries in window week ``w``: the full floor
+    while its expiry is :data:`FLOOR_TAPER_WEEKS` or more weeks off, falling a
+    step a week to nothing at its last week — and nothing at all once no
+    eligible week lies beyond the window, as before the taper."""
+    if not _beyond(chip, window):
+        return 0.0
+    full = OPTION_FLOOR.get(chip.chip, 0.0)
+    return full * min(1.0, (chip.stop_event - w) / FLOOR_TAPER_WEEKS)
+
+
 def _bars_for(chip: HeldChip, window: list[int], saved_for: int | None, value: float | None) -> dict[int, float]:
     """The bar ``chip`` must clear in each window week inside its window."""
     weeks = [w for w in window if chip.allows(w)]
@@ -167,10 +186,12 @@ def _bars_for(chip: HeldChip, window: list[int], saved_for: int | None, value: f
         left = len(_beyond(chip, window))
         bar = WILDCARD_BAR * min(1.0, left / WILDCARD_RAMP_WEEKS)
         return {w: bar for w in weeks}
-    floor = OPTION_FLOOR.get(chip.chip, 0.0) if _beyond(chip, window) else 0.0
     if saved_for is None or value is None:
-        return {w: floor for w in weeks}
-    return {w: value * CHIP_DISCOUNT ** (saved_for - w) + floor for w in weeks}
+        return {w: _floor(chip, window, w) for w in weeks}
+    return {
+        w: value * CHIP_DISCOUNT ** (saved_for - w) + _floor(chip, window, w)
+        for w in weeks
+    }
 
 
 def _values(

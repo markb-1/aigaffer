@@ -154,6 +154,43 @@ def test_the_free_hit_carries_its_option_floor_until_expiry():
     assert set(_bars_for(FH19, [14, 15, 16, 17, 18, 19], saved_for=None, value=None).values()) == {0.0}
 
 
+def test_the_free_hit_floor_tapers_over_the_last_five_weeks():
+    # FH@19 over GW13-18, with GW19 still beyond the window: the floor is
+    # flat while expiry is five or more weeks off, then falls a fifth a week:
+    # 10 x min(1, (19 - w) / 5). GW13: 6/5 -> 10.0; GW14: 5/5 -> 10.0;
+    # GW15: 4/5 -> 8.0; GW16: 6.0; GW17: 4.0; GW18: 2.0.
+    bars = _bars_for(FH19, [13, 14, 15, 16, 17, 18], saved_for=None, value=None)
+    assert bars == {
+        13: pytest.approx(10.0), 14: pytest.approx(10.0), 15: pytest.approx(8.0),
+        16: pytest.approx(6.0), 17: pytest.approx(4.0), 18: pytest.approx(2.0),
+    }
+
+
+def test_the_tapered_floor_rides_on_top_of_a_saved_for_bar():
+    # Saved for GW19 at 12.0: GW15's bar is 12.0 discounted four weeks back
+    # plus that week's tapered floor, 8.0.
+    bars = _bars_for(FH19, [13, 14, 15, 16, 17, 18], saved_for=19, value=12.0)
+    assert bars[15] == pytest.approx(12.0 * CHIP_DISCOUNT ** 4 + 8.0)
+    assert bars[18] == pytest.approx(12.0 * CHIP_DISCOUNT ** 1 + 2.0)
+
+
+def test_the_second_set_free_hit_tapers_to_gw38():
+    fh38 = HeldChip(FREE_HIT, 20, 38)
+    bars = _bars_for(fh38, [32, 33, 34, 35, 36, 37], saved_for=None, value=None)
+    assert bars == {
+        32: pytest.approx(10.0), 33: pytest.approx(10.0), 34: pytest.approx(8.0),
+        35: pytest.approx(6.0), 36: pytest.approx(4.0), 37: pytest.approx(2.0),
+    }
+
+
+def test_the_taper_never_touches_the_fallback_calendar():
+    # The fallback has no option floor at all - its free-hit bar is the old
+    # flat constant - so nothing here moves with the taper.
+    cal = fallback_calendar((FH19,), [13, 14, 15, 16, 17, 18])
+    (entry,) = cal.entries
+    assert set(entry.bars.values()) == {FALLBACK_BARS[FREE_HIT]}
+
+
 def test_assign_ignores_worthless_weeks():
     assert assign({"triple_captain@19": {15: 0.0, 16: -1.0}}, {"triple_captain@19": 6}) == {}
 
@@ -313,13 +350,15 @@ def test_build_calendar_values_and_saves_each_chip(board_beyond_window):
 
 def test_the_window_bars_are_the_saved_for_values_discounted_back(board_beyond_window):
     # TC: 8.5 ρ^(9-w). BB: 6.552 ρ^(8-w). FH: 16.065 ρ^(10-w) plus its
-    # option floor, since GW8-10 are still to come.
+    # option floor, since GW8-10 are still to come - tapered, because GW10 is
+    # its last week: 10 x (10 - 6) / 5 = 8.0 in GW6 and 10 x (10 - 7) / 5 =
+    # 6.0 in GW7 (spec §9; these were a flat 10.0 before the taper).
     cal = _build(board_beyond_window)
-    floor = OPTION_FLOOR[FREE_HIT]
+    floor = {6: OPTION_FLOOR[FREE_HIT] * 0.8, 7: OPTION_FLOOR[FREE_HIT] * 0.6}
     expected = {
         "triple_captain@10": {6: 8.5 * RHO ** 3, 7: 8.5 * RHO ** 2},
         "bench_boost@10": {6: BB_VALUE * RHO ** 2, 7: BB_VALUE * RHO},
-        "free_hit@10": {6: FH_VALUES[10] * RHO ** 4 + floor, 7: FH_VALUES[10] * RHO ** 3 + floor},
+        "free_hit@10": {6: FH_VALUES[10] * RHO ** 4 + floor[6], 7: FH_VALUES[10] * RHO ** 3 + floor[7]},
     }
     assert cal.bars == {
         chip: {w: pytest.approx(bar, abs=1e-6) for w, bar in bars.items()}
@@ -390,7 +429,12 @@ def test_a_week_that_cannot_be_priced_is_skipped(board_beyond_window, monkeypatc
     assert by_id["bench_boost@10"].saved_for == 8
     fh = by_id["free_hit@10"]
     assert (fh.saved_for, fh.value) == (None, None)
-    assert fh.bars == {6: OPTION_FLOOR[FREE_HIT], 7: OPTION_FLOOR[FREE_HIT]}
+    # Unassigned, so its bar is the option floor alone - tapered towards its
+    # GW10 expiry: 8.0 in GW6, 6.0 in GW7 (spec §9).
+    assert fh.bars == {
+        6: pytest.approx(OPTION_FLOOR[FREE_HIT] * 0.8),
+        7: pytest.approx(OPTION_FLOOR[FREE_HIT] * 0.6),
+    }
 
 
 def _cannot_line_up(week, monkeypatch):
