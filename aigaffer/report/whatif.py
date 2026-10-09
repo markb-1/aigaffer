@@ -363,9 +363,30 @@ def _differs(whatif: WhatIf, verdict: dict | None, players: dict) -> str | None:
 
 
 def _pairs(outs: list[int], ins: list[int], players: dict) -> str:
-    """``A → B, C → D``: sales and signings paired off in order, by position
-    where the caller grouped them."""
-    return ", ".join(f"{_name(out, players)} → {_name(inn, players)}" for out, inn in zip(outs, ins, strict=False))
+    """``A → B, C → D``: each sale paired with a signing *in its position*.
+
+    Pairing is done here, whatever the caller hands over, because the lists come
+    in solver order and the owner reads every arrow as a real swap: out a
+    defender and a midfielder, in a midfielder and a defender, must not print as
+    defender → midfielder. Positions go GK, DEF, MID, FWD and each position's
+    sales and signings pair off in list order. A legal transfer set has equal
+    counts per position, so leftovers should not happen; if they do (a partial
+    record, a lookup gap) they are listed as ``out X`` / ``in Y`` rather than
+    dropped, so the line never hides a move.
+    """
+    def position(pid: int) -> int:
+        player = players.get(pid)
+        return player.element_type if player is not None else 0
+
+    parts: list[str] = []
+    for slot in sorted({position(pid) for pid in (*outs, *ins)}):
+        sold = [pid for pid in outs if position(pid) == slot]
+        bought = [pid for pid in ins if position(pid) == slot]
+        for out, inn in zip(sold, bought):
+            parts.append(f"{_name(out, players)} → {_name(inn, players)}")
+        parts.extend(f"out {_name(pid, players)}" for pid in sold[len(bought):])
+        parts.extend(f"in {_name(pid, players)}" for pid in bought[len(sold):])
+    return ", ".join(parts)
 
 
 def _name(pid: int, players: dict) -> str:

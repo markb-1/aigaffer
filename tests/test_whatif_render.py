@@ -319,3 +319,30 @@ def test_other_chips_played_differently_are_chip_timing_not_keeping():
 
     assert "Chips — on: WC GW6, BB GW7 · off: BB GW9" in text
     assert "; chip timing −19." in text
+
+
+def test_a_two_position_off_path_pairs_within_each_position():
+    # Out Diop (DEF) then Bruno (MID); in Tavernier (MID) then Gvardiol (DEF).
+    # Zipped in list order that would read "Diop → Tavernier, Bruno → Gvardiol",
+    # a swap nobody makes. Paired within a position, in GK/DEF/MID/FWD order:
+    # Diop → Gvardiol (defenders), then Bruno → Tavernier (midfielders).
+    whatif = _wildcard(off_ins=[24, 22], off_outs=[3, 8])
+    text = render_numbers(whatif, _week(), verdict=None, now=NOW, numbers_only=False)
+
+    assert "(off: 2 moves (Diop → Gvardiol, Bruno → Tavernier), 1 FTs into GW7 · wildcard: not in the window)" in text
+
+
+def test_a_verdict_with_swaps_across_positions_is_paired_by_position():
+    whatif = _wildcard(off_ins=[22], off_outs=[3])
+    verdict = {"event": 6, "transfers_out": [8, 3], "transfers_in": [24, 22], "adjustments": []}
+    text = render_numbers(whatif, _week(), verdict=verdict, now=NOW, numbers_only=False)
+
+    assert "This differs from your latest report's plan (Diop → Gvardiol, Bruno → Tavernier)" in text
+
+
+def test_unmatched_sales_and_signings_are_listed_not_dropped():
+    # Two defenders out, one in: the second sale has no partner.
+    whatif = _wildcard(off_ins=[22], off_outs=[3, 4])
+    text = render_numbers(whatif, _week(), verdict=None, now=NOW, numbers_only=False)
+
+    assert "(Diop → Gvardiol, out Muharemovic)" in text
