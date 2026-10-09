@@ -146,6 +146,36 @@ def test_the_lock_waits_for_whoever_holds_it(tmp_path):
     assert waited >= 0.4
 
 
+def test_a_held_lock_says_so_once_then_waits(tmp_path):
+    lock = tmp_path / "inbox" / "state.lock"
+    holding, release = threading.Event(), threading.Event()
+    told: list[str] = []
+
+    def tick() -> None:
+        with state_lock(lock):
+            holding.set()
+            release.wait(2)
+
+    holder = threading.Thread(target=tick)
+    holder.start()
+    holding.wait()
+    threading.Timer(0.3, release.set).start()
+    with state_lock(lock, on_wait=lambda: told.append("waiting")):
+        pass
+    holder.join()
+
+    assert told == ["waiting"]
+
+
+def test_a_free_lock_says_nothing(tmp_path):
+    told: list[str] = []
+
+    with state_lock(tmp_path / "state.lock", on_wait=lambda: told.append("waiting")):
+        pass
+
+    assert told == []
+
+
 @pytest.mark.skipif(shutil.which("flock") is None, reason="needs util-linux flock(1)")
 def test_the_lock_is_the_one_flock_1_takes(tmp_path):
     # run-tick.sh holds the lock with flock(1); the inbox must see it held.

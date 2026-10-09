@@ -57,6 +57,7 @@ from aigaffer.recording import transfers_made
 from aigaffer.report.telegram import send_report
 from aigaffer.statesync import STATE_LOCK, GitStateSync
 from aigaffer.store import DB_NAME, EXECUTED_DIR, Store
+from aigaffer.whatif_handler import chip_whatif
 
 AUTO = "auto"
 BACKTEST = "backtest"
@@ -244,7 +245,9 @@ def _inbox(client: FplClient) -> int:
     the state (the state directory's parent, as for the peer check), the one
     path its commits may touch — the recorded weeks' text files, never the
     database — and the lock it shares with the hourly tick, so
-    :mod:`aigaffer.inbox` knows nothing of git or of the store.
+    :mod:`aigaffer.inbox` knows nothing of git or of the store. The chip
+    what-if is bound beside it with the inbox directory, where its marker and
+    its log live, and the same lock, which it takes only to copy the store.
     """
     cfg = Config.from_env()
     directory = inbox_dir()
@@ -256,7 +259,10 @@ def _inbox(client: FplClient) -> int:
         GitStateSync(cfg.state_dir.parent, (recordings,)),
         directory / STATE_LOCK,
     )
-    return run_inbox(cfg.telegram_token, cfg.telegram_chat_id, directory, handler)
+    whatif = partial(chip_whatif, cfg, client, directory, directory / STATE_LOCK)
+    return run_inbox(
+        cfg.telegram_token, cfg.telegram_chat_id, directory, handler, whatif
+    )
 
 
 def _mode(

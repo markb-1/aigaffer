@@ -5,7 +5,7 @@ import pytest
 from datetime import UTC, datetime, timedelta
 
 from aigaffer.executed import Verdict
-from aigaffer.store import Store
+from aigaffer.store import Store, read_executed
 from tests.fixtures import make_executed
 
 
@@ -400,3 +400,12 @@ def test_a_decision_is_found_by_its_timestamp(tmp_path):
 
     assert store.decision_at(2, "deadline", "2025-08-21T17:35:00+00:00") == {"n": 1}
     assert store.decision_at(2, "deadline", "2025-08-21T19:00:00+00:00") is None
+
+
+def test_the_recorded_week_reads_without_the_database(tmp_path):
+    store = Store(tmp_path / "state" / "aigaffer.db")
+    store.save_executed(make_executed())
+
+    assert read_executed(tmp_path / "state" / "executed", 2) == make_executed()
+    assert read_executed(tmp_path / "state" / "executed", 3) is None
+    assert read_executed(tmp_path / "nowhere", 2) is None

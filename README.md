@@ -627,6 +627,30 @@ commits and pushes it — so the GitHub workflow,
 which never reads Telegram, sees what you entered through the store like
 everything else. A push that fails is sent by the next hourly tick.
 
+### Asking about a chip
+
+Tap **Wildcard?** or **Free hit?** (or text `wildcard`, `wc`, `free hit`,
+`fh`) and the bot works out what playing that chip at the coming deadline
+would do. Two messages come back. The first, a few minutes later, has the
+numbers: a band — **Play**, **Marginal** (leaning one way) or **Hold** —
+the points the chip buys over the next six gameweeks against the best path
+that does not play it this week, net of hits and of what keeping it is
+worth, the gain week by week and, when it is worth acting on, the moves or
+the whole free-hit team. The second is the gaffer's view: he reads the team
+news for the players it would bring in and says whether he agrees.
+
+It is a simulation and nothing is recorded: your reports are unchanged. If
+you do play the chip, **don't** send "Transfers made" — that records the
+latest verdict, not the what-if — and the first report after the deadline
+reads your real squad. Six what-ifs a day at most. The bot says so and does
+nothing when you don't hold the chip this gameweek, have already entered
+another chip, or (for a free hit) have already entered moves this week. If
+an hourly report is running, the what-if waits for it and tells you.
+
+Each what-if is logged, numbers and the gaffer's verdict, to
+`~/.aigaffer/whatifs.jsonl` on your own box — never the repository — so the
+bands can be checked against what actually happened.
+
 ### Your own box
 
 Any always-on Linux machine will do — a free-tier cloud VM is plenty. On

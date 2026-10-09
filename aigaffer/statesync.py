@@ -25,7 +25,7 @@ exit status and never its output — a remote URL can carry credentials.
 import fcntl
 import os
 import subprocess
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Protocol
@@ -41,18 +41,37 @@ PULL_FAILED = "aigaffer inbox: state pull failed ({reason}) — recording on the
 PUSH_FAILED = "aigaffer inbox: state push failed ({reason}) — the next hourly tick pushes it"
 
 
+# What the owner is told when a what-if has to wait for the hourly tick: the
+# tick holds this lock for a whole report, which can be most of an hour on a
+# deadline day, and silence that long reads as a dead bot.
+REPORT_RUNNING = "A report is being written — I'll start after it."
+
+
 @contextmanager
-def state_lock(path: Path) -> Iterator[None]:
+def state_lock(
+    path: Path, on_wait: Callable[[], None] | None = None
+) -> Iterator[None]:
     """Hold the shared state lock for the body, waiting as long as it takes.
 
     Blocking on purpose: a tick holds it for a whole manager run, and an
     inbox that gave up would lose the owner's text; the inbox's own
     overlap guard (``flock -n`` in ``scripts/inbox-tick.sh``) is what stops
     minute ticks piling up behind it.
+
+    ``on_wait``, when given, is called once — and only — when the lock is
+    already held, before the wait begins: flock(2) has no "who holds it"
+    query, so the only way to know a wait is coming is to try without
+    blocking first. A what-if uses it to tell the owner why the numbers are
+    late. Without it the lock is taken exactly as it always was.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "a") as handle:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            if on_wait is not None:
+                on_wait()
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
         try:
             yield
         finally:

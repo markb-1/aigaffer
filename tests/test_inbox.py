@@ -434,8 +434,9 @@ def test_the_cli_inbox_reads_the_inbox_directory(monkeypatch, tmp_path):
     monkeypatch.setenv("TELEGRAM_CHAT_ID", CHAT)
     seen = {}
 
-    def fake_run_inbox(token, chat_id, directory, handler):
-        seen.update(token=token, chat_id=chat_id, directory=directory, handler=handler)
+    def fake_run_inbox(token, chat_id, directory, handler, chip_whatif=None):
+        seen.update(token=token, chat_id=chat_id, directory=directory,
+                    handler=handler, chip_whatif=chip_whatif)
         return 0
 
     monkeypatch.setattr(cli, "run_inbox", fake_run_inbox)
@@ -447,6 +448,10 @@ def test_the_cli_inbox_reads_the_inbox_directory(monkeypatch, tmp_path):
     sync = seen["handler"].args[2]
     assert sync.paths == ("state/executed/",), "the inbox commits its text files only"
     assert seen["handler"].args[3] == tmp_path / "inbox" / "state.lock"
+    whatif = seen["chip_whatif"]
+    assert whatif.func.__name__ == "chip_whatif"
+    assert whatif.args[2] == tmp_path / "inbox"
+    assert whatif.args[3] == tmp_path / "inbox" / "state.lock"
 
 
 def test_the_inbox_directory_defaults_to_the_home_dot_directory(monkeypatch, tmp_path):
