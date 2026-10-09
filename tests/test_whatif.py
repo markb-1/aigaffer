@@ -52,10 +52,12 @@ class _AnyPlayer(dict):
         return SimpleNamespace(element_type=1)
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture
 def stub_lineup(monkeypatch):
     """The lineup picker is the lineup module's to test; here it answers a
-    fixed eleven so the arithmetic tests are about the arithmetic."""
+    fixed eleven so the arithmetic tests are about the arithmetic. Not autouse:
+    the end-to-end test must run the real picker on a real board, so the stubbed
+    tests ask for it through ``held``, which every one of them uses."""
     monkeypatch.setattr(
         whatif, "pick_lineup",
         lambda squad, *rest: Lineup(xi=list(squad[:11]), captain=squad[0], vice=squad[1], bench=list(squad[11:])),
@@ -131,7 +133,7 @@ class FakeSolver:
 
 
 @pytest.fixture
-def held(monkeypatch):
+def held(monkeypatch, stub_lineup):
     """Patch the held chips simulate sees; returns the setter."""
 
     def set_held(*chips: HeldChip) -> None:
@@ -486,6 +488,10 @@ def test_the_real_solver_end_to_end_keeps_the_invariants(tmp_path: Path):
     terms = result.fh_terms
     assert terms.one_week + terms.knock_on - terms.keeping == pytest.approx(result.net)
     assert result.band in (PLAY, MARGINAL, HOLD)
+    # Each side's lineup is picked from its own squad: the free-hit fifteen on
+    # the on side, the standing plan's squad on the off side.
+    assert set(result.on.lineup.xi) <= set(result.on.path.week1_freehit_squad)
+    assert set(result.off.lineup.xi) <= set(result.off.plan.squad)
 
 
 def test_next_break_finds_the_first_long_gap():
