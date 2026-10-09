@@ -507,31 +507,16 @@ def run_pipeline(
             cfg, client, store, send=send, save=save, overtaken=overtaken
         )
 
-    inputs = fetch_inputs(cfg, client, store=store)
-    # Priced now, persisted below with everything else: the ledger's one
-    # reconciliation line per gameweek fires on the first run to see the
-    # squad, and a withheld tick that had written the snapshot would have
-    # spent it on a report nobody saved or sent.
-    ledger = observe(
-        store, inputs.squad, inputs.players, inputs.chips_used, persist=False
+    # The week every run opens with (prepare_week): the API's inputs for the
+    # ledger, the recorded week laid over them for everything else, the
+    # sales priced, the strengths fitted once, the coming week projected and
+    # the chip calendar drawn.
+    week = prepare_week(cfg, client, store)
+    inputs, ledger, effective, executed = (
+        week.inputs, week.ledger, week.effective, week.executed
     )
-    # What the owner has told the inbox he entered this gameweek, laid over
-    # the API's squad (aigaffer.executed). ``inputs`` stay the API's truth and
-    # are read by the ledger alone — both of its calls — so it never records a
-    # virtual purchase or a virtual squad; ``effective`` feeds everything
-    # else: projections, calendar, solve, gaffer, briefing and every renderer.
-    # With nothing recorded the two are the same object.
-    effective, executed = apply_executed(inputs, store.executed(inputs.event.id))
-    # The ledger's prices, plus what each signing he entered would sell for:
-    # read by everything downstream that is not the ledger itself.
-    prices = _selling_prices(ledger, executed, effective)
-    # One fit of the team strengths a run, read by every projection the run
-    # makes: the week's, the calendar's and each of the gaffer's re-solves.
-    strengths = _strengths(effective, cfg)
-    xmins, projections = build_projections(effective, cfg, strengths=strengths)
-    # The chip calendar, once a run and before the solve it shapes; the
-    # gaffer's re-solves are judged against this same one (see _calendar).
-    calendar = _calendar(effective, cfg, projections, prices, strengths=strengths)
+    prices, strengths = week.prices, week.strengths
+    xmins, projections, calendar = week.xmins, week.projections, week.calendar
     solved = solve(effective, projections, cfg, prices, calendar)
     # In a week the owner has already played a chip in, the belt inside
     # _consult refuses any chip the gaffer finalizes — held_by_rules on the
@@ -862,20 +847,17 @@ def _run_reminder(
     (:func:`_against_the_full_report`, :func:`_against_the_entered_week`)
     and share everything after: the peer check, the buzz, then the save.
     """
-    inputs = fetch_inputs(cfg, client, store=store)
-    ledger = observe(
-        store, inputs.squad, inputs.players, inputs.chips_used, persist=False
+    # The same week the full report opens with (prepare_week). A fresh
+    # calendar for a fresh solve: the deadline run's was built on the board as
+    # it stood a day ago, and the yardstick here is solver-then against
+    # solver-now, each on its own day's calendar. The coming week's minutes
+    # are the manager's to read, and the reminder never asks him, so they go
+    # unread here.
+    week = prepare_week(cfg, client, store)
+    inputs, ledger, effective, executed = (
+        week.inputs, week.ledger, week.effective, week.executed
     )
-    # The week he entered, if he has texted "Transfers made": the same overlay
-    # the full report reads, with the ledger kept on the API's own squad.
-    effective, executed = apply_executed(inputs, store.executed(inputs.event.id))
-    prices = _selling_prices(ledger, executed, effective)
-    # A fresh calendar for a fresh solve: the deadline run's was built on the
-    # board as it stood a day ago, and the yardstick here is solver-then
-    # against solver-now, each on its own day's calendar. One fit, as ever.
-    strengths = _strengths(effective, cfg)
-    _, projections = build_projections(effective, cfg, strengths=strengths)
-    calendar = _calendar(effective, cfg, projections, prices, strengths=strengths)
+    prices, projections, calendar = week.prices, week.projections, week.calendar
     solved = solve(effective, projections, cfg, prices, calendar)
     event = effective.event
 
@@ -1271,7 +1253,113 @@ def diff_actions(stored: dict, fresh: dict) -> dict:
     return diff
 
 
-def fetch_inputs(cfg: Config, client: FplClient, store: Store | None = None) -> PipelineInputs:
+@dataclass
+class PreparedWeek:
+    """The week every run starts from, before anything is decided about it.
+
+    ``inputs`` are the API's truth and are read by the ledger alone — both of
+    its calls — so it never records a virtual purchase or a virtual squad.
+    ``effective`` is that truth with the owner's recorded week laid over it
+    (:func:`aigaffer.executed.apply_executed`): the same object as ``inputs``
+    when nothing is recorded, and what everything else reads — projections,
+    calendar, solve, gaffer, briefing and every renderer. ``executed`` is the
+    row that was laid over, or None.
+
+    ``prices`` is what each man in the effective squad sells for
+    (:func:`_selling_prices`). ``strengths`` is the run's one fit of the team
+    strengths, read by every projection the run makes. ``xmins`` and
+    ``projections`` are the coming week's, on whatever minute overrides the
+    caller handed in; ``calendar`` is built on the model's own minutes and is
+    None when no chip is held or the single-week planner is answering.
+    """
+
+    inputs: PipelineInputs
+    ledger: Observation
+    effective: PipelineInputs
+    executed: Executed | None
+    prices: dict[int, int] | None
+    strengths: TeamStrengths | None
+    xmins: dict[int, float]
+    projections: dict[int, PlayerProjection]
+    calendar: ChipCalendar | None
+
+
+def prepare_week(
+    cfg: Config,
+    client: FplClient,
+    store: Store,
+    *,
+    executed_for: Callable[[int], Executed | None] | None = None,
+    minute_overrides: dict[int, float] | None = None,
+) -> PreparedWeek:
+    """Fetch, price, overlay and project the coming week: every run's opening.
+
+    One function for the three things that open with it — the full report
+    (:func:`run_pipeline`), the T-3h reminder (:func:`_run_reminder`) and the
+    chip what-if (:mod:`aigaffer.whatif_handler`) — so a what-if can never be
+    a question about a different week from the report beside it.
+
+    The ledger is observed without persisting: a run persists it later, after
+    whatever it delivers (see each caller), and a what-if never does.
+
+    ``executed_for`` reads the owner's recorded week by gameweek, and is
+    called exactly once — memoised here, then handed to the fetch, whose
+    history pool needs the row before this function has seen the gameweek.
+    Left None it is ``store.executed``. A what-if passes a reader over the row
+    it read under the state lock, so the fetch and the overlay see one row.
+
+    ``minute_overrides`` reach the coming week's projections and nothing
+    else: the calendar builds projections of its own on the model's minutes
+    (:func:`_calendar`), because his minutes are for Saturday and the
+    calendar prices weeks months out. None — every scheduled run — is the
+    model's minutes, as before.
+    """
+    read = executed_for if executed_for is not None else store.executed
+    rows: dict[int, Executed | None] = {}
+
+    def once(gw: int) -> Executed | None:
+        if gw not in rows:
+            rows[gw] = read(gw)
+        return rows[gw]
+
+    inputs = fetch_inputs(cfg, client, executed_for=once)
+    # Priced now, persisted by the caller: the ledger's one reconciliation
+    # line per gameweek fires on the first run to see the squad, and a run
+    # that withheld or failed to send would have spent it on nothing.
+    ledger = observe(
+        store, inputs.squad, inputs.players, inputs.chips_used, persist=False
+    )
+    effective, executed = apply_executed(inputs, once(inputs.event.id))
+    prices = _selling_prices(ledger, executed, effective)
+    # One fit of the team strengths a run, read by every projection the run
+    # makes: the week's, the calendar's and each of the gaffer's re-solves.
+    strengths = _strengths(effective, cfg)
+    xmins, projections = build_projections(
+        effective, cfg, minute_overrides, strengths=strengths
+    )
+    # The chip calendar, once a run and before the solve it shapes; a
+    # re-solve on the gaffer's minutes is judged against this same one.
+    calendar = _calendar(effective, cfg, projections, prices, strengths=strengths)
+    return PreparedWeek(
+        inputs=inputs,
+        ledger=ledger,
+        effective=effective,
+        executed=executed,
+        prices=prices,
+        strengths=strengths,
+        xmins=xmins,
+        projections=projections,
+        calendar=calendar,
+    )
+
+
+def fetch_inputs(
+    cfg: Config,
+    client: FplClient,
+    store: Store | None = None,
+    *,
+    executed_for: Callable[[int], Executed | None] | None = None,
+) -> PipelineInputs:
     """Ask the API everything the run needs, once.
 
     This is the only stage that talks to the network, so everything after it
@@ -1286,9 +1374,12 @@ def fetch_inputs(cfg: Config, client: FplClient, store: Store | None = None) -> 
     ahead of the histories rather than after them — they are what the cut is
     made against.
 
-    ``store``, when given, is read for one thing: the owner's recorded week
-    (:mod:`aigaffer.executed`), whose signings join the history pool. The
-    backtest and most tests call it without one.
+    The owner's recorded week (:mod:`aigaffer.executed`) is read for one
+    thing here, its signings joining the history pool, and through
+    ``executed_for`` when it is given — a reader keyed by gameweek, which is
+    how :func:`prepare_week` reads the row once a run, and how a what-if
+    hands in the row it read under the state lock — else through ``store``.
+    The backtest and most tests pass neither.
     """
     bootstrap = client.bootstrap()
     event = bootstrap.next_event()
@@ -1314,8 +1405,11 @@ def fetch_inputs(cfg: Config, client: FplClient, store: Store | None = None) -> 
     # stages solve from, and outside the API's picks: without his history he
     # projects at zero and the solve's first instinct is to sell him. So is a
     # recorded free-hit team, whose eleven is fielded this week.
-    if store is not None:
-        row = store.executed(event.id)
+    reader = executed_for if executed_for is not None else (
+        store.executed if store is not None else None
+    )
+    if reader is not None:
+        row = reader(event.id)
         if row is not None:
             held = [*held, *row.transfers_in, *(row.freehit_squad or [])]
     summaries = {pid: _summary(client, pid) for pid in history_pool(players, held)}
@@ -1575,7 +1669,10 @@ def _consult(
     # alone — a half-installed dependency raises whatever it likes on the way
     # up, and none of it is worth the week's report.
     try:
-        import anthropic
+        # Not used by name any more (build_client imports it again), and kept
+        # for what this group is for: an SDK that will not import is a run
+        # with no manager, said on the log, not a labelled fallback.
+        import anthropic  # noqa: F401
 
         from aigaffer.manager.agent import (
             FALLBACK,
@@ -1624,33 +1721,11 @@ def _consult(
         # because a failure from here on is a fallback like any other and the
         # net below is what says so in the report.
         from aigaffer.manager.briefing import build_briefing
+        from aigaffer.manager.client import build_client
 
         decision = run_manager(
-            # Bounded, because the SDK is not by default: ten minutes a request
-            # and two retries is half an hour of one turn, inside a job that is
-            # given thirty for the whole run.
-            #
-            # Five minutes, not the two this was first written with. Two was
-            # chosen against a turn that hangs and never against a turn that
-            # works: a turn of this model at medium effort, running its web
-            # searches on the server before a single token comes back, takes
-            # minutes on purpose. Live it never once finished — two attempts of
-            # two minutes each, no searches, no turns, and the fallback every
-            # time, which is a manager who can never be reached wearing the
-            # clothes of a manager who was unlucky.
-            #
-            # One retry stays, and the worst case adds up rather than overlaps:
-            # the loop's own budget
-            # (:data:`~aigaffer.manager.agent.TIME_BUDGET_SECONDS`, twelve
-            # minutes) is checked before a request, a hung last request burns
-            # ten more, and the tools that request asked for run after it —
-            # a resolve sweeps the window again, two minutes at the outside.
-            # Twenty-four minutes inside the manager, against a job that is
-            # given thirty, which leaves the solver's own week time to be
-            # rendered and sent: the thing that must not be missed.
-            anthropic.Anthropic(
-                api_key=cfg.anthropic_api_key, timeout=300.0, max_retries=1
-            ),
+            # Bounded against the clock; the reasons are in client.py.
+            build_client(cfg),
             cfg,
             inputs,
             solved,

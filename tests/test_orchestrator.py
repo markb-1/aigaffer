@@ -47,6 +47,7 @@ from aigaffer.orchestrator import (
     NO_CHIPS,
     PipelineError,
     PipelineInputs,
+    PreparedWeek,
     SolveResult,
     _calendar,
     _fielded_lineup,
@@ -59,6 +60,7 @@ from aigaffer.orchestrator import (
     diff_actions,
     fetch_inputs,
     history_pool,
+    prepare_week,
     run_pipeline,
     solve,
 )
@@ -4315,3 +4317,109 @@ def test_an_ordinary_entered_week_keeps_its_transfer_news(monkeypatch, tmp_path)
     assert reminder["changes"]["buys_added"] == [18]
     assert reminder["changes"]["sells_added"] == [8]
     assert "Now buying: Sarr" in alert
+
+
+def test_prepare_week_reads_the_recorded_week_once_and_lays_it_over(tmp_path):
+    # One read of the recorded week a run: fetch_inputs needs it for the
+    # history pool, apply_executed for the effective squad, and both must see
+    # the same row — a what-if hands in a row it read under the state lock.
+    calls: list[int] = []
+    row = make_executed()
+
+    def reader(gw: int):
+        calls.append(gw)
+        return row
+
+    week = prepare_week(
+        config(state_dir=tmp_path / "state"),
+        make_client(pipeline_routes()),
+        Store(tmp_path / "aigaffer.db"),
+        executed_for=reader,
+    )
+
+    assert isinstance(week, PreparedWeek)
+    assert calls == [2], "once, for the coming gameweek"
+    assert week.executed == row
+    assert week.effective.executed == row and week.inputs.executed is None
+    assert sorted(week.effective.squad.player_ids) == row.squad_after
+    assert sorted(week.inputs.squad.player_ids) == sorted(PICKS_15_IDS), "the API's truth kept"
+    assert 17 in week.prices, "the recorded signing is priced to sell"
+
+
+def test_prepare_week_reads_the_store_when_no_reader_is_given(tmp_path):
+    store = Store(tmp_path / "aigaffer.db")
+    store.save_executed(make_executed())
+
+    week = prepare_week(
+        config(state_dir=tmp_path / "state"), make_client(pipeline_routes()), store
+    )
+
+    assert week.executed == make_executed()
+
+
+def test_a_reader_overrules_the_store(monkeypatch, tmp_path):
+    # The what-if reads the row once, from the state it snapshotted, and the
+    # store it then hands over is the snapshot's: the reader is the one
+    # source of truth for the row, in the fetch and in the overlay alike.
+    monkeypatch.setattr(orchestrator, "CANDIDATES_PER_POSITION", 1)
+    cfg = config(state_dir=tmp_path / "state")
+    store = Store(tmp_path / "aigaffer.db")
+    store.save_executed(make_executed(transfers_in=[18], transfers_out=[8]))
+
+    inputs = fetch_inputs(
+        cfg, make_client(pipeline_routes()), store=store, executed_for=lambda gw: None
+    )
+    week = prepare_week(cfg, make_client(pipeline_routes()), store, executed_for=lambda gw: None)
+
+    assert 18 not in inputs.histories, "Sarr is outside the cut and nobody recorded him"
+    assert week.executed is None and 18 not in week.inputs.histories
+
+
+def test_minute_overrides_move_the_week_and_never_the_calendar(monkeypatch, tmp_path):
+    # The gaffer's minutes are for the coming gameweek (build_projections'
+    # docstring); the calendar prices weeks months out on the model's own.
+    # A what-if replays his minutes from the latest verdict, so they must
+    # reach the week's projections and stop there.
+    seen: list[tuple[dict | None, int | None]] = []
+    real = orchestrator.build_projections
+
+    def spy(inputs, cfg, minute_overrides=None, *, horizon=None, **kwargs):
+        seen.append((minute_overrides, horizon))
+        return real(inputs, cfg, minute_overrides, horizon=horizon, **kwargs)
+
+    monkeypatch.setattr(orchestrator, "build_projections", spy)
+
+    week = prepare_week(
+        config(state_dir=tmp_path / "state", chips=True),
+        make_client(pipeline_routes()),
+        Store(tmp_path / "aigaffer.db"),
+        minute_overrides={FERRER: 0.0},
+    )
+
+    week_call, *calendar_calls = seen
+    assert week_call == ({FERRER: 0.0}, None)
+    assert calendar_calls and all(not overrides for overrides, _ in calendar_calls)
+    assert all(horizon is not None for _, horizon in calendar_calls), "the calendar's own horizon"
+    assert week.xmins[FERRER] == 0.0
+    assert week.projections[FERRER].per_gw[2] == pytest.approx(0.0, abs=1e-9)
+    assert week.calendar is not None
+
+
+def test_every_run_opens_with_the_shared_preamble(monkeypatch, tmp_path):
+    # The full report and the reminder both take their week from
+    # prepare_week, so a what-if built on it can never drift from either.
+    opened: list[str] = []
+    real = orchestrator.prepare_week
+
+    def spy(*args, **kwargs):
+        opened.append("week")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(orchestrator, "prepare_week", spy)
+    cfg = config(state_dir=tmp_path / "state")
+    store = Store(tmp_path / "aigaffer.db")
+
+    run_pipeline(cfg, make_client(pipeline_routes()), store, "scout", send=False)
+    run_pipeline(cfg, make_client(pipeline_routes()), store, "reminder", send=False)
+
+    assert opened == ["week", "week"]
