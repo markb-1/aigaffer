@@ -16,16 +16,21 @@ import pytest
 
 from aigaffer import __main__ as cli
 from aigaffer import inbox
+from aigaffer.chips import FREE_HIT, WILDCARD
 from aigaffer.inbox import (
-    CHIPS_SOON,
+    CHIP_KINDS,
     HELP,
     NOT_CONFIGURED,
     SOMETHING_WRONG,
+    WHATIF_WRONG,
+    WHATIFS_OFF,
+    confirm_handled,
     dispatch,
+    mark_failed,
+    marked_failed,
     normalise,
     run_inbox,
 )
-
 from aigaffer.report.telegram import KEYBOARD
 
 TOKEN = "1234:super-secret-bot-token"
@@ -64,6 +69,31 @@ def recorded(sent_at: datetime) -> str:
     return f"Recorded at {sent_at.isoformat()}"
 
 
+def no_reply(text: str) -> None:
+    pytest.fail(f"dispatch itself never replies: {text!r}")
+
+
+class WhatIfStub:
+    """The chip what-if handler, faked: records what it was handed, replies
+    through ``reply`` itself and returns None, as the real one does."""
+
+    def __init__(self, replies: tuple[str, ...] = ("numbers", "opinion")) -> None:
+        self.calls: list[tuple[str, int, datetime]] = []
+        self.replies = replies
+
+    def __call__(self, kind, update_id, sent_at, reply):
+        self.calls.append((kind, update_id, sent_at))
+        for text in self.replies:
+            reply(text)
+        return None
+
+
+def run_with(tmp_path, phone: Phone, chip_whatif, handler=recorded) -> int:
+    return run_inbox(
+        TOKEN, CHAT, tmp_path, handler, chip_whatif, get=phone.get, send=phone.send
+    )
+
+
 def run(tmp_path, phone: Phone, handler=recorded) -> int:
     return run_inbox(TOKEN, CHAT, tmp_path, handler, get=phone.get, send=phone.send)
 
@@ -82,14 +112,31 @@ def test_normalise_lowercases_collapses_and_strips_the_tail(text, command):
     assert normalise(text) == command
 
 
-@pytest.mark.parametrize("command", ["wildcard", "wc", "free hit", "freehit", "fh"])
-def test_the_chip_words_say_what_ifs_are_coming(command):
-    assert dispatch(command, datetime.now(UTC), recorded) == CHIPS_SOON
+@pytest.mark.parametrize(
+    ("command", "kind"),
+    [("wildcard", WILDCARD), ("wc", WILDCARD), ("free hit", FREE_HIT),
+     ("freehit", FREE_HIT), ("fh", FREE_HIT)],
+)
+def test_the_chip_words_go_to_the_what_if_with_their_kind(command, kind):
+    stub = WhatIfStub(replies=())
+    sent_at = datetime.now(UTC)
+
+    assert dispatch(command, 7, sent_at, no_reply, recorded, stub) is None
+    assert stub.calls == [(kind, 7, sent_at)]
+
+
+def test_the_chip_words_without_a_what_if_say_so():
+    assert dispatch("wildcard", 7, datetime.now(UTC), no_reply, recorded) == WHATIFS_OFF
 
 
 @pytest.mark.parametrize("command", ["help", "hello", "", "transfers"])
 def test_anything_else_gets_the_help(command):
-    assert dispatch(command, datetime.now(UTC), recorded) == HELP
+    assert dispatch(command, 7, datetime.now(UTC), no_reply, recorded) == HELP
+
+
+def test_the_chip_words_are_exactly_the_kinds():
+    assert set(CHIP_KINDS) == {"wildcard", "wc", "free hit", "freehit", "fh"}
+    assert set(CHIP_KINDS.values()) == {WILDCARD, FREE_HIT}
 
 
 def test_transfers_made_is_handed_the_messages_own_time(tmp_path):
@@ -102,8 +149,11 @@ def test_transfers_made_is_handed_the_messages_own_time(tmp_path):
 
 
 def test_the_help_lists_the_commands():
-    assert "Transfers made" in HELP and "help" in HELP and "wildcard" in HELP
+    assert "Transfers made" in HELP and "help" in HELP
+    assert "Wildcard? / Free hit?" in HELP
+    assert "Nothing is recorded" in HELP and "don't send Transfers made" in HELP
     assert HELP.startswith("Tap a button below")
+    assert "coming soon" not in HELP
 
 
 def test_another_chat_is_ignored_silently_and_passed(tmp_path):
@@ -302,6 +352,68 @@ def test_an_update_without_an_id_is_skipped_and_the_rest_handled(
     assert out.strip().splitlines() == [f"aigaffer inbox: an update skipped ({reason})"]
 
 
+def test_a_what_if_replies_for_itself_and_the_inbox_adds_nothing(tmp_path):
+    stub = WhatIfStub()
+    phone = Phone([update(10, "Wildcard?")])
+
+    assert run_with(tmp_path, phone, stub) == 0
+
+    assert phone.sent == ["numbers", "opinion"], "no third message from the inbox"
+    assert stub.calls == [(WILDCARD, 10, datetime.fromtimestamp(DATE, UTC))]
+    assert (tmp_path / "offset").read_text() == "10"
+    assert not (tmp_path / "failed").exists()
+
+
+def test_two_taps_in_one_batch_are_answered_in_order(tmp_path):
+    # A wildcard and a free hit waiting in one getUpdates batch. Each is
+    # handled to the end before the next starts, in id order.
+    stub = WhatIfStub()
+    phone = Phone([update(11, "fh"), update(10, "wc")])
+
+    run_with(tmp_path, phone, stub)
+
+    assert [call[:2] for call in stub.calls] == [(WILDCARD, 10), (FREE_HIT, 11)]
+    assert phone.sent == ["numbers", "opinion", "numbers", "opinion"]
+    assert (tmp_path / "offset").read_text() == "11"
+
+
+def test_a_what_if_that_raises_gets_its_own_apology_and_is_not_retried(tmp_path, capsys):
+    # The real handler writes the marker before anything that can raise
+    # (spec section 8), so the inbox finds it already set and lets the update
+    # go: the what-if is never re-run behind the owner's back.
+    def failing(kind, update_id, sent_at, reply):
+        mark_failed(tmp_path, update_id)
+        raise RuntimeError("solver blew up with words nobody should log")
+
+    phone = Phone([update(10, "free hit"), update(11, "help")])
+
+    run_with(tmp_path, phone, failing)
+
+    assert phone.sent == [WHATIF_WRONG, HELP]
+    assert (tmp_path / "offset").read_text() == "11"
+    assert not (tmp_path / "failed").exists()
+    out = capsys.readouterr().out
+    assert "RuntimeError" in out and "words" not in out
+
+
+def test_a_transfers_made_failure_keeps_its_own_apology(tmp_path):
+    phone = Phone([update(10, "Transfers made")])
+
+    run_with(tmp_path, phone, WhatIfStub(), handler=broken)
+
+    assert phone.sent == [SOMETHING_WRONG]
+
+
+def test_the_marker_and_offset_helpers_are_the_inboxs_own_files(tmp_path):
+    assert marked_failed(tmp_path) is None
+    mark_failed(tmp_path, 12)
+    confirm_handled(tmp_path, 11)
+
+    assert marked_failed(tmp_path) == 12
+    assert (tmp_path / "failed").read_text() == "12"
+    assert (tmp_path / "offset").read_text() == "11"
+
+
 # --- the command line ---------------------------------------------------------
 
 
@@ -350,14 +462,16 @@ def test_the_inbox_directory_defaults_to_the_home_dot_directory(monkeypatch, tmp
     ("label", "expected"),
     [
         ("Transfers made", "the transfers-made handler ran"),
-        ("Wildcard?", CHIPS_SOON),
-        ("Free hit?", CHIPS_SOON),
+        ("Wildcard?", f"what-if {WILDCARD}"),
+        ("Free hit?", f"what-if {FREE_HIT}"),
         ("Help", HELP),
     ],
 )
 def test_each_keyboard_button_reaches_its_command(label, expected):
     reply = dispatch(
-        normalise(label), datetime.now(UTC), lambda sent_at: "the transfers-made handler ran"
+        normalise(label), 7, datetime.now(UTC), no_reply,
+        lambda sent_at: "the transfers-made handler ran",
+        lambda kind, uid, sent_at, reply: f"what-if {kind}",
     )
 
     assert reply == expected

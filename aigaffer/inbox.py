@@ -7,9 +7,10 @@ handled, obeys the configured chat and nobody else, answers, and exits — one
 HTTPS call on a quiet minute, and silence on stdout.
 
 Three things can be said to it. "Transfers made" records the latest verdict
-as entered (:mod:`aigaffer.recording`). The chip words are the chip
-what-ifs' (a later change); until then they get a line saying so. Anything
-else — "help", a typo, a sticker — gets the help.
+as entered (:mod:`aigaffer.recording`). "Wildcard?" and "Free hit?" — and
+the words they normalise to — run a chip what-if
+(:mod:`aigaffer.whatif_handler`), which replies for itself, in more than one
+message. Anything else — "help", a typo, a sticker — gets the help.
 
 **Where it is.** The last handled ``update_id`` lives in
 ``$AIGAFFER_INBOX_DIR/offset`` (default ``~/.aigaffer/``), outside the
@@ -24,6 +25,14 @@ so the next minute tries again; a second failure on the same id lets it go
 and carries on. The marker is a file because consecutive minutes are
 separate processes. Either way the owner is told something went wrong, and
 the log gets the exception's class and never its words.
+
+A chip what-if is the exception: it writes the marker itself, first thing,
+so an exception anywhere inside it finds the marker already set and the
+update is let go at once — a what-if costs minutes and a gaffer's bill, and
+is never re-run behind the owner's back; the apology tells him to ask again.
+A marker that is still there when the next minute starts can then only mean
+the process was killed mid-what-if, and the handler picks up what it left
+(see :mod:`aigaffer.whatif_handler`).
 """
 
 import os
@@ -34,6 +43,7 @@ from pathlib import Path
 
 import httpx
 
+from aigaffer.chips import FREE_HIT, WILDCARD
 from aigaffer.report.telegram import get_updates, send_message
 
 INBOX_ENV = "AIGAFFER_INBOX_DIR"
@@ -41,18 +51,39 @@ OFFSET_FILE = "offset"
 FAILED_FILE = "failed"
 
 TRANSFERS_MADE = "transfers made"
-CHIP_WORDS = frozenset({"wildcard", "wc", "free hit", "freehit", "fh"})
+# Every word that asks for a chip what-if, normalised, and the chip it asks
+# about. The keyboard's "Wildcard?" and "Free hit?" normalise to the first and
+# third (``normalise`` strips the question mark).
+CHIP_KINDS = {
+    "wildcard": WILDCARD,
+    "wc": WILDCARD,
+    "free hit": FREE_HIT,
+    "freehit": FREE_HIT,
+    "fh": FREE_HIT,
+}
+CHIP_WORDS = frozenset(CHIP_KINDS)
 
 HELP = (
     "Tap a button below, or text me:\n"
     "• Transfers made — straight after you enter the latest recommendation"
     " exactly, its transfers and its chip. Later reports this gameweek then"
     " work from that squad. Don't send it if you changed anything.\n"
-    "• wildcard / free hit — chip what-ifs (coming soon).\n"
+    "• Wildcard? / Free hit? — what playing that chip this gameweek would do:"
+    " numbers in a few minutes, the gaffer's view after. Nothing is recorded —"
+    " if you play it, don't send Transfers made.\n"
     "• help — this message."
 )
-CHIPS_SOON = "Chip what-ifs (wildcard, free hit) are coming soon — nothing to show yet."
 SOMETHING_WRONG = "Something went wrong recording that — try again in a minute."
+WHATIF_WRONG = "Something went wrong with that what-if — ask again in a minute."
+WHATIFS_OFF = "Chip what-ifs aren't set up on this box."
+
+# What a handler answers with: one text, sent with the keyboard like every
+# reply (send_message always attaches it, hence no keyboard keyword). A
+# what-if is handed one of these and sends its own messages through it — an
+# ack, the numbers, the gaffer's view — because it has more than one thing to
+# say and minutes between them.
+Reply = Callable[[str], None]
+ChipWhatIf = Callable[[str, int, datetime, Reply], str | None]
 
 NOT_CONFIGURED = "aigaffer inbox: telegram not configured — nothing to read"
 UNREACHABLE = "aigaffer inbox: telegram unreachable ({reason})"
@@ -73,13 +104,27 @@ def normalise(text: str) -> str:
 
 
 def dispatch(
-    command: str, sent_at: datetime, transfers_made: Callable[[datetime], str]
-) -> str:
-    """The reply to one normalised message."""
+    command: str,
+    update_id: int,
+    sent_at: datetime,
+    reply: Reply,
+    transfers_made: Callable[[datetime], str],
+    chip_whatif: ChipWhatIf | None = None,
+) -> str | None:
+    """The reply to one normalised message, or None when the handler has
+    already replied for itself — which is what a chip what-if does.
+
+    ``chip_whatif`` None is a box wired without what-ifs (and most tests):
+    the chip words then get a line saying so, never the help, so a tap on the
+    keyboard is not answered with a list that offers the very button tapped.
+    """
     if command == TRANSFERS_MADE:
         return transfers_made(sent_at)
-    if command in CHIP_WORDS:
-        return CHIPS_SOON
+    kind = CHIP_KINDS.get(command)
+    if kind is not None:
+        if chip_whatif is None:
+            return WHATIFS_OFF
+        return chip_whatif(kind, update_id, sent_at, reply)
     return HELP
 
 
@@ -88,6 +133,7 @@ def run_inbox(
     chat_id: str | None,
     directory: Path,
     transfers_made: Callable[[datetime], str],
+    chip_whatif: ChipWhatIf | None = None,
     *,
     get: Callable[[str, int | None], list[dict]] = get_updates,
     send: Callable[[str, str, str], None] = send_message,
@@ -102,6 +148,10 @@ def run_inbox(
         print(NOT_CONFIGURED)
         return 0
     directory.mkdir(parents=True, exist_ok=True)
+
+    def reply(text: str) -> None:
+        send(token, chat_id, text)
+
     last = _read_int(directory / OFFSET_FILE)
     try:
         # Broad on purpose: a transport error (httpx) or a malformed payload
@@ -128,6 +178,10 @@ def run_inbox(
     for update in sorted(numbered, key=lambda u: u["update_id"]):
         uid = update["update_id"]
         message = update.get("message")
+        # The apology fits the command: a what-if that fell over is asked
+        # again, a recording is tried again. Set before anything can raise,
+        # so a message too malformed to read still gets the general one.
+        apology = SOMETHING_WRONG
         try:
             ours = (
                 message is not None
@@ -135,13 +189,17 @@ def run_inbox(
             )
             if ours:
                 sent_at = datetime.fromtimestamp(message["date"], UTC)
-                reply = dispatch(
-                    normalise(message.get("text") or ""), sent_at, transfers_made
+                command = normalise(message.get("text") or "")
+                if command in CHIP_KINDS:
+                    apology = WHATIF_WRONG
+                answer = dispatch(
+                    command, uid, sent_at, reply, transfers_made, chip_whatif
                 )
-                send(token, chat_id, reply)
+                if answer is not None:
+                    send(token, chat_id, answer)
         except Exception as error:  # any failure; one bad text must not wedge us
             print(FAILED.format(reason=type(error).__name__))
-            _apologise(token, chat_id, send)
+            _apologise(token, chat_id, send, apology)
             if _read_int(directory / FAILED_FILE) != uid:
                 _write_int(directory / FAILED_FILE, uid)
                 return 0
@@ -166,11 +224,11 @@ def _id_fault(update: object) -> str | None:
 
 
 def _apologise(
-    token: str, chat_id: str, send: Callable[[str, str, str], None]
+    token: str, chat_id: str, send: Callable[[str, str, str], None], text: str
 ) -> None:
     """Best effort: a failed apology is not a second failure to handle."""
     try:
-        send(token, chat_id, SOMETHING_WRONG)
+        send(token, chat_id, text)
     except Exception:  # the apology is the last resort
         pass
 
@@ -188,3 +246,22 @@ def _write_int(path: Path, value: int) -> None:
     temporary = path.with_name(path.name + ".tmp")
     temporary.write_text(str(value))
     os.replace(temporary, path)
+
+
+def mark_failed(directory: Path, update_id: int) -> None:
+    """Set the failure marker to ``update_id`` — how a what-if says, before it
+    does anything that can raise, "if you find this again, I was killed"."""
+    _write_int(directory / FAILED_FILE, update_id)
+
+
+def marked_failed(directory: Path) -> int | None:
+    """The update id the failure marker holds, or None."""
+    return _read_int(directory / FAILED_FILE)
+
+
+def confirm_handled(directory: Path, update_id: int) -> None:
+    """Move the offset to ``update_id``: Telegram stops handing it out. A
+    resumed what-if does this itself before resuming, so a second kill
+    cannot bring it round a third time; the inbox's own write of the same
+    value afterwards is harmless."""
+    _write_int(directory / OFFSET_FILE, update_id)
