@@ -330,6 +330,20 @@ def test_the_week_is_given_the_gates_recorded_row(tmp_path, monkeypatch):
     assert executed_for(3) is None
 
 
+def test_a_relative_state_directory_is_snapshotted(tmp_path, monkeypatch):
+    # On the box the state directory is the relative "state" (the tick runs
+    # from the clone's root); a file URI cannot be built from a relative path.
+    Stages(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    cfg = config(state_dir=Path("state"), chips=True, anthropic_api_key="test-key")
+    Store(cfg.state_dir / DB_NAME)
+
+    phone, _ = ask(cfg, tmp_path / "inbox")
+
+    assert phone.sent == [ack(), "message 1", "message 2"]
+    assert log_of(tmp_path / "inbox").numbers(UID) is not None
+
+
 # --- the cap and the log -------------------------------------------------------
 
 

@@ -238,10 +238,14 @@ def _copy_store(live: Path, snapshot: Path) -> None:
     A file copy could catch a database mid-write; the backup API reads it as
     one transaction. A box with no database yet copies nothing, and the
     :class:`Store` opened on the snapshot path creates an empty one.
+
+    The path is resolved first: ``as_uri`` refuses a relative one, and the
+    box's state directory is the relative ``state`` (the tick runs from the
+    clone's root), so an unresolved path would fail every real what-if.
     """
     if not live.exists():
         return
-    source = sqlite3.connect(f"{live.as_uri()}?mode=ro", uri=True)
+    source = sqlite3.connect(f"{live.resolve().as_uri()}?mode=ro", uri=True)
     target = sqlite3.connect(snapshot)
     try:
         source.backup(target)
