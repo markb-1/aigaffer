@@ -23,6 +23,7 @@ import fcntl
 import json
 import sqlite3
 from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import httpx
 import pytest
@@ -35,6 +36,7 @@ from aigaffer.recording import (
     CLOSED,
     NEGATIVE_BANK,
     NOTHING_YET,
+    PLAY_HEADS_UP,
     REPLACED,
     STALE,
     VERDICT_MODES,
@@ -46,6 +48,7 @@ from aigaffer.recording import (
 )
 from aigaffer.report.render import entered_moves
 from aigaffer.store import Store
+from aigaffer.whatif_log import WhatIfLog
 from tests.fixtures import (
     HISTORY_PATH,
     PICKS_15_IDS,
@@ -671,6 +674,90 @@ def test_a_second_text_publishes_nothing(scouted, tmp_path):
 
     assert second_reply == first_reply
     assert [name for name, _ in sync.calls] == ["pull", "publish", "pull"]
+
+
+def logged(path, *, gw=2, band="play", chip="wildcard", ts):
+    log = WhatIfLog(path)
+    log.append_numbers(90, {"ts": ts, "event": gw, "chip": chip, "band": band})
+    return log
+
+
+def heads_up_for(scouted, tmp_path, **line):
+    cfg, store = scouted
+    verdict_ts = store.latest_verdict(2, VERDICT_MODES).ts
+    after = (datetime.fromisoformat(verdict_ts) + timedelta(minutes=1)).isoformat()
+    log = logged(tmp_path / "whatifs.jsonl", ts=line.pop("ts", after), **line)
+    lock = tmp_path / "inbox" / "state.lock"
+    reply = transfers_made(
+        cfg, make_client(pipeline_routes()), FakeSync(lock), lock,
+        sent_at=datetime.now(UTC) + timedelta(minutes=2), log=log,
+    )
+    return reply, after
+
+
+def test_a_play_what_if_after_the_verdict_adds_a_heads_up(scouted, tmp_path):
+    reply, after = heads_up_for(scouted, tmp_path)
+
+    london = datetime.fromisoformat(after).astimezone(ZoneInfo("Europe/London"))
+    expected = PLAY_HEADS_UP.format(chip="wildcard", gw=2, time=london.strftime("%a %H:%M"))
+    assert reply.startswith("Recorded for GW2 (from ")
+    assert reply.endswith("\n\n" + expected)
+
+
+def test_a_free_hit_what_if_names_the_free_hit(scouted, tmp_path):
+    reply, _ = heads_up_for(scouted, tmp_path, chip="free_hit")
+
+    assert "you looked at a free hit for GW2" in reply
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        {"band": "hold"},
+        {"band": "marginal"},
+        {"gw": 3},
+        {"ts": "2000-01-01T00:00:00+00:00"},  # before the verdict: the verdict is newer advice
+    ],
+)
+def test_no_heads_up_without_a_newer_play_for_the_week(scouted, tmp_path, line):
+    reply, _ = heads_up_for(scouted, tmp_path, **line)
+
+    assert "Heads-up" not in reply
+
+
+def test_no_log_no_heads_up(scouted, tmp_path):
+    cfg, _ = scouted
+    lock = tmp_path / "inbox" / "state.lock"
+
+    reply = transfers_made(
+        cfg, make_client(pipeline_routes()), FakeSync(lock), lock,
+        sent_at=datetime.now(UTC) + timedelta(seconds=1),
+    )
+
+    assert "Heads-up" not in reply
+
+
+def test_a_refusal_carries_no_heads_up(tmp_path):
+    # Nothing recorded, nothing to be wrong: no verdict, no line.
+    cfg = config(state_dir=tmp_path / "state")
+    log = logged(tmp_path / "whatifs.jsonl", ts=datetime.now(UTC).isoformat())
+    lock = tmp_path / "inbox" / "state.lock"
+
+    reply = transfers_made(
+        cfg, make_client(pipeline_routes()), FakeSync(lock), lock,
+        sent_at=datetime.now(UTC), log=log,
+    )
+
+    assert reply == NOTHING_YET.format(gw=2)
+
+
+def test_a_recorded_outcome_says_which_verdict(tmp_path):
+    store = Store(tmp_path / "aigaffer.db")
+    run_at(store, 2, "deadline", DEADLINE_TS, verdict().decision)
+
+    outcome = record_transfers_made(store, BOOTSTRAP, SQUAD, [], LATER, NOW)
+
+    assert (outcome.gw, outcome.verdict_ts) == (2, DEADLINE_TS)
 
 
 class LockProbeTransport(CountingTransport):

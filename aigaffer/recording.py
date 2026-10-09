@@ -25,6 +25,7 @@ the help text tells him to text straight away.
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import httpx
 
@@ -34,9 +35,10 @@ from aigaffer.data.fpl_api import FplClient
 from aigaffer.data.models import Bootstrap, Player, Squad
 from aigaffer.executed import NO_CHIP, Executed, StaleVerdict, Verdict
 from aigaffer.ledger import observe, selling_price
-from aigaffer.report.render import POSITIONS, entered_moves, plural, price
+from aigaffer.report.render import POSITIONS, chip_label, entered_moves, plural, price
 from aigaffer.statesync import StateSync, state_lock
 from aigaffer.store import DB_NAME, Store
+from aigaffer.whatif_log import WhatIfLog
 
 # The reports a person can enter. The reminder is a check on one of these,
 # never a verdict of its own.
@@ -348,14 +350,29 @@ NEGATIVE_BANK = (
     " text again."
 )
 PUBLISH_MESSAGE = "chore: record transfers made (inbox)"
+# After a recording, when the owner looked at a chip what-if for the same
+# week that said Play, and did so after the verdict being recorded: the
+# recorder cannot tell what he entered (it records the verdict), so it says
+# the one thing that could make this recording wrong. The recording itself
+# is unchanged — a guess at what he did would be worse than the warning.
+PLAY_HEADS_UP = (
+    "Heads-up: you looked at a {chip} for GW{gw} at {time}. If you played it,"
+    " this recording is wrong — the first report after the deadline will read"
+    " your real squad."
+)
+UK = ZoneInfo("Europe/London")
 
 
 @dataclass(frozen=True)
 class Outcome:
-    """The reply to send, and whether the store changed (so state is pushed)."""
+    """The reply to send, whether the store changed (so state is pushed),
+    and — when a verdict was recorded or echoed — which: its gameweek and
+    timestamp, for the what-if heads-up. Refusals leave both None."""
 
     reply: str
     changed: bool
+    gw: int | None = None
+    verdict_ts: str | None = None
 
 
 def record_transfers_made(
@@ -401,13 +418,16 @@ def record_transfers_made(
     except StaleVerdict:
         return Outcome(STALE.format(gw=event.id), False)
     if new is row:
-        return Outcome(echo(row, verdict, players), False)
+        return Outcome(echo(row, verdict, players), False, event.id, verdict.ts)
     if new.bank_after < 0:
         return Outcome(
             NEGATIVE_BANK.format(gw=event.id, short=price(-new.bank_after)), False
         )
     store.save_executed(new)
-    return Outcome(echo(new, verdict, players, replaced=_replaced(row, new)), True)
+    return Outcome(
+        echo(new, verdict, players, replaced=_replaced(row, new)), True,
+        event.id, verdict.ts,
+    )
 
 
 def _replaced(row: Executed | None, new: Executed) -> bool:
@@ -428,6 +448,8 @@ def transfers_made(
     lock_path: Path,
     sent_at: datetime,
     now: datetime | None = None,
+    *,
+    log: WhatIfLog | None = None,
 ) -> str:
     """The inbox's handler for "Transfers made": fetch, lock, record, push.
 
@@ -441,6 +463,11 @@ def transfers_made(
 
     ``sent_at`` and ``now`` must be timezone-aware: they are compared with the
     stored UTC timestamps.
+
+    ``log``, when given, is the chip what-ifs' log: a Play what-if for the
+    same gameweek, newer than the verdict just recorded, adds
+    :data:`PLAY_HEADS_UP` to the reply. Read after the lock is released —
+    it lives in the inbox directory and only this inbox writes it.
     """
     bootstrap = client.bootstrap()
     current = bootstrap.current_event()
@@ -464,4 +491,19 @@ def transfers_made(
         )
         if outcome.changed:
             sync.publish(PUBLISH_MESSAGE)
-    return outcome.reply
+    return outcome.reply + _heads_up(log, outcome)
+
+
+def _heads_up(log: WhatIfLog | None, outcome: Outcome) -> str:
+    """The heads-up paragraph for ``outcome``, or "" when there is none."""
+    if log is None or outcome.gw is None or outcome.verdict_ts is None:
+        return ""
+    play = log.latest_play(outcome.gw, after=outcome.verdict_ts)
+    if play is None:
+        return ""
+    when = datetime.fromisoformat(play["ts"]).astimezone(UK)
+    return "\n\n" + PLAY_HEADS_UP.format(
+        chip=chip_label(play["chip"]).lower(),
+        gw=outcome.gw,
+        time=when.strftime("%a %H:%M"),
+    )

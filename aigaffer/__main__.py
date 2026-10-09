@@ -58,6 +58,7 @@ from aigaffer.report.telegram import send_report
 from aigaffer.statesync import STATE_LOCK, GitStateSync
 from aigaffer.store import DB_NAME, EXECUTED_DIR, Store
 from aigaffer.whatif_handler import chip_whatif
+from aigaffer.whatif_log import LOG_FILE, WhatIfLog
 
 AUTO = "auto"
 BACKTEST = "backtest"
@@ -258,6 +259,7 @@ def _inbox(client: FplClient) -> int:
         client,
         GitStateSync(cfg.state_dir.parent, (recordings,)),
         directory / STATE_LOCK,
+        log=WhatIfLog(directory / LOG_FILE),
     )
     whatif = partial(chip_whatif, cfg, client, directory, directory / STATE_LOCK)
     return run_inbox(

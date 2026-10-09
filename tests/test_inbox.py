@@ -448,6 +448,7 @@ def test_the_cli_inbox_reads_the_inbox_directory(monkeypatch, tmp_path):
     sync = seen["handler"].args[2]
     assert sync.paths == ("state/executed/",), "the inbox commits its text files only"
     assert seen["handler"].args[3] == tmp_path / "inbox" / "state.lock"
+    assert seen["handler"].keywords["log"].path == tmp_path / "inbox" / "whatifs.jsonl"
     whatif = seen["chip_whatif"]
     assert whatif.func.__name__ == "chip_whatif"
     assert whatif.args[2] == tmp_path / "inbox"
