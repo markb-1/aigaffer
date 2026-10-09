@@ -14,8 +14,15 @@ that module's loop with the decision tools taken away — the same pause
 resumption, the same container carry, the same moving cache marker, the same
 append-only history (Opus 5.5 binds its thinking blocks to the conversation),
 and the same way of asking for the answer in words rather than with a forced
-``tool_choice``, which this model rejects. The helpers are imported from
-there rather than written twice.
+``tool_choice``, which this model rejects.
+
+Only the small block helpers are shared: ``_cached``, ``_rolling``, ``_text``
+and ``_result`` are imported from there. The loop itself — ``_Conversation``
+here, with its turn, pause-resumption, container and answer-asking handling —
+mirrors :class:`aigaffer.manager.agent._Conversation` and is deliberately
+copied, not shared, for now: pulling a common base out of the manager's loop
+is a refactor outside this feature. Until that is done, a fix to either loop's
+turn, pause or container handling must be made in both.
 
 And like that module it never raises. A refusal, a rate limit, a dead
 connection, six turns without an answer, eight minutes on the clock — every
