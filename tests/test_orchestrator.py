@@ -52,6 +52,8 @@ from aigaffer.orchestrator import (
     _calendar,
     _fielded_lineup,
     _held,
+    _entered_lineup,
+    _recorded_lineup,
     _selling_prices,
     _week1_lock,
     _stored_actions,
@@ -3968,6 +3970,13 @@ def test_an_entered_week_with_nothing_new_gets_the_calm_alert(tmp_path):
     assert "⚠️" not in alert
     assert reminder["changes"] == {}
     assert reminder["executed_from"] == row.verdicts
+    # And the eleven he entered: the squad after his moves less the bench of
+    # the verdict he entered, with his armbands.
+    deadline = store.decision(2, "deadline")
+    entered = _entered_lineup(row, deadline, PLAYERS)
+    assert entered is not None
+    assert render.phone_lineup(entered, PLAYERS) in alert
+    assert alert.index("Bench:") < alert.index(render.RECORDED_CALM)
     assert reminder["full_report_plan"]["transfers"] == []
     assert reminder["full_report_plan"]["captain"] == row.captain
     assert set(store.purchases()) == set(PICKS_15_IDS), "the ledger kept the API's truth"
@@ -4423,3 +4432,126 @@ def test_every_run_opens_with_the_shared_preamble(monkeypatch, tmp_path):
     run_pipeline(cfg, make_client(pipeline_routes()), store, "reminder", send=False)
 
     assert opened == ["week", "week"]
+
+
+# --- the lineup the reminders carry ---------------------------------------------
+
+# A hand-built record over ids 1..21. squad_before is 1..15; the verdict sells
+# 7 and buys 18, so the squad after is {1..15} - {7} | {18}. The bench of four
+# [2, 12, 6, 14] comes off that fifteen, leaving the eleven
+# {1, 3, 4, 5, 8, 9, 10, 11, 13, 15, 18}, sorted by id.
+PLAN_RECORD = {
+    "squad_before": list(range(1, 16)),
+    "transfers_out": [7],
+    "transfers_in": [18],
+    "captain": 8,
+    "vice": 13,
+    "bench": [2, 12, 6, 14],
+    "freehit_squad": None,
+    "freehit_xi": None,
+}
+
+
+def test_the_planned_lineup_is_rebuilt_from_the_deadline_record():
+    lineup = _recorded_lineup(PLAN_RECORD, PLAYERS)
+
+    assert lineup.xi == [1, 3, 4, 5, 8, 9, 10, 11, 13, 15, 18]
+    assert lineup.bench == [2, 12, 6, 14]
+    assert (lineup.captain, lineup.vice) == (8, 13)
+
+
+def test_a_free_hit_weeks_planned_lineup_is_the_temporary_team():
+    # The free-hit fifteen is 1..14 plus 18 (21 bought for the week instead of
+    # 15), its eleven is the record's freehit_xi in the record's order, and the
+    # bench is the four of the fifteen outside it, from the record.
+    xi = [1, 3, 4, 5, 8, 9, 10, 11, 13, 14, 21]
+    record = {
+        **PLAN_RECORD,
+        "freehit_squad": [1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 20, 21],
+        "freehit_xi": xi,
+        "bench": [20, 2, 12, 6],
+    }
+
+    lineup = _recorded_lineup(record, PLAYERS)
+
+    assert lineup.xi == xi
+    assert lineup.bench == [20, 2, 12, 6]
+
+
+def test_a_legacy_record_has_no_rebuildable_lineup():
+    legacy = {key: value for key, value in PLAN_RECORD.items() if key != "squad_before"}
+
+    assert _recorded_lineup(legacy, PLAYERS) is None
+    assert _recorded_lineup(None, PLAYERS) is None
+    assert _recorded_lineup({**PLAN_RECORD, "squad_before": None}, PLAYERS) is None
+
+
+def test_a_bench_of_the_wrong_length_has_no_rebuildable_lineup():
+    # Three on the bench leaves a twelve, which is no eleven to field.
+    assert _recorded_lineup({**PLAN_RECORD, "bench": [2, 12, 6]}, PLAYERS) is None
+    # A bench man outside the squad leaves the eleven the wrong size too.
+    assert _recorded_lineup({**PLAN_RECORD, "bench": [2, 12, 6, 7]}, PLAYERS) is None
+
+
+def test_a_planned_player_the_board_dropped_has_no_rebuildable_lineup():
+    # An armband on someone outside the eleven is as inconsistent as a player
+    # the board has never heard of: neither is a lineup to field.
+    assert _recorded_lineup({**PLAN_RECORD, "captain": 99}, PLAYERS) is None
+    assert _recorded_lineup({**PLAN_RECORD, "transfers_in": [99]}, PLAYERS) is None
+
+
+def test_the_entered_lineup_is_the_squad_he_entered_minus_the_recorded_bench():
+    row = make_executed(
+        squad_after=[1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15, 18],
+        captain=8, vice=13,
+    )
+
+    lineup = _entered_lineup(row, {"bench": [2, 12, 6, 14]}, PLAYERS)
+
+    assert lineup.xi == [1, 3, 4, 5, 8, 9, 10, 11, 13, 15, 18]
+    assert lineup.bench == [2, 12, 6, 14]
+    assert (lineup.captain, lineup.vice) == (8, 13)
+
+
+def test_an_entered_free_hit_lineup_is_the_temporary_team():
+    xi = [1, 3, 4, 5, 8, 9, 10, 11, 13, 14, 21]
+    squad = [1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 20, 21]
+    row = make_executed(
+        chip="free_hit", freehit_squad=squad, freehit_xi=xi, captain=8, vice=13
+    )
+
+    lineup = _entered_lineup(row, {"bench": [20, 2, 12, 6]}, PLAYERS)
+
+    assert lineup.xi == xi and lineup.bench == [20, 2, 12, 6]
+
+
+def test_an_entered_lineup_with_no_recorded_bench_is_left_out():
+    assert _entered_lineup(make_executed(), None, PLAYERS) is None
+    assert _entered_lineup(make_executed(), {"bench": None}, PLAYERS) is None
+
+
+def test_a_calm_reminder_carries_the_deadline_verdicts_lineup(tmp_path):
+    cfg = config(state_dir=tmp_path / "state")
+    store = Store(cfg.state_dir / "aigaffer.db")
+    client = make_client(pipeline_routes())
+
+    run_pipeline(cfg, client, store, "deadline", send=False)
+    alert = run_pipeline(cfg, client, store, "reminder", send=False)
+
+    planned = _recorded_lineup(store.decision(2, "deadline"), PLAYERS)
+    assert render.phone_lineup(planned, PLAYERS) in alert
+    assert alert.index("## Do this") < alert.index("Bench:") < alert.index(
+        render.REMINDER_UNCHANGED
+    )
+
+
+def test_a_reminder_with_no_full_report_carries_the_fresh_lineup(tmp_path):
+    cfg = config(state_dir=tmp_path / "state")
+    store = Store(cfg.state_dir / "aigaffer.db")
+
+    alert = run_pipeline(
+        cfg, make_client(pipeline_routes()), store, "reminder", send=False
+    )
+
+    assert "Starting XI (" in alert and "Bench: 1 " in alert
+    assert alert.index("Bench:") < alert.index(render.NO_FULL_REPORT)

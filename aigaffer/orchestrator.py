@@ -928,12 +928,17 @@ def _against_the_full_report(
     # legacy record, and unknowable is not changed.
     solver_then = None if record is None else record.get("solver_actions")
     changes = {} if solver_then is None else diff_actions(solver_then, fresh)
+    # The eleven the deadline verdict planned, derived from its record for the
+    # calm text; the fresh solve's own is the changed text's.
+    planned = _recorded_lineup(record, effective.players)
 
     report = render_reminder(
         event, fresh, stored, changes, effective.bootstrap,
         selling_prices=selling_prices,
         standing=_standing(effective),
         free_transfers=effective.free_transfers,
+        planned=planned,
+        fresh_lineup=lineup,
     )
     # The buzz is the digest — one checklist, what moved, a pointer — and on
     # the calm weeks it is the alert itself, byte for byte. The audit line
@@ -943,6 +948,8 @@ def _against_the_full_report(
         selling_prices=selling_prices,
         standing=_standing(effective),
         free_transfers=effective.free_transfers,
+        planned=planned,
+        fresh_lineup=lineup,
     )
     report += _audit_line(ledger)
     buzz += _audit_line(ledger)
@@ -1019,6 +1026,8 @@ def _against_the_entered_week(
         selling_prices=selling_prices,
         standing=_standing(effective),
         free_transfers=effective.free_transfers,
+        entered_lineup=_entered_lineup(executed, record, players),
+        fresh_lineup=lineup,
     )
     report = render_entered_reminder(
         event, executed, baseline, fresh, changes, effective.bootstrap, **shared
@@ -1039,6 +1048,94 @@ def _against_the_entered_week(
         "executed_from": executed.verdicts,
     }
     return report, buzz, decision
+
+
+def _recorded_lineup(
+    record: dict | None, players: dict[int, Player]
+) -> Lineup | None:
+    """The eleven a deadline verdict planned, rebuilt from its decision record.
+
+    Records gain nothing for this: the lineup is derived. The standing fifteen
+    after the verdict is ``squad_before`` less ``transfers_out`` plus
+    ``transfers_in``; the bench is the record's own, in substitution order; the
+    eleven is what is left, sorted by id, since the record keeps no order for
+    it. On a free-hit week the record carries the temporary fifteen and eleven
+    (``freehit_squad``/``freehit_xi``), and those are what is fielded — the
+    standing squad reverts and is not the team the owner takes to the deadline.
+
+    Used by the T-3h reminder, whose calm text shows the plan he was already
+    told rather than a fresh pick. It never raises: a record written before a
+    key existed, or one that does not add up (an eleven that is not eleven, a
+    bench that is not four, an armband outside the eleven, a player the board
+    no longer lists) returns None, and the text leaves the block out rather
+    than showing a lineup nobody can field.
+    """
+    if not record:
+        return None
+    bench = record.get("bench")
+    captain, vice = record.get("captain"), record.get("vice")
+    try:
+        if record.get("freehit_xi") and record.get("freehit_squad"):
+            xi = list(record["freehit_xi"])
+        else:
+            squad = (
+                set(record["squad_before"])
+                - set(record["transfers_out"])
+                | set(record["transfers_in"])
+            )
+            xi = sorted(squad - set(bench))
+        bench = list(bench)
+    except (KeyError, TypeError):
+        return None
+    return _checked_lineup(xi, bench, captain, vice, players)
+
+
+def _entered_lineup(
+    executed: Executed, record: dict | None, players: dict[int, Player]
+) -> Lineup | None:
+    """The eleven he entered, for the reminder after "Transfers made".
+
+    The fifteen is the recorded free-hit squad on a free hit, else the squad
+    after his moves; the bench comes from the verdict he entered (``record``),
+    since that is the order he was told; the eleven is the rest — or the
+    recorded ``freehit_xi`` on a free hit, which is his own choice — and the
+    armbands are his. Anything missing or inconsistent returns None, and the
+    text leaves the block out: never a reason to cost the buzz.
+    """
+    bench = None if record is None else record.get("bench")
+    if not bench:
+        return None
+    free_hit = executed.chip == FREE_HIT and bool(executed.freehit_squad)
+    fifteen = executed.freehit_squad if free_hit else executed.squad_after
+    xi = (
+        executed.freehit_xi or (record or {}).get("freehit_xi")
+        if free_hit
+        else None
+    ) or sorted(set(fifteen) - set(bench))
+    return _checked_lineup(list(xi), list(bench), executed.captain, executed.vice, players)
+
+
+def _checked_lineup(
+    xi: list[int],
+    bench: list[int],
+    captain: int | None,
+    vice: int | None,
+    players: dict[int, Player],
+) -> Lineup | None:
+    """A lineup, or None when it could not be fielded as it stands: not
+    eleven distinct players and four on the bench, an armband off the eleven,
+    or a name the board does not list (the sheet needs their positions)."""
+    everyone = [*xi, *bench]
+    if (
+        len(xi) != 11
+        or len(bench) != 4
+        or len(set(everyone)) != 15
+        or captain not in xi
+        or vice not in xi
+        or not all(pid in players for pid in everyone)
+    ):
+        return None
+    return Lineup(xi=xi, captain=captain, vice=vice, bench=bench)
 
 
 def _entered_actions(executed: Executed, record: dict | None) -> dict:

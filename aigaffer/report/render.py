@@ -127,6 +127,21 @@ PLANNED_THIS_WEEK = (
 # reverts — so the section and the checklist both say so, in the same words.
 FREE_HIT_XI = "Free Hit XI (this week only)"
 
+# The lineup block every phone text carries (see :func:`phone_lineup`). The
+# tags are padded to three characters and a space so the names line up on a
+# phone; the keeper's is the two-letter GK the checklist's players already say.
+PHONE_HEADING = "Starting XI"
+PHONE_CHANGED_HEADING = "Lineup now"
+PHONE_FREE_HIT = " \u2014 free hit team"
+PHONE_ROWS = (
+    (GOALKEEPER, "GK "),
+    (DEFENDER, "DEF"),
+    (MIDFIELDER, "MID"),
+    (FORWARD, "FWD"),
+)
+PHONE_BENCH = "Bench: "
+PHONE_BENCH_JOIN = " \u00b7 "
+
 # What every document says, near the top, once the owner has texted
 # "Transfers made" for the week: which squad it is working from, so a report
 # that says "roll" never reads as the bot forgetting the moves he made.
@@ -335,6 +350,8 @@ def render_reminder(
     selling_prices: dict[int, int] | None = None,
     standing: Standing | None = None,
     free_transfers: int | None = None,
+    planned: Lineup | None = None,
+    fresh_lineup: Lineup | None = None,
 ) -> str:
     """The short alert, three hours out. Pure; no I/O.
 
@@ -373,6 +390,17 @@ def render_reminder(
     ``standing`` and ``free_transfers`` open the alert the way they open the
     digest — see the standing line. The count is read nowhere else here:
     the reminder's checklist is a stored plan, and a plan says what it spends.
+
+    The phone must never be left to scroll back for the eleven to field, so
+    the alert carries it (:func:`phone_lineup`), chosen by the same three
+    shapes. ``planned`` is the deadline verdict's own lineup, rebuilt from its
+    record by the orchestrator, and is what a calm week shows — the plan he
+    has been told, not a fresh pick that only disagrees because the gaffer
+    overrode the solver a day ago. ``fresh_lineup`` is this run's solve, which
+    is what a changed week shows (as ``Lineup now``, straight after what
+    moved) and what a week with no full report shows, having nothing else.
+    Both default to None, which leaves the block out — a legacy record whose
+    plan cannot be rebuilt, and every caller that predates the block.
     """
     players = {player.id: player for player in bootstrap.elements}
     clubs = {team.id: team.short_name for team in bootstrap.teams}
@@ -380,15 +408,23 @@ def render_reminder(
     def block(heading: str, actions: dict) -> str:
         return _actions_block(heading, event, actions, players, clubs, selling_prices)
 
+    def lineup_block(lineup: Lineup | None, actions: dict, heading: str) -> list[str]:
+        if lineup is None:
+            return []
+        return [phone_lineup(lineup, players, heading, actions["chip"] == FREE_HIT)]
+
     sections = [_header("reminder", event, standing, free_transfers)]
     if stored is None:
         sections += [block("## Do this", fresh)]
+        sections += lineup_block(fresh_lineup, fresh, PHONE_HEADING)
         sections += [NO_FULL_REPORT]
     elif not changes:
         sections += [block("## Do this", stored)]
+        sections += lineup_block(planned, stored, PHONE_HEADING)
         sections += [REMINDER_UNCHANGED]
     else:
         sections += [_changed(changes, players, clubs)]
+        sections += lineup_block(fresh_lineup, fresh, PHONE_CHANGED_HEADING)
         sections += [block(GAFFER_VERDICT, stored)]
         sections += [block(FRESH_SOLVE, fresh)]
         sections += [HUMAN_JUDGES]
@@ -424,6 +460,13 @@ def render_digest(
     more under it: each chip's week and the nearest expiry (:func:`chip_line`).
     ``executed`` is what the owner has entered this week: the digest then says
     what squad it is working from, after the header and its chip line.
+
+    Straight after the checklist it carries the whole eleven and the bench
+    (:func:`phone_lineup`), because the full report that holds them is on
+    GitHub and the phone is where the lineup is set. ``lineup`` is already the
+    fielded one — the temporary free-hit team on a free-hit week — so the
+    block says "free hit team" in its heading then. A draft has no checklist
+    and no block: fifteen buys are not a lineup to field.
     """
     players = {player.id: player for player in bootstrap.elements}
     clubs = {team.id: team.short_name for team in bootstrap.teams}
@@ -445,6 +488,7 @@ def render_digest(
                 chip_entered=executed is not None and executed.chip == chip != NO_CHIP,
             )
         )
+        sections.append(phone_lineup(lineup, players, free_hit=free_hit))
     sections.append(_recommendation(choice, players, clubs))
     if gaffer is not None:
         sections.append(_gaffer_digest(gaffer))
@@ -475,7 +519,8 @@ def render_withheld(
     solver's report through, printed the way the deadline is; ``attempts`` is
     the other thing that stops them, the most ticks the report can be held.
     ``standing`` and ``free_transfers`` open the alert the way they open the
-    digest: a withheld week is still a text.
+    digest: a withheld week is still a text, and carries the same lineup block
+    after its checklist (:func:`phone_lineup`).
     """
     players = {player.id: player for player in bootstrap.elements}
     clubs = {team.id: team.short_name for team in bootstrap.teams}
@@ -495,6 +540,7 @@ def render_withheld(
                 chip_entered=executed is not None and executed.chip == chip != NO_CHIP,
             )
         )
+        sections.append(phone_lineup(lineup, players, free_hit=free_hit))
     return "\n\n".join(sections) + "\n"
 
 
@@ -508,6 +554,8 @@ def render_reminder_digest(
     selling_prices: dict[int, int] | None = None,
     standing: Standing | None = None,
     free_transfers: int | None = None,
+    planned: Lineup | None = None,
+    fresh_lineup: Lineup | None = None,
 ) -> str:
     """The reminder as the phone gets it. Pure; no I/O.
 
@@ -519,6 +567,11 @@ def render_reminder_digest(
     checklist, says what the news moved, and points at the saved alert for
     the solver's fresh answer; the judging reader the full alert addresses
     can open the repo, and the hurried one is no longer asked to judge.
+
+    ``planned`` and ``fresh_lineup`` are :func:`render_reminder`'s, passed
+    straight through so the calm digest stays that alert byte for byte; the
+    changed digest shows the fresh eleven as ``Lineup now`` after what moved,
+    in place of the fresh checklist it points at the repo for.
     """
     if stored is None or not changes:
         return render_reminder(
@@ -526,6 +579,8 @@ def render_reminder_digest(
             selling_prices=selling_prices,
             standing=standing,
             free_transfers=free_transfers,
+            planned=planned,
+            fresh_lineup=fresh_lineup,
         )
     players = {player.id: player for player in bootstrap.elements}
     clubs = {team.id: team.short_name for team in bootstrap.teams}
@@ -533,6 +588,16 @@ def render_reminder_digest(
         _header("reminder", event, standing, free_transfers),
         _actions_block("## Do this", event, stored, players, clubs, selling_prices),
         _changed(changes, players, clubs),
+        *(
+            []
+            if fresh_lineup is None
+            else [
+                phone_lineup(
+                    fresh_lineup, players, PHONE_CHANGED_HEADING,
+                    fresh["chip"] == FREE_HIT,
+                )
+            ]
+        ),
         FRESH_SOLVE_POINTER.format(gw=event.id),
     ]
     return "\n\n".join(sections) + "\n"
@@ -550,6 +615,8 @@ def render_entered_reminder(
     standing: Standing | None = None,
     free_transfers: int | None = None,
     digest: bool = False,
+    entered_lineup: Lineup | None = None,
+    fresh_lineup: Lineup | None = None,
 ) -> str:
     """The T-3h reminder after "Transfers made". Pure; no I/O.
 
@@ -564,6 +631,12 @@ def render_entered_reminder(
     Its loud line and its closing line are the entered week's own: the news
     is measured from his entry, and his plan stands until he changes it.
     A fresh plan playing the chip he already played says it is played.
+
+    Like every phone text it carries the eleven to field
+    (:func:`phone_lineup`): calm, ``entered_lineup`` — the team he entered,
+    rebuilt by the orchestrator — straight after "Transfers made"; changed,
+    ``fresh_lineup`` as ``Lineup now`` straight after what moved. None leaves
+    the block out.
     """
     players = {player.id: player for player in bootstrap.elements}
     clubs = {team.id: team.short_name for team in bootstrap.teams}
@@ -582,17 +655,35 @@ def render_entered_reminder(
         _header("reminder", event, standing, free_transfers),
         working_from(executed, players),
     ]
+    now = (
+        []
+        if fresh_lineup is None
+        else [
+            phone_lineup(
+                fresh_lineup, players, PHONE_CHANGED_HEADING, fresh["chip"] == FREE_HIT
+            )
+        ]
+    )
     if not changes:
-        sections += [block("## Do this", baseline, True), RECORDED_CALM]
+        sections += [block("## Do this", baseline, True)]
+        if entered_lineup is not None:
+            sections += [
+                phone_lineup(
+                    entered_lineup, players, free_hit=baseline["chip"] == FREE_HIT
+                )
+            ]
+        sections += [RECORDED_CALM]
     elif digest:
         sections += [
             block("## Do this", baseline, True),
             moved(),
+            *now,
             FRESH_SOLVE_POINTER.format(gw=event.id),
         ]
     else:
         sections += [
             moved(),
+            *now,
             block(ENTERED_VERDICT, baseline, True),
             block(FRESH_SOLVE, fresh, False),
             ENTERED_STANDS,
@@ -1036,6 +1127,45 @@ def _do_this(
         lines.append(
             f"Set lineup ({formation(lineup, players)}): {_by_position(lineup, players)}"
         )
+    return "\n".join(lines)
+
+
+def phone_lineup(
+    lineup: Lineup,
+    players: dict[int, Player],
+    heading: str = PHONE_HEADING,
+    free_hit: bool = False,
+) -> str:
+    """The eleven and the bench as plain lines, for every text the phone gets.
+
+    The full report holds the team sheet, but it lives on GitHub; the phone
+    had only the checklist, so the owner scrolled back for the eleven and could
+    field one that was a day out of date. This is the lineup to field, short
+    enough to ride every update text. A row a position, within a row in
+    ``lineup.xi`` order, ``(C)``/``(V)`` after the armbands, the bench numbered
+    in substitution order. No markdown heading: ``send_message`` bolds and
+    escapes the text itself.
+
+    ``free_hit`` appends " \u2014 free hit team" to the heading, the phone's
+    version of :data:`FREE_HIT_XI` (which reads as a label on the full
+    report's heading, not as a title): the team on the sheet is the temporary
+    one, not the standing squad. A bench id the board does not know prints as
+    ``player {id}``, as everywhere in this module; the eleven's players must
+    be on the board, as :func:`formation` needs their positions.
+    """
+    rows: dict[int, list[str]] = defaultdict(list)
+    for pid in lineup.xi:
+        rows[players[pid].element_type].append(_armband(pid, lineup, players))
+    suffix = PHONE_FREE_HIT if free_hit else ""
+    lines = [f"{heading}{suffix} ({formation(lineup, players)})"]
+    lines += [f"{tag} {', '.join(rows[position])}" for position, tag in PHONE_ROWS]
+    lines.append(
+        PHONE_BENCH
+        + PHONE_BENCH_JOIN.join(
+            f"{order} {_who(pid, players)}"
+            for order, pid in enumerate(lineup.bench, start=1)
+        )
+    )
     return "\n".join(lines)
 
 
@@ -1569,7 +1699,7 @@ def _ranked(
 
 def _armband(pid: int, lineup: Lineup, players: dict[int, Player]) -> str:
     marker = {lineup.captain: " (C)", lineup.vice: " (V)"}.get(pid, "")
-    return f"{players[pid].web_name}{marker}"
+    return f"{_who(pid, players)}{marker}"
 
 
 def _listed(pids: list[int], players: dict[int, Player], clubs: dict[int, str]) -> str:

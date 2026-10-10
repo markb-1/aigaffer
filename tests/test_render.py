@@ -64,6 +64,7 @@ from aigaffer.report.render import (
     NEWS_MOVED_ENTERED,
     NO_FULL_REPORT,
     RECORDED_CALM,
+    phone_lineup,
     REMINDER_UNCHANGED,
     chip_line,
     CHIP_ENTERED,
@@ -580,7 +581,9 @@ def test_the_digest_names_the_eleven_when_a_signing_starts():
     text = digest(lineup=STARTING)
 
     assert STARTING_LINE in text
-    assert "Starting XI" not in text, "the line, not the section"
+    # The report's "## Starting XI" section stays out; the phone block that
+    # now follows the checklist is a plain-text lineup, not that section.
+    assert "## Starting XI" not in text, "the line, not the section"
 
 
 def test_a_signing_left_on_the_bench_needs_no_lineup_line():
@@ -1190,7 +1193,7 @@ def test_the_digest_is_the_checklist_the_moves_and_the_view():
 
 def test_the_digest_never_carries_the_reports_long_sections():
     text = digest(view=gaffer())
-    for heading in ("Candidate plans", "Watchlist", "Chip EV", "Starting XI",
+    for heading in ("Candidate plans", "Watchlist", "Chip EV", "## Starting XI",
                     "The road ahead"):
         assert heading not in text
 
@@ -1742,3 +1745,177 @@ def test_a_recorded_chip_reads_as_already_played_in_the_fresh_block_too():
     assert FRESH_SOLVE in text
     assert text.count(CHIP_ENTERED.format(chip="Wildcard")) == 2
     assert "PLAY Wildcard" not in text
+
+
+# --- the lineup every phone text carries --------------------------------------
+
+# LINEUP worked by hand: xi [1, 3, 4, 5, 8, 9, 10, 11, 13, 14, 15] is Alvez in
+# goal; Costa, Dodd, Egan at the back; Hume, Innes, Jonker, Kerr in midfield;
+# Moss, Nunes, Oduya up front — 3-4-3. Captain 8 Hume, vice 13 Moss. The bench
+# [2, 12, 6, 7] is Byrne, Lang, Fenn, Gale.
+PHONE_XI = """Starting XI (3-4-3)
+GK  Alvez
+DEF Costa, Dodd, Egan
+MID Hume (C), Innes, Jonker, Kerr
+FWD Moss (V), Nunes, Oduya
+Bench: 1 Byrne \u00b7 2 Lang \u00b7 3 Fenn \u00b7 4 Gale"""
+
+# Same eleven, but a fresh pick: Pike (16) for Hume, so the block differs.
+FRESH_LINEUP = replace(LINEUP, xi=[1, 3, 4, 5, 16, 9, 10, 11, 13, 14, 15], captain=16)
+
+
+def test_phone_lineup_is_the_eleven_by_row_with_armbands_and_a_numbered_bench():
+    assert phone_lineup(LINEUP, BOOTSTRAP_PLAYERS) == PHONE_XI
+
+
+def test_phone_lineup_on_a_free_hit_week_says_so_in_the_heading():
+    text = phone_lineup(LINEUP, BOOTSTRAP_PLAYERS, free_hit=True)
+
+    assert text.splitlines()[0] == "Starting XI \u2014 free hit team (3-4-3)"
+    assert text.splitlines()[1:] == PHONE_XI.splitlines()[1:]
+
+
+def test_phone_lineup_takes_its_heading():
+    assert phone_lineup(LINEUP, BOOTSTRAP_PLAYERS, "Lineup now").splitlines()[0] == (
+        "Lineup now (3-4-3)"
+    )
+
+
+def test_phone_lineup_names_a_bench_player_the_board_no_longer_knows():
+    lineup = replace(LINEUP, bench=[2, 12, 6, 99])
+
+    assert phone_lineup(lineup, BOOTSTRAP_PLAYERS).splitlines()[-1] == (
+        "Bench: 1 Byrne \u00b7 2 Lang \u00b7 3 Fenn \u00b7 4 player 99"
+    )
+
+
+def test_the_digest_carries_the_lineup_straight_after_do_this():
+    text = digest()
+
+    assert PHONE_XI in text
+    # Directly after the checklist: nothing but a blank line between the last
+    # Do-this line and the block, and the recommendation comes after it.
+    assert text.index("## Do this") < text.index(PHONE_XI) < text.index("Recommendation")
+    before = text[: text.index(PHONE_XI)]
+    checklist = before[before.index("## Do this"):-2]
+    assert before.endswith("\n\n")
+    assert checklist.count("\n\n") == 1, "only the gap under the Do this heading"
+
+
+def test_a_free_hit_digest_carries_the_free_hit_heading():
+    fh = replace(
+        ROLL,
+        path=PlannedPath(
+            moves=[], objective=ROLL.objective, weekly_xp={},
+            week1_chip="free_hit",
+            week1_freehit_squad=SQUAD,
+            week1_freehit_xi=LINEUP.xi,
+        ),
+    )
+    text = render_digest(
+        "deadline", EVENT, fh, LINEUP, BOOTSTRAP, gaffer(chip="free_hit"),
+        free_transfers=1,
+    )
+
+    assert "Starting XI \u2014 free hit team (3-4-3)" in text
+
+
+def test_a_draft_digest_has_no_lineup_block():
+    text = render_digest("draft", EVENT, DRAFT, LINEUP, BOOTSTRAP, free_transfers=1)
+
+    assert "Starting XI" not in text and "Bench:" not in text
+
+
+def test_the_withheld_alert_carries_the_lineup_after_do_this():
+    text = render_withheld(
+        "deadline", EVENT, ONE, LINEUP, BOOTSTRAP, "RateLimitError",
+        until=EVENT.deadline_time, attempts=12,
+    )
+
+    assert text.rstrip("\n").endswith(PHONE_XI)
+    assert text.index("## Do this") < text.index(PHONE_XI)
+
+
+def test_a_calm_reminder_shows_the_planned_lineup_and_the_digest_matches():
+    alert = render_reminder(
+        EVENT, actions(), actions(), {}, BOOTSTRAP, planned=LINEUP, fresh_lineup=FRESH_LINEUP,
+    )
+    buzz = render_reminder_digest(
+        EVENT, actions(), actions(), {}, BOOTSTRAP, planned=LINEUP, fresh_lineup=FRESH_LINEUP,
+    )
+
+    assert PHONE_XI in alert, "calm: the plan, not the fresh pick"
+    assert "Pike" not in alert
+    assert alert.index("## Do this") < alert.index(PHONE_XI) < alert.index(REMINDER_UNCHANGED)
+    assert buzz == alert
+
+
+def test_a_calm_reminder_with_no_recoverable_plan_leaves_the_block_out():
+    alert = render_reminder(
+        EVENT, actions(), actions(), {}, BOOTSTRAP, planned=None, fresh_lineup=FRESH_LINEUP,
+    )
+
+    assert "Starting XI" not in alert
+
+
+def test_a_changed_reminder_shows_lineup_now_straight_after_what_changed():
+    changes = {"sells_added": [7]}
+    fresh_block = phone_lineup(FRESH_LINEUP, BOOTSTRAP_PLAYERS, "Lineup now")
+    alert = render_reminder(
+        EVENT, actions(), actions(), changes, BOOTSTRAP,
+        planned=LINEUP, fresh_lineup=FRESH_LINEUP,
+    )
+    buzz = render_reminder_digest(
+        EVENT, actions(), actions(), changes, BOOTSTRAP,
+        planned=LINEUP, fresh_lineup=FRESH_LINEUP,
+    )
+
+    for text in (alert, buzz):
+        assert fresh_block in text
+        assert "Pike (C)" in fresh_block
+        assert PHONE_XI not in text, "the plan is superseded by the fresh eleven"
+        assert text.index(NEWS_MOVED) < text.index(fresh_block)
+    assert alert.index(fresh_block) < alert.index(GAFFER_VERDICT)
+    assert buzz.index(fresh_block) < buzz.index("state/reports/gw2-reminder.md")
+
+
+def test_a_reminder_with_no_full_report_shows_the_fresh_lineup():
+    alert = render_reminder(
+        EVENT, actions(), None, {}, BOOTSTRAP, planned=LINEUP, fresh_lineup=FRESH_LINEUP,
+    )
+
+    assert phone_lineup(FRESH_LINEUP, BOOTSTRAP_PLAYERS) in alert
+    assert alert.index("## Do this") < alert.index("Starting XI") < alert.index(NO_FULL_REPORT)
+
+
+def test_a_reminder_called_without_the_new_arguments_is_unchanged():
+    alert = render_reminder(EVENT, actions(), actions(), {}, BOOTSTRAP)
+
+    assert "Bench:" not in alert and "Starting XI" not in alert
+
+
+def test_a_calm_entered_reminder_shows_the_entered_lineup():
+    text = render_entered_reminder(
+        EVENT, entered(), entered_actions(), entered_actions(), {}, BOOTSTRAP,
+        entered_lineup=LINEUP, fresh_lineup=FRESH_LINEUP,
+    )
+    buzz = render_entered_reminder(
+        EVENT, entered(), entered_actions(), entered_actions(), {}, BOOTSTRAP,
+        digest=True, entered_lineup=LINEUP, fresh_lineup=FRESH_LINEUP,
+    )
+
+    assert PHONE_XI in text and buzz == text
+    assert text.index("Bench: Byrne") < text.index(PHONE_XI) < text.index(RECORDED_CALM)
+
+
+def test_a_changed_entered_reminder_shows_lineup_now():
+    changes = {"arrivals": [[18, "a", "d"]]}
+    fresh_block = phone_lineup(FRESH_LINEUP, BOOTSTRAP_PLAYERS, "Lineup now")
+    for digest_form in (False, True):
+        text = render_entered_reminder(
+            EVENT, entered(), entered_actions(), entered_actions(), changes, BOOTSTRAP,
+            digest=digest_form, entered_lineup=LINEUP, fresh_lineup=FRESH_LINEUP,
+        )
+
+        assert fresh_block in text and PHONE_XI not in text
+        assert text.index(NEWS_MOVED_ENTERED) < text.index(fresh_block)
