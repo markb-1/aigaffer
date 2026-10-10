@@ -60,6 +60,13 @@ class Player(BaseModel):
     transfers_out_event: int = 0
     cost_change_event: int = 0
     chance_of_playing_next_round: int | None = None
+    # FPL's own words about him and when it last changed them, for one reader:
+    # the news ledger's snapshot (aigaffer/news_ledger.py), which compares them
+    # with what was true when an entry was written — a changed flag is news.
+    # Kept as the API's strings, so the comparison is a string comparison; the
+    # defaults keep every hand-built player as quiet as he was.
+    news: str = ""
+    news_added: str | None = None
     minutes: int
     starts: int
     total_points: int
