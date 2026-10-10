@@ -2406,6 +2406,9 @@ def _planned(move: PlannedMove) -> dict:
         "in": move.transfers_in,
         "out": move.transfers_out,
         "hits": move.hits,
+        # The chip the window plans that week ("none" on nearly all of them):
+        # what the Chip forecast reads to say which week a chip is planned for.
+        "chip": move.chip,
     }
 
 

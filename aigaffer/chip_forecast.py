@@ -116,8 +116,11 @@ def _when(record: dict, record_gw: int, gw: int, held: HeldChip) -> str:
         None,
     )
     # A wildcard is never earmarked for a week, as in the report's own line.
-    if entry and entry.get("saved_for") is not None and held.chip != WILDCARD:
-        text = f"GW{entry['saved_for']}"
+    # A saved-for week already gone (a record from last gameweek) is no
+    # forecast, as a past path week is not.
+    saved = entry.get("saved_for") if entry else None
+    if saved is not None and saved >= gw and held.chip != WILDCARD:
+        text = f"GW{saved}"
         if entry.get("value") is not None:
             text += WORTH.format(value=entry["value"])
         return text
@@ -213,6 +216,10 @@ def chip_forecast(cfg: Config, client: FplClient, sent_at: datetime) -> str:
     if event is None:
         return NO_GAMEWEEK
     gw = event.id
+    # Opening a Store creates the database; one momentarily absent while the
+    # hourly tick pulls must not be conjured empty under its rebase.
+    if not (cfg.state_dir / DB_NAME).exists():
+        return NO_PLAN.format(gw=gw)
     store = Store(cfg.state_dir / DB_NAME)
     verdict = store.latest_verdict(gw, VERDICT_MODES)
     record_gw = gw
@@ -225,7 +232,12 @@ def chip_forecast(cfg: Config, client: FplClient, sent_at: datetime) -> str:
     chips_used = list(client.chips_used(cfg.team_id))
     recorded = store.executed(gw)
     if recorded is not None and recorded.chip in CHIP_API_NAMES:
-        chips_used.append({"name": CHIP_API_NAMES[recorded.chip], "event": gw})
+        # Unless the API already lists it (after the deadline it does): once.
+        api = CHIP_API_NAMES[recorded.chip]
+        if not any(
+            entry.get("name") == api and entry.get("event") == gw for entry in chips_used
+        ):
+            chips_used.append({"name": api, "event": gw})
     held = held_in_week(bootstrap, chips_used, gw)
     return render_forecast(
         verdict.decision, verdict.mode, verdict.ts, record_gw, gw, held, chips_used

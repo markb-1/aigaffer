@@ -338,6 +338,7 @@ def test_the_window_answers_and_the_recommendation_carries_its_path(scout_run):
         assert len(move["in"]) == len(move["out"]) >= 1
         assert all(isinstance(pid, int) for pid in move["in"] + move["out"])
         assert isinstance(move["hits"], int)
+        assert isinstance(move["chip"], str), "the forecast reads the path's chip weeks"
 
 
 def test_the_report_says_where_the_recommendation_is_going(scout_run):
@@ -2043,6 +2044,7 @@ def test_a_re_solve_plans_the_road_ahead_again_on_his_minutes(monkeypatch, tmp_p
             "in": move.transfers_in,
             "out": move.transfers_out,
             "hits": move.hits,
+            "chip": move.chip,
         }
         for move in seen["chosen"].moves
     ]

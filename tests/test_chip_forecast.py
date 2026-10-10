@@ -315,6 +315,29 @@ def test_no_chips_in_the_current_set_says_so_and_still_lists_the_rest():
     ]
 
 
+def test_a_path_written_before_it_recorded_chips_is_tolerated():
+    # Records saved before the path carried a chip have moves of exactly
+    # {"event","in","out","hits"}: no chip key. They name no chip week, so
+    # the calendar speaks, and nothing raises.
+    old = [{"event": e, "in": [1], "out": [2], "hits": 0} for e in (7, 8, 9)]
+    rec = record(
+        path_=old, calendar_=calendar(entry("triple_captain@19", saved_for=14, value=9.2))
+    )
+
+    text = render(rec, held=(FIRST[1],))
+
+    assert text.splitlines()[1] == "Triple captain — GW14 · worth ~+9 · expires GW19"
+
+
+def test_a_saved_for_week_already_gone_is_no_week():
+    # A record from GW7 saved the bench boost for GW7; it is GW8 now.
+    rec = record(calendar_=calendar(entry("bench_boost@19", saved_for=7, value=6.0)))
+
+    text = render(rec, held=(FIRST[0],), gw=8, record_gw=7)
+
+    assert text.splitlines()[1] == "Bench boost — no week yet · expires GW19"
+
+
 # --- chip_forecast, on the pipeline fakes ---------------------------------------
 #
 # The pipeline universe's next gameweek is GW2; the chip history has a
@@ -378,6 +401,34 @@ def test_no_report_yet_says_so(tmp_path):
 
     assert reply == NO_PLAN.format(gw=2)
     assert reply == "No plan yet — the first report for GW2 hasn't run."
+
+
+def test_a_missing_store_is_no_plan_and_is_not_created(tmp_path):
+    # During the tick's pull the database can be momentarily absent; opening
+    # a Store would create an empty one and wedge the rebase.
+    cfg = config(state_dir=tmp_path / "state")
+
+    reply = chip_forecast(cfg, make_client(pipeline_routes()), datetime.now(UTC))
+
+    assert reply == NO_PLAN.format(gw=2)
+    assert not (tmp_path / "state").exists()
+
+
+def test_a_recorded_chip_the_api_already_lists_is_played_once(tmp_path):
+    cfg, store = stored(tmp_path)
+    store.save_executed(make_executed(chip=BB, transfers_in=[], transfers_out=[]))
+    routes = pipeline_routes()
+    routes[HISTORY_PATH] = {
+        **routes[HISTORY_PATH],
+        "chips": [
+            {"name": "wildcard", "time": "2025-08-15T10:00:00Z", "event": 1},
+            {"name": "bboost", "time": "2025-08-20T10:00:00Z", "event": 2},
+        ],
+    }
+
+    reply = chip_forecast(cfg, make_client(routes), datetime.now(UTC))
+
+    assert "Played: wildcard GW1, bench boost GW2" in reply.splitlines()
 
 
 def test_no_gameweek_ahead_says_so(tmp_path):
