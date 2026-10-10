@@ -2135,3 +2135,12 @@ def test_the_system_prompt_carries_the_chip_playbook():
     assert CHIP_PLAYBOOK in SYSTEM_PROMPT
     assert "played once a season" not in SYSTEM_PROMPT
     assert "expires after GW19" in SYSTEM_PROMPT
+
+
+def test_the_prompt_searches_the_re_checks_per_club_and_carries_fresh_entries():
+    from aigaffer.manager.tools import SYSTEM_PROMPT
+    assert "What we already know" in SYSTEM_PROMPT
+    assert "Do not search a fresh entry" in SYSTEM_PROMPT
+    assert "per club" in SYSTEM_PROMPT
+    assert "carry each fresh entry" in SYSTEM_PROMPT
+    assert "not the date of the article" in SYSTEM_PROMPT
