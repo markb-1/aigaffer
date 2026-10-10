@@ -274,3 +274,22 @@ def test_the_write_drops_players_who_left_and_skips_unknown_records(tmp_path):
     path = ledger_path(tmp_path)
     write_ledger(path, view, [record(42, 0.0, "doubt", "who")], gw=GW, run="scout", now=NOW, players={5: p})
     assert sorted(json.loads(path.read_text(encoding="utf-8"))) == ["5"]
+
+
+def test_wrongly_typed_fields_are_dropped_never_a_crash():
+    # Each entry is otherwise valid; one field has the wrong type. JSON can hold
+    # any of these, a hand-edit or a bad write could leave them, and the run must
+    # carry on with the entries it can read (player 5, who is intact).
+    good, bad = player(5), player(6)
+    broken = {
+        "gw as text": {**entry(bad), "gw": "7"},
+        "return_gw as text": {**entry(bad, "injured", minutes=0.0), "return_gw": "9"},
+        "player_id as list": {**entry(bad), "player_id": [6]},
+        "minutes as text": {**entry(bad), "expected_minutes": "90"},
+        "tier as bool": {**entry(bad), "tier": True},
+        "fpl as list": {**entry(bad), "fpl": []},
+        "note as number": {**entry(bad), "note": 3},
+        "source as number": {**entry(bad), "source": 3},
+    }
+    view = judge([good, bad], {"5": entry(good), **broken})
+    assert list(view.entries) == [5]
