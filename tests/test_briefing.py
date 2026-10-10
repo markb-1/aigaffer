@@ -1167,4 +1167,4 @@ def test_only_squad_and_relevant_players_are_listed():
 def test_the_budget_line_rides_the_situation_block_only_when_asked():
     assert "Search budget this run" not in briefing()
     text = ledger_briefing(LedgerView({}), budget=6)
-    assert "Search budget this run: 6 searches — spend them on the re-check entries, one search per club." in text.split("## ")[0]
+    assert "Search budget this run: 6 searches across all turns (the per-turn allowance refreshing does not reset it) — spend them on the re-check entries, one search per club." in text.split("## ")[0]

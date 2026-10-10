@@ -113,7 +113,8 @@ KNOWN_LINE = (
 KNOWN_FRESH = "fresh"
 KNOWN_RECHECK = "re-check — {reason}"
 BUDGET_LINE = (
-    "Search budget this run: {budget} searches — spend them on the re-check"
+    "Search budget this run: {budget} searches across all turns (the per-turn"
+    " allowance refreshing does not reset it) — spend them on the re-check"
     " entries, one search per club."
 )
 

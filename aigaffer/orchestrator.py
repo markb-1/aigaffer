@@ -72,7 +72,7 @@ says what squad it is working from.
 from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -111,6 +111,15 @@ from aigaffer.data.models import (
 )
 from aigaffer.executed import Executed, apply_executed
 from aigaffer.ledger import Observation, observe, selling_price
+from aigaffer.news_ledger import (
+    SEARCH_BUDGET,
+    WRITE_FAILED,
+    LedgerView,
+    evaluate_ledger,
+    ledger_path,
+    read_ledger,
+    write_ledger,
+)
 from aigaffer.model.minutes import expected_minutes, season_prior
 from aigaffer.model.strength import TeamStrengths, build_team_strengths
 from aigaffer.model.xp import PlayerProjection, project_all, projected_events
@@ -222,6 +231,10 @@ MANAGER_UNAVAILABLE = (
 # by a manager who read the news or by a solver that could not.
 DECIDED = "the gaffer decided"
 STOOD_DOWN = "the gaffer stood down"
+# Appended to the DECIDED line when he used more searches than the run's
+# budget allows: the budget is advice in the briefing, and this is the log
+# that says whether it was taken.
+BUDGET_EXCEEDED = " — search budget exceeded ({spent}/{budget})"
 # And that the week was not written down over it: the next tick asks again.
 WITHHELD = "the report was withheld for the next tick"
 # And the early scout's own ending: written down, out of retries, and not
@@ -518,6 +531,14 @@ def run_pipeline(
     )
     prices, strengths = week.prices, week.strengths
     xmins, projections, calendar = week.xmins, week.projections, week.calendar
+    # One clock for the run (news-ledger spec section 6): it judges the ledger,
+    # stamps what this run writes into it, and dates the briefing — so a
+    # run that spans midnight never refuses a quote the briefing allowed.
+    clock = now or datetime.now(UTC)
+    news = evaluate_ledger(
+        read_ledger(ledger_path(cfg.state_dir)),
+        effective.bootstrap, effective.fixtures, effective.event, clock,
+    )
     solved = solve(effective, projections, cfg, prices, calendar)
     # In a week the owner has already played a chip in, the belt inside
     # _consult refuses any chip the gaffer finalizes — held_by_rules on the
@@ -526,6 +547,7 @@ def run_pipeline(
     # week's.
     gaffer = _consult(
         cfg, effective, solved, projections, xmins, prices, strengths=strengths,
+        mode=mode, today=clock.date(), news=news,
     )
 
     # From here down the week is his, if there was a him: the plan he chose and
@@ -736,6 +758,18 @@ def run_pipeline(
         observe(store, inputs.squad, inputs.players, inputs.chips_used)
         _write_report(cfg, event.id, mode, report)
         store.save_run(event.id, mode, report, decision)
+        # What he learned this run, for the next one — only a week he
+        # decided, and only when he recorded something (spec section 6). After
+        # the save, so a crash between leaves a recorded run with no entries,
+        # never entries from a run nobody recorded.
+        if gaffer is not None and gaffer.source == BY_MANAGER and gaffer.record:
+            try:
+                write_ledger(
+                    ledger_path(cfg.state_dir), news, gaffer.record,
+                    gw=event.id, run=mode, now=clock, players=effective.players,
+                )
+            except Exception as error:  # the ledger is memory, not the week
+                print(WRITE_FAILED.format(reason=type(error).__name__))
     if send:
         # The phone gets the digest — checklist, moves, the gaffer's opening
         # paragraph, a pointer at the rest. The full report just went to the
@@ -1743,6 +1777,9 @@ def _consult(
     selling_prices: dict[int, int] | None = None,
     *,
     strengths: TeamStrengths | None | _Unfitted = _UNFITTED,
+    mode: str | None = None,
+    today: date | None = None,
+    news: LedgerView | None = None,
 ) -> "ManagerDecision | None":
     """Put the week to the manager, and come back with the week to enter.
 
@@ -1768,6 +1805,12 @@ def _consult(
     minutes, not his — his are for the coming gameweek and must not reach a
     week months out — and a re-solve judged against bars of its own would be
     a different question, not the same one on better news.
+
+    ``mode`` picks the run's search budget (:data:`SEARCH_BUDGET`) — stated in
+    the briefing and checked against his spend on the log; None states none.
+    ``today`` is the run's one clock's date, for the briefing and for the
+    manager's own checks on the quotes he records. ``news`` is the evaluated
+    news ledger the briefing lays out under "What we already know".
     """
     if solved.draft_mode or not cfg.manager_enabled:
         return None
@@ -1827,6 +1870,7 @@ def _consult(
         )
         return solve(inputs, adjusted, cfg, selling_prices, solved.calendar), adjusted
 
+    budget = SEARCH_BUDGET.get(mode) if mode is not None else None
     try:
         # The second group: what asking him needs, imported where it is used,
         # because a failure from here on is a fallback like any other and the
@@ -1842,9 +1886,11 @@ def _consult(
             solved,
             projections,
             build_briefing(
-                inputs, solved, projections, inputs.free_transfers, xmins=xmins
+                inputs, solved, projections, inputs.free_transfers,
+                today=today, xmins=xmins, ledger=news, budget=budget,
             ),
             resolver,
+            today=today,
         )
     except Exception as error:  # the gaffer is a luxury; the report is not
         decision = solver_view(f"unexpected {type(error).__name__}")
@@ -1871,7 +1917,12 @@ def _consult(
     if decision.source == MANAGER:
         searches = decision.searches
         spent = "1 search" if searches == 1 else f"{searches} searches"
-        print(f"{DECIDED}: {spent}")
+        over = (
+            BUDGET_EXCEEDED.format(spent=searches, budget=budget)
+            if budget is not None and searches > budget
+            else ""
+        )
+        print(f"{DECIDED}: {spent}{over}")
     else:
         print(f"{STOOD_DOWN}: {decision.source.partition(': ')[2]}")
     return decision
