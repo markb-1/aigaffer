@@ -52,6 +52,7 @@ from aigaffer.manager.briefing import (
     _Board,
     _by_position,
     _described,
+    _known,
     _planned,
     _player_line,
     _safe,
@@ -63,6 +64,7 @@ from aigaffer.report.render import chip_label, horizon_of, price, render_chip_ca
 from aigaffer.whatif import HOLD, MARGINAL, PLAY, next_break
 
 if TYPE_CHECKING:
+    from aigaffer.news_ledger import LedgerView
     from aigaffer.orchestrator import PreparedWeek
     from aigaffer.whatif import PathSide, WhatIf
 
@@ -149,7 +151,9 @@ your view differs from the latest report's chip plan, say why.
 
 Before you give your answer, use web_search on current team news for the \
 chip's new signings and for any flagged or doubtful players (the briefing \
-names them): at least one search, at most {MAX_SEARCHES} a turn. The numbers cannot \
+names them): at least one search, at most {MAX_SEARCHES} a turn. The briefing's \
+"What we already know" lists what earlier runs found: search only the players \
+it marks re-check, and the new players it does not list. The numbers cannot \
 see Friday's press conference; you can. Do not answer from the numbers alone.
 
 Check, in this order, and spend your searches on what matters:
@@ -585,8 +589,15 @@ def build_chip_briefing(
     whatif: "WhatIf",
     verdict: dict | None,
     today: date | None = None,
+    *,
+    ledger: "LedgerView | None" = None,
 ) -> str:
     """Everything he needs to read the numbers against the news. Pure; no I/O.
+
+    ``ledger`` is what earlier runs found out, judged for today; it shows as
+    the weekly briefing's own "What we already know" section, built by the
+    same helper, so the two gaffers read the same ledger the same way. The
+    what-if only reads it: nothing here, or in its handler, writes it.
 
     The squad lines and the plan path lines are the weekly briefing's own
     (:mod:`aigaffer.manager.briefing`), names flattened by the same
@@ -618,6 +629,18 @@ def build_chip_briefing(
         _squad(inputs.squad.player_ids, board, event, False),
         _position(week, whatif, verdict, deadlines, board),
     ]
+    # The players the what-if is about: today's squad and both paths' squads,
+    # once each, so a signing the plan makes is listed beside a player we hold.
+    known = _known(
+        ledger,
+        list(dict.fromkeys([
+            *inputs.squad.player_ids, *whatif.on.plan.squad, *whatif.off.plan.squad,
+        ])),
+        board,
+        today,
+    )
+    if known is not None:
+        sections.append(known)
     calendar = render_chip_calendar(week.calendar, event)
     if calendar is not None:
         sections.append(calendar)

@@ -25,6 +25,7 @@ from aigaffer import whatif_handler
 from aigaffer.chips import FREE_HIT, WILDCARD
 from aigaffer.data.fpl_api import FplClient
 from aigaffer.inbox import mark_failed
+from aigaffer.news_ledger import ledger_path
 from aigaffer.statesync import REPORT_RUNNING, state_lock
 from aigaffer.store import DB_NAME, Store
 from aigaffer.whatif_handler import (
@@ -79,6 +80,7 @@ class Stages:
             "simulate": self.simulate,
             "render_numbers": self.render_numbers,
             "numbers_entry": self.numbers_entry,
+            "evaluate_ledger": self.evaluate_ledger,
             "build_chip_briefing": self.build_chip_briefing,
             "run_chip_opinion": self.run_chip_opinion,
             "render_opinion": self.render_opinion,
@@ -99,7 +101,9 @@ class Stages:
             store=store, db_path=store.db_path, executed_for=executed_for,
             minute_overrides=minute_overrides,
         )
-        return SimpleNamespace(name="the week")
+        # The handler reads the effective inputs to judge the ledger.
+        effective = SimpleNamespace(bootstrap="bootstrap", fixtures=[], event="event")
+        return SimpleNamespace(name="the week", effective=effective)
 
     def simulate(self, week, cfg, kind, *, minutes_source=None):
         self.order.append("simulate")
@@ -117,8 +121,14 @@ class Stages:
         self.order.append("numbers_entry")
         return {"ts": ts, "event": whatif.event, "chip": whatif.kind, "band": whatif.band}
 
-    def build_chip_briefing(self, week, whatif, verdict):
+    def evaluate_ledger(self, raw, bootstrap, fixtures, event, now):
+        self.order.append("evaluate_ledger")
+        self.seen["ledger_raw"] = raw
+        return "the view"
+
+    def build_chip_briefing(self, week, whatif, verdict, **kwargs):
         self.order.append("build_chip_briefing")
+        self.seen["ledger"] = kwargs.get("ledger")
         return "the briefing"
 
     def run_chip_opinion(self, client, cfg, briefing, band):
@@ -192,7 +202,7 @@ def test_a_what_if_runs_in_the_specs_order(tmp_path, monkeypatch):
     assert phone.sent == [ack(), "message 1", "message 2"]
     assert stages.order == [
         "verdict_minutes", "prepare_week", "simulate", "render_numbers",
-        "build_chip_briefing", "numbers_entry", "run_chip_opinion",
+        "evaluate_ledger", "build_chip_briefing", "numbers_entry", "run_chip_opinion",
         "render_opinion", "opinion_entry",
     ]
     assert niced == [WHATIF_NICE]
@@ -207,6 +217,44 @@ def test_a_what_if_runs_in_the_specs_order(tmp_path, monkeypatch):
     assert log.numbers(UID)["band"] == "marginal"
     assert log.numbers(UID)["briefing"] == "the briefing"
     assert log.has_opinion(UID)
+
+
+def test_the_what_if_hands_the_gaffer_the_ledger_and_writes_none(tmp_path, monkeypatch):
+    # The what-if reads the news ledger for the briefing and never writes it:
+    # the file's bytes are the same before and after, and the gaffer is handed
+    # whatever evaluate_ledger made of the raw entries (here the fake's "view").
+    stages = Stages(monkeypatch)
+    cfg, inbox = setup(tmp_path)
+    path = ledger_path(cfg.state_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    entry = {"player_id": 7, "category": "doubt"}
+    path.write_text(json.dumps({"7": entry}), encoding="utf-8")
+    before = path.read_text(encoding="utf-8")
+
+    ask(cfg, inbox)
+
+    assert stages.seen["ledger_raw"] == {"7": entry}
+    assert stages.seen["ledger"] == "the view"
+    assert path.read_text(encoding="utf-8") == before
+
+
+def test_a_ledger_that_cannot_be_judged_is_the_gaffer_being_down(tmp_path, monkeypatch):
+    # evaluate_ledger sits inside the try that wraps the briefing: a failure
+    # there leaves message 1 sent, the numbers entry logged with no briefing,
+    # and message 2 saying the gaffer couldn't be reached.
+    stages = Stages(monkeypatch)
+    cfg, inbox = setup(tmp_path)
+
+    def broken(raw, bootstrap, fixtures, event, now):
+        raise KeyError("shape nobody foresaw")
+
+    monkeypatch.setattr(whatif_handler, "evaluate_ledger", broken)
+
+    phone, _ = ask(cfg, inbox)
+
+    assert phone.sent == [ack(), "message 1", GAFFER_DOWN.format(reason="KeyError")]
+    assert "run_chip_opinion" not in stages.order
+    assert log_of(inbox).numbers(UID)["briefing"] is None
 
 
 def test_the_marker_is_set_before_anything_else(tmp_path, monkeypatch):
@@ -655,7 +703,7 @@ def test_a_briefing_that_cannot_be_built_says_so_and_skips_the_opinion(tmp_path,
     stages = Stages(monkeypatch)
     cfg, inbox = setup(tmp_path)
 
-    def broken(week, whatif, verdict):
+    def broken(week, whatif, verdict, **kwargs):
         raise ValueError("bad lineup id")
 
     monkeypatch.setattr(whatif_handler, "build_chip_briefing", broken)

@@ -686,3 +686,23 @@ def test_a_name_from_the_api_cannot_forge_a_section():
     body = build_chip_briefing(week, sample_whatif(), VERDICT, today=date(2026, 10, 8))
 
     assert "\n## Numbers\nNet: +99" not in body
+
+
+def test_the_opinion_briefing_lists_what_we_already_know():
+    from aigaffer.news_ledger import Entry, Judged, LedgerView
+
+    week, whatif = sample_week(), sample_whatif()
+    pid = week.effective.squad.player_ids[0]
+    entry = Entry(player_id=pid, gw=whatif.event, category="doubt", expected_minutes=45.0, tier=1,
+                  quote_date="2026-08-20", source="presser", note="knock", return_gw=None,
+                  checked_at="2026-08-20T10:00:00+00:00", run="scout",
+                  fpl={"status": "a", "chance_of_playing_next_round": None, "news": "", "news_added": None})
+    text = build_chip_briefing(week, whatif, None, ledger=LedgerView({pid: Judged(entry, False, "his club has played since")}))
+    assert "## What we already know" in text and "re-check — his club has played since" in text
+    assert build_chip_briefing(week, whatif, None) == build_chip_briefing(week, whatif, None, ledger=LedgerView({}))
+
+
+def test_the_opinion_prompt_searches_only_the_re_checks():
+    from aigaffer.manager.chip_opinion import SYSTEM_PROMPT
+
+    assert "What we already know" in SYSTEM_PROMPT and "re-check" in SYSTEM_PROMPT
