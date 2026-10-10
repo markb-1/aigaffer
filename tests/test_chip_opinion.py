@@ -303,11 +303,24 @@ def test_an_answer_on_the_ask_in_words_turn_needs_no_search():
     assert opinion.turns == MAX_TURNS and len(client.requests) == MAX_TURNS
 
 
+def test_a_paused_ask_in_words_turn_still_needs_no_search():
+    # The sixth turn pauses with text only before it answers: the resumed
+    # request ends on an assistant message, so the guard cannot tell the ask
+    # from the message tail. It must still accept the answer.
+    script = [reply(use("adjust_players", {}, block_id=f"tu_{n}")) for n in range(1, MAX_TURNS)]
+    script.append(reply(text("Still weighing it."), stop="pause_turn"))
+    script.append(reply(use(ANSWER, answer(), block_id="tu_last")))
+    client, opinion = ask(script)
+
+    assert opinion.verdict == HOLD and opinion.searches == 0
+    assert opinion.source == chip_opinion.GAFFER
+
+
 def test_the_prompt_tells_him_to_search_the_news_before_answering():
     prompt = chip_opinion.SYSTEM_PROMPT
     assert "Before you give your answer, use web_search" in prompt
     assert "at least one search" in prompt
-    assert f"at most {MAX_SEARCHES}" in prompt
+    assert f"at most {MAX_SEARCHES} a turn" in prompt
 
 
 def test_the_request_is_the_managers_model_effort_and_cached_prompt():

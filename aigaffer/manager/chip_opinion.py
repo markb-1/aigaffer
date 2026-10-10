@@ -149,7 +149,7 @@ your view differs from the latest report's chip plan, say why.
 
 Before you give your answer, use web_search on current team news for the \
 chip's new signings and for any flagged or doubtful players (the briefing \
-names them): at least one search, at most {MAX_SEARCHES}. The numbers cannot \
+names them): at least one search, at most {MAX_SEARCHES} a turn. The numbers cannot \
 see Friday's press conference; you can. Do not answer from the numbers alone.
 
 Check, in this order, and spend your searches on what matters:
@@ -376,6 +376,10 @@ class _Conversation:
         # next answer stands whatever the count, since search may really be
         # unavailable.
         self.search_first_given = False
+        # Set once the answer has been asked for in words. A flag, not a look
+        # at the last message: a paused final turn leaves an assistant message
+        # at the tail, and the guard must still stand down.
+        self.answer_asked = False
         self.turns = 0
         self.container: str | None = None
         self.tokens = {"input": 0, "cache_read": 0, "cache_write": 0, "output": 0}
@@ -440,6 +444,7 @@ class _Conversation:
         an unanswered user message as a copy, or a message of its own after an
         assistant turn. The manager's rule, for the manager's reasons
         (:meth:`aigaffer.manager.agent._Conversation._ask_for_decision`)."""
+        self.answer_asked = True
         block = _text(ANSWER_NOW)
         last = self.messages[-1]
         if last["role"] == "user":
@@ -515,11 +520,7 @@ class _Conversation:
         Not on a turn where the answer was asked for in words: that text
         tells him not to search, and the guard must not contradict it.
         """
-        if self.searches or self.search_first_given:
-            return False
-        last = self.messages[-1]
-        asked_in_words = last["role"] == "user" and bool(last["content"]) and last["content"][-1] == _text(ANSWER_NOW)
-        return not asked_in_words
+        return not (self.searches or self.search_first_given or self.answer_asked)
 
     def _count(self, response: Any) -> None:
         for block in getattr(response, "content", None) or []:

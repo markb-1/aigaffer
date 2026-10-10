@@ -59,7 +59,9 @@ WHATIF_MARGIN = {WILDCARD: 8.0, FREE_HIT: 4.0}
 # and the band needed twice the margin (UNSURE_FACTOR): the common case on a
 # wildcard board. A what-if is asked rarely and the owner accepted waiting
 # minutes for it, so each solve gets two and a half; the hourly sweep keeps its
-# own, shorter limits (plans.SWEEP_TIME_LIMIT).
+# own, shorter limits (plans.SWEEP_TIME_LIMIT). The same limit also caps each
+# free-hit pricing sub-solve (_free_hit_prices), which proves in seconds in
+# practice.
 WHATIF_TIME_LIMIT = 150
 PLAY, MARGINAL, HOLD = "play", "marginal", "hold"
 # A week to hold for further out than this is marked provisional: projections
