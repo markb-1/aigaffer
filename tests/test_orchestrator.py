@@ -40,6 +40,7 @@ from aigaffer.ledger import Observation
 from aigaffer.manager import agent
 from aigaffer.manager.agent import ManagerDecision
 from aigaffer.manager.briefing import CHIP_ALREADY_PLAYED
+from aigaffer.news_ledger import ledger_path
 from aigaffer.model.xp import PlayerProjection, projected_events
 from aigaffer.orchestrator import (
     CALENDAR_FAILED,
@@ -1783,8 +1784,10 @@ class Gaffer:
         self.decide = decide
         self.consults: list[Consult] = []
         self.decisions: list[ManagerDecision] = []
+        self.kwargs: list[dict] = []
 
-    def __call__(self, client, cfg, inputs, solve0, projections, briefing, resolver):
+    def __call__(self, client, cfg, inputs, solve0, projections, briefing, resolver, **kwargs):
+        self.kwargs.append(kwargs)
         consult = Consult(client, cfg, inputs, solve0, projections, briefing, resolver)
         self.consults.append(consult)
         decision = self.decide(consult)
@@ -1879,6 +1882,93 @@ def gaffer_run(
         now=PAST_THE_FLOOR,
     )
     return report, store, gaffer
+
+
+def recorded(consult, searches=2):
+    """``decided`` with two calls for Grant: a doubt, then a ban."""
+    decision = decided(consult, searches=searches)
+    decision.record = [
+        {"player_id": GRANT, "expected_minutes": 20.0, "reason": "a doubt (paper)", "category": "doubt",
+         "tier": 2, "quote_date": "2026-08-20", "source": "paper", "return_gw": None},
+        {"player_id": GRANT, "expected_minutes": 0.0, "reason": "suspended (club)", "category": "suspended",
+         "tier": 1, "quote_date": "2026-08-20", "source": "club", "return_gw": None},
+    ]
+    return decision
+
+
+def test_a_decided_run_writes_his_calls_into_the_ledger_last_call_winning(monkeypatch, tmp_path):
+    # gaffer_run runs at PAST_THE_FLOOR; two calls for Grant, the ban is later.
+    gaffer_run(monkeypatch, tmp_path, decide=recorded)
+    written = json.loads(ledger_path(tmp_path / "state").read_text(encoding="utf-8"))
+    grant = written[str(GRANT)]
+    assert grant["category"] == "suspended" and grant["expected_minutes"] == 0.0
+    assert grant["run"] == "scout" and grant["checked_at"] == PAST_THE_FLOOR.isoformat()
+
+
+def test_a_run_that_saves_nothing_or_has_nothing_to_say_writes_no_ledger(monkeypatch, tmp_path):
+    for decide, extra in ((recorded, {"save": False, "send": False}), (unavailable, {}), (decided, {})):
+        run_dir = tmp_path / decide.__name__ / str(bool(extra))
+        run_dir.mkdir(parents=True)
+        gaffer_run(monkeypatch, run_dir, decide=decide, **extra)
+        assert not ledger_path(run_dir / "state").exists()
+
+
+def test_the_decision_record_carries_no_ledger_record(monkeypatch, tmp_path):
+    _, store, _ = gaffer_run(monkeypatch, tmp_path, decide=recorded)
+    decision = store.decision(2, "scout")  # the pipeline universe's coming gameweek is GW2
+    assert "record" not in decision
+    assert all(set(a) == {"player_id", "expected_minutes", "reason"} for a in decision["adjustments"])
+
+
+def test_an_existing_ledger_reaches_the_briefing_and_the_budget_is_stated(monkeypatch, tmp_path):
+    state = tmp_path / "state"
+    path = ledger_path(state)
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({str(GRANT): {
+        "player_id": GRANT, "gw": 1, "category": "doubt", "expected_minutes": 30.0, "tier": 1,
+        "quote_date": "2025-08-15", "source": "presser", "note": "knock", "return_gw": None,
+        "checked_at": "2025-08-15T10:00:00+00:00", "run": "deadline",
+        "fpl": {"status": "a", "chance_of_playing_next_round": None, "news": "", "news_added": None},
+    }}), encoding="utf-8")
+    _, _, gaffer = gaffer_run(monkeypatch, tmp_path)
+    # The fixtures carry no kickoff_time, so rules 2 and 3 are inert; Grant
+    # (status "a", chance None) is a GW1 doubt read in GW2, so rule 4 fires.
+    text = gaffer.consults[0].briefing
+    assert "## What we already know" in text and "re-check — a new gameweek" in text
+    assert "Search budget this run: 6 searches" in text
+    assert gaffer.kwargs[0]["today"] == PAST_THE_FLOOR.date()
+
+
+@pytest.mark.parametrize(("mode", "budget"), [("scout", 6), ("deadline", 10)])
+def test_a_run_past_its_budget_says_so_on_the_log(monkeypatch, tmp_path, capsys, mode, budget):
+    spent = budget + 1
+    gaffer_run(monkeypatch, tmp_path, decide=lambda c: decided(c, searches=spent), mode=mode)
+    assert f"the gaffer decided: {spent} searches — search budget exceeded ({spent}/{budget})" in capsys.readouterr().out
+
+
+def test_a_ledger_that_cannot_be_written_never_costs_the_report(monkeypatch, tmp_path, capsys):
+    saved_first = []
+
+    def boom(*args, **kwargs):
+        # The write comes after store.save_run (spec section 6): the run is already recorded.
+        saved_first.append(Store(tmp_path / "aigaffer.db").has_run(2, "scout"))
+        raise OSError("disk full at /secret/path")
+    monkeypatch.setattr(orchestrator, "write_ledger", boom)
+    report, store, _ = gaffer_run(monkeypatch, tmp_path, decide=recorded)
+    out = capsys.readouterr().out
+    assert "aigaffer news ledger: not written (OSError)" in out and "/secret/path" not in out
+    assert saved_first == [True]
+    assert store.has_run(2, "scout")
+
+
+def test_a_ledger_write_that_fails_in_any_way_never_costs_the_report(monkeypatch, tmp_path, capsys):
+    def boom(*args, **kwargs):
+        raise ValueError("secret words")
+    monkeypatch.setattr(orchestrator, "write_ledger", boom)
+    report, store, _ = gaffer_run(monkeypatch, tmp_path, decide=recorded)
+    out = capsys.readouterr().out
+    assert "not written (ValueError)" in out and "secret words" not in out
+    assert report and store.has_run(2, "scout")
 
 
 def test_the_gaffer_decides_the_week(monkeypatch, tmp_path):
