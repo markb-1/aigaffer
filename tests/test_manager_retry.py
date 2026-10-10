@@ -25,7 +25,13 @@ import pytest
 
 from aigaffer import __main__ as cli
 from aigaffer import orchestrator
-from aigaffer.config import DEADLINE_ANCHOR_HOURS, MANAGER_RETRY_FLOOR_HOURS, MANAGER_RETRY_LIMIT, Config
+from aigaffer.config import (
+    DEADLINE_ANCHOR_HOURS,
+    MANAGER_RETRY_FLOOR_HOURS,
+    MANAGER_RETRY_LIMIT,
+    REMINDER_ANCHOR_HOURS,
+    Config,
+)
 from aigaffer.orchestrator import run_pipeline
 from aigaffer.store import Store
 from tests.fixtures import PICKS_15_JSON
@@ -51,7 +57,7 @@ from tests.test_orchestrator import (
 # The fixture's GW2 deadline; every clock below is read back from it.
 DEADLINE = datetime(2025, 8, 22, 17, 30, tzinfo=UTC)
 # The floors as the design states them: the last three hours of each window.
-DEADLINE_FLOOR = 3.0 + MANAGER_RETRY_FLOOR_HOURS
+DEADLINE_FLOOR = REMINDER_ANCHOR_HOURS + MANAGER_RETRY_FLOOR_HOURS
 SCOUT_FLOOR = DEADLINE_ANCHOR_HOURS + MANAGER_RETRY_FLOOR_HOURS
 
 AUTH_FAILED = partial(unavailable, reason="AuthenticationError")
@@ -126,7 +132,7 @@ def test_a_gaffer_who_fails_with_time_to_spare_has_the_report_withheld(
 ):
     readme = readme_with_marker(tmp_path)
 
-    report, store = tick(monkeypatch, tmp_path, AUTH_FAILED, hours=20)
+    report, store = tick(monkeypatch, tmp_path, AUTH_FAILED, hours=15)
 
     assert store.has_run(2, "deadline") is False
     assert not (tmp_path / "state" / "reports").exists()
@@ -141,7 +147,7 @@ def test_a_gaffer_who_fails_with_time_to_spare_has_the_report_withheld(
 def test_the_phone_is_told_why_and_what_the_solver_would_do(
     monkeypatch, tmp_path, phone
 ):
-    tick(monkeypatch, tmp_path, AUTH_FAILED, hours=20)
+    tick(monkeypatch, tmp_path, AUTH_FAILED, hours=15)
 
     [alert] = phone.messages
     assert "AuthenticationError" in alert
@@ -157,7 +163,7 @@ def test_the_phone_is_told_why_and_what_the_solver_would_do(
 
 def test_the_withheld_alert_opens_with_the_standing(monkeypatch, tmp_path, phone):
     # A withheld week is still a text, and it opens the way the digest does.
-    tick(monkeypatch, tmp_path, AUTH_FAILED, hours=20)
+    tick(monkeypatch, tmp_path, AUTH_FAILED, hours=15)
 
     [alert] = phone.messages
     lines = alert.splitlines()
@@ -169,17 +175,17 @@ def test_the_withheld_alert_opens_with_the_standing(monkeypatch, tmp_path, phone
 
 
 def test_the_same_failure_is_reported_once(monkeypatch, tmp_path, phone):
-    _, store = tick(monkeypatch, tmp_path, AUTH_FAILED, hours=20)
-    tick(monkeypatch, tmp_path, AUTH_FAILED, hours=19, store=store)
-    tick(monkeypatch, tmp_path, AUTH_FAILED, hours=18, store=store)
+    _, store = tick(monkeypatch, tmp_path, AUTH_FAILED, hours=15)
+    tick(monkeypatch, tmp_path, AUTH_FAILED, hours=14, store=store)
+    tick(monkeypatch, tmp_path, AUTH_FAILED, hours=13, store=store)
 
     assert len(phone.messages) == 1
     assert store.has_run(2, "deadline") is False
 
 
 def test_a_new_reason_is_a_new_alert(monkeypatch, tmp_path, phone):
-    _, store = tick(monkeypatch, tmp_path, AUTH_FAILED, hours=20)
-    tick(monkeypatch, tmp_path, RATE_LIMITED, hours=19, store=store)
+    _, store = tick(monkeypatch, tmp_path, AUTH_FAILED, hours=15)
+    tick(monkeypatch, tmp_path, RATE_LIMITED, hours=14, store=store)
 
     assert len(phone.messages) == 2
     assert "RateLimitError" in phone.messages[1]
@@ -188,8 +194,8 @@ def test_a_new_reason_is_a_new_alert(monkeypatch, tmp_path, phone):
 def test_a_gaffer_who_recovers_reports_the_week_as_normal(
     monkeypatch, tmp_path, phone
 ):
-    _, store = tick(monkeypatch, tmp_path, AUTH_FAILED, hours=20)
-    tick(monkeypatch, tmp_path, decided, hours=19, store=store)
+    _, store = tick(monkeypatch, tmp_path, AUTH_FAILED, hours=15)
+    tick(monkeypatch, tmp_path, decided, hours=14, store=store)
 
     assert store.has_run(2, "deadline") is True
     assert store.decision(2, "deadline")["decision_source"] == "manager"
@@ -240,7 +246,7 @@ def test_a_dry_run_with_a_failing_gaffer_leaves_nothing_behind(
     monkeypatch, tmp_path, phone
 ):
     report, store = tick(
-        monkeypatch, tmp_path, AUTH_FAILED, hours=20, send=False, save=False
+        monkeypatch, tmp_path, AUTH_FAILED, hours=15, send=False, save=False
     )
 
     assert phone.messages == []
@@ -258,7 +264,7 @@ def test_a_gaffer_who_never_loaded_is_withheld_too(monkeypatch, tmp_path, phone)
 
     monkeypatch.setitem(sys.modules, "aigaffer.manager.agent", PoisonedModule())
 
-    report, store = tick(monkeypatch, tmp_path, never, hours=20)
+    report, store = tick(monkeypatch, tmp_path, never, hours=15)
 
     assert store.has_run(2, "deadline") is False
     [alert] = phone.messages
@@ -273,7 +279,7 @@ def test_a_chip_he_cannot_play_is_not_a_decision_either(monkeypatch, tmp_path, p
     plays_spent_chip = partial(decided, chip="wildcard", justification=GOOD_CHIP)
 
     _, store = tick(
-        monkeypatch, tmp_path, plays_spent_chip, hours=20, routes=halves_routes()
+        monkeypatch, tmp_path, plays_spent_chip, hours=15, routes=halves_routes()
     )
 
     assert store.has_run(2, "deadline") is False
@@ -285,7 +291,7 @@ def test_a_gaffer_nobody_asked_for_is_never_withheld(monkeypatch, tmp_path, phon
     # No key means no manager was asked, and the solver's week is the week —
     # Phase 1's run, byte for byte, with nothing to wait for.
     _, store = tick(
-        monkeypatch, tmp_path, AUTH_FAILED, hours=20, cfg=phone_cfg(tmp_path, key=None)
+        monkeypatch, tmp_path, AUTH_FAILED, hours=15, cfg=phone_cfg(tmp_path, key=None)
     )
 
     assert store.has_run(2, "deadline") is True
@@ -326,12 +332,12 @@ def test_the_ledgers_note_survives_a_withheld_tick(monkeypatch, tmp_path, phone)
     stub_gaffer(monkeypatch, AUTH_FAILED)
     withheld = run_pipeline(
         phone_cfg(tmp_path), make_client(routes), store, "deadline",
-        now=gw3_deadline - timedelta(hours=20),
+        now=gw3_deadline - timedelta(hours=15),
     )
     stub_gaffer(monkeypatch, decided)
     final = run_pipeline(
         phone_cfg(tmp_path), make_client(routes), store, "deadline",
-        now=gw3_deadline - timedelta(hours=19),
+        now=gw3_deadline - timedelta(hours=14),
     )
 
     assert "purchase ledger" in withheld
@@ -349,9 +355,9 @@ def test_an_alert_that_failed_to_send_is_tried_again_next_tick(monkeypatch, tmp_
 
     monkeypatch.setattr(orchestrator, "send_report", flaky)
 
-    _, store = tick(monkeypatch, tmp_path, AUTH_FAILED, hours=20)
-    tick(monkeypatch, tmp_path, AUTH_FAILED, hours=19, store=store)
-    tick(monkeypatch, tmp_path, AUTH_FAILED, hours=18, store=store)
+    _, store = tick(monkeypatch, tmp_path, AUTH_FAILED, hours=15)
+    tick(monkeypatch, tmp_path, AUTH_FAILED, hours=14, store=store)
+    tick(monkeypatch, tmp_path, AUTH_FAILED, hours=13, store=store)
 
     # The one that failed, the one that landed, and then silence.
     assert len(calls) == 2
@@ -361,15 +367,15 @@ def test_the_retries_stop_at_the_limit(monkeypatch, tmp_path, phone):
     # A manager who fails slowly — a refusal, a loop that runs out of time —
     # costs a full run per tick, from two schedulers. The floor bounds the
     # hours; this bounds the bill.
-    _, store = tick(monkeypatch, tmp_path, AUTH_FAILED, hours=23)
+    _, store = tick(monkeypatch, tmp_path, AUTH_FAILED, hours=17)
     for n in range(1, MANAGER_RETRY_LIMIT):
-        tick(monkeypatch, tmp_path, AUTH_FAILED, hours=23 - n * 0.5, store=store)
+        tick(monkeypatch, tmp_path, AUTH_FAILED, hours=17 - n * 0.5, store=store)
     assert store.has_run(2, "deadline") is False
     assert len(phone.messages) == 1
 
     report, _ = tick(
         monkeypatch, tmp_path, AUTH_FAILED,
-        hours=23 - MANAGER_RETRY_LIMIT * 0.5, store=store,
+        hours=17 - MANAGER_RETRY_LIMIT * 0.5, store=store,
     )
 
     assert store.has_run(2, "deadline") is True
@@ -381,7 +387,7 @@ def test_a_forced_run_takes_whatever_answer_it_gets(monkeypatch, tmp_path, phone
     # ``--force`` is a person overruling the store, and the same person is
     # the authority the floor stands in for: they asked for a report now,
     # they can see the stood-down line, and they can force again.
-    report, store = tick(monkeypatch, tmp_path, AUTH_FAILED, hours=20, force=True)
+    report, store = tick(monkeypatch, tmp_path, AUTH_FAILED, hours=15, force=True)
 
     assert store.has_run(2, "deadline") is True
     assert FALLBACK_LINE in report
@@ -395,7 +401,7 @@ def test_a_naive_clock_is_read_as_utc(monkeypatch, tmp_path, phone):
 
     run_pipeline(
         phone_cfg(tmp_path), make_client(pipeline_routes()), store, "deadline",
-        now=hours_out(20).replace(tzinfo=None),
+        now=hours_out(15).replace(tzinfo=None),
     )
 
     assert store.has_run(2, "deadline") is False
@@ -409,7 +415,7 @@ def test_an_unconfigured_phone_is_not_told_the_report_was_kept(
 
     run_pipeline(
         quiet, make_client(pipeline_routes()), Store(tmp_path / "state" / "aigaffer.db"),
-        "deadline", now=hours_out(20),
+        "deadline", now=hours_out(15),
     )
 
     out = capsys.readouterr().out

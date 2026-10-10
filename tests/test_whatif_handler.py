@@ -129,6 +129,7 @@ class Stages:
     def build_chip_briefing(self, week, whatif, verdict, **kwargs):
         self.order.append("build_chip_briefing")
         self.seen["ledger"] = kwargs.get("ledger")
+        self.seen["today"] = kwargs.get("today")
         return "the briefing"
 
     def run_chip_opinion(self, client, cfg, briefing, band):
@@ -236,6 +237,34 @@ def test_the_what_if_hands_the_gaffer_the_ledger_and_writes_none(tmp_path, monke
     assert stages.seen["ledger_raw"] == {"7": entry}
     assert stages.seen["ledger"] == "the view"
     assert path.read_text(encoding="utf-8") == before
+
+
+def test_the_what_if_ages_the_news_on_the_handlers_clock(tmp_path, monkeypatch):
+    # The ledger is judged at the handler's now(); "N days ago" must count
+    # from the same instant's date, not from the machine's local today.
+    stages = Stages(monkeypatch)
+    cfg, inbox = setup(tmp_path)
+
+    ask(cfg, inbox)
+
+    assert stages.seen["today"] == NOW.date()
+
+
+def test_with_the_manager_off_the_ledger_is_not_even_judged(tmp_path, monkeypatch):
+    # No gaffer, no briefing: judging the ledger could only fail into a
+    # "couldn't be reached" for a gaffer that was switched off.
+    stages = Stages(monkeypatch)
+    cfg, inbox = setup(tmp_path, key=False)
+
+    def broken(raw, bootstrap, fixtures, event, now):
+        raise KeyError("shape nobody foresaw")
+
+    monkeypatch.setattr(whatif_handler, "evaluate_ledger", broken)
+
+    phone, _ = ask(cfg, inbox)
+
+    assert phone.sent == [ack(), "message 1"]
+    assert "build_chip_briefing" not in stages.order
 
 
 def test_a_ledger_that_cannot_be_judged_is_the_gaffer_being_down(tmp_path, monkeypatch):

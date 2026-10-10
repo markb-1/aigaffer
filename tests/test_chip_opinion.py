@@ -706,3 +706,46 @@ def test_the_opinion_prompt_searches_only_the_re_checks():
     from aigaffer.manager.chip_opinion import SYSTEM_PROMPT
 
     assert "What we already know" in SYSTEM_PROMPT and "re-check" in SYSTEM_PROMPT
+    # The search-first guard still wants one search when there is nothing to
+    # re-check, so the prompt says where that search goes.
+    assert (
+        "If nothing is marked re-check and no new player is unlisted, still make"
+        " one search, on the most fragile player, for the latest press-conference"
+        " news."
+    ) in SYSTEM_PROMPT.replace("\\\n", "").replace("\n", " ")
+
+
+def test_the_what_if_briefing_has_its_own_intro_and_never_names_a_tool_he_lacks():
+    # The weekly intro tells the gaffer to carry entries into adjust_players;
+    # the opinion gaffer has no such tool, and an unknown tool costs him a turn.
+    from aigaffer.manager.briefing import KNOWN_INTRO
+    from aigaffer.manager.chip_opinion import WHATIF_KNOWN_INTRO
+    from aigaffer.news_ledger import Entry, Judged, LedgerView
+
+    week, whatif = sample_week(), sample_whatif()
+    pid = week.effective.squad.player_ids[0]
+    entry = Entry(player_id=pid, gw=whatif.event, category="doubt", expected_minutes=45.0, tier=1,
+                  quote_date="2026-10-06", source="presser", note="knock", return_gw=None,
+                  checked_at="2026-10-06T10:00:00+00:00", run="scout",
+                  fpl={"status": "a", "chance_of_playing_next_round": None, "news": "", "news_added": None})
+    text = build_chip_briefing(week, whatif, None, ledger=LedgerView({pid: Judged(entry, True, None)}))
+    start = text.index("## What we already know")
+    known = text[start:].split("\n\n## ")[0]
+
+    assert WHATIF_KNOWN_INTRO in known
+    assert KNOWN_INTRO not in known
+    assert "adjust_players" not in known
+
+
+def test_the_what_if_age_counts_from_the_day_it_is_given():
+    from aigaffer.news_ledger import Entry, Judged, LedgerView
+
+    week, whatif = sample_week(), sample_whatif()
+    pid = week.effective.squad.player_ids[0]
+    entry = Entry(player_id=pid, gw=whatif.event, category="doubt", expected_minutes=45.0, tier=1,
+                  quote_date="2026-10-06", source="presser", note="knock", return_gw=None,
+                  checked_at="2026-10-06T10:00:00+00:00", run="scout",
+                  fpl={"status": "a", "chance_of_playing_next_round": None, "news": "", "news_added": None})
+    view = LedgerView({pid: Judged(entry, True, None)})
+    text = build_chip_briefing(week, whatif, None, today=date(2026, 10, 9), ledger=view)
+    assert "(3 days ago)" in text

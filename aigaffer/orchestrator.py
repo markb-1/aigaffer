@@ -815,7 +815,7 @@ def _run_reminder(
 ) -> str:
     """Three hours out: solve again, diff against yesterday's solve, buzz once.
 
-    The full report was decided at the full report, with the manager in the loop; what
+    The full report was decided earlier, with the manager in the loop; what
     is left to learn between then and the deadline is the team news, and what
     is left to do about it is small. So this run is the solver alone — the
     manager is structurally never consulted here, key or no key, because
@@ -1103,9 +1103,12 @@ def _recorded_lineup(
     after the verdict is ``squad_before`` less ``transfers_out`` plus
     ``transfers_in``; the bench is the record's own, in substitution order; the
     eleven is what is left, sorted by id, since the record keeps no order for
-    it. On a free-hit week the record carries the temporary fifteen and eleven
-    (``freehit_squad``/``freehit_xi``), and those are what is fielded — the
-    standing squad reverts and is not the team the owner takes to the deadline.
+    it. On a free-hit week the record carries the temporary fifteen
+    (``freehit_squad``), and that is what is fielded — the standing squad
+    reverts and is not the team the owner takes to the deadline. The eleven is
+    still the fifteen less the record's bench, never ``freehit_xi``: that is
+    the MILP's one-week eleven, whose bench can differ from the picker's by a
+    player.
 
     Used by the T-3h reminder, whose calm text shows the plan he was already
     told rather than a fresh pick. It never raises: a record written before a
@@ -1151,8 +1154,8 @@ def _entered_lineup(
 
     The fifteen is the recorded free-hit squad on a free hit, else the squad
     after his moves; the bench comes from the verdict he entered (``record``),
-    since that is the order he was told; the eleven is the rest — or the
-    recorded ``freehit_xi`` on a free hit, which is his own choice — and the
+    since that is the order he was told; the eleven is the fifteen less that
+    bench, free hit or not (the row's ``freehit_xi`` is not used) — and the
     armbands are his. Anything missing or inconsistent returns None, and the
     text leaves the block out: never a reason to cost the buzz.
     """

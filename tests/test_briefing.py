@@ -1168,3 +1168,17 @@ def test_the_budget_line_rides_the_situation_block_only_when_asked():
     assert "Search budget this run" not in briefing()
     text = ledger_briefing(LedgerView({}), budget=6)
     assert "Search budget this run: 6 searches across all turns (the per-turn allowance refreshing does not reset it) — spend them on the re-check entries, one search per club." in text.split("## ")[0]
+
+
+def test_the_weekly_intro_carries_only_entries_whose_minutes_differ_from_xmins():
+    # One voice with SYSTEM_PROMPT step 3: an entry that agrees with xMins
+    # needs no adjust_players call, so the intro must not say "carry every one".
+    from aigaffer.manager.briefing import KNOWN_INTRO
+
+    assert KNOWN_INTRO == (
+        "From earlier runs. Carry each fresh entry whose minutes differ from"
+        " xMins into adjust_players as it stands — same category, tier and"
+        " quote date, no search. Search only the re-checks."
+    )
+    text = ledger_briefing(LedgerView({1: known(1, True)}))
+    assert KNOWN_INTRO in section(text, "What we already know")
