@@ -163,7 +163,8 @@ def evaluate_ledger(
             entry = Entry.from_json(value)
             checked = _instant(entry.checked_at)
             date.fromisoformat(entry.quote_date)
-            float(entry.expected_minutes)
+            if not _well_typed(entry):
+                continue
             if entry.category not in CATEGORIES or entry.tier not in TIERS:
                 continue
         except (KeyError, TypeError, ValueError, AttributeError):
@@ -273,6 +274,29 @@ def _club_played_since(team: int, fixtures: list[Fixture], checked: datetime) ->
         and fixture.kickoff_time
         and _instant(fixture.kickoff_time) > checked
         for fixture in fixtures
+    )
+
+
+def _well_typed(entry: Entry) -> bool:
+    """Do the fields the rules compute with hold the types they are used as?
+
+    JSON can carry anything, and a hand-edit or a bad write can leave a string
+    where a gameweek belongs; the rules would then raise mid-run. ``type(...) is
+    int`` rather than ``isinstance`` so a ``true`` is not taken for tier 1 or
+    gameweek 1. A failing entry is dropped like any other malformed one.
+    """
+    return (
+        type(entry.player_id) is int
+        and type(entry.gw) is int
+        and type(entry.tier) is int
+        and (entry.return_gw is None or type(entry.return_gw) is int)
+        and isinstance(entry.expected_minutes, (int, float))
+        and not isinstance(entry.expected_minutes, bool)
+        and isinstance(entry.fpl, dict)
+        and isinstance(entry.note, str)
+        and (entry.source is None or isinstance(entry.source, str))
+        and isinstance(entry.category, str)
+        and isinstance(entry.run, str)
     )
 
 
