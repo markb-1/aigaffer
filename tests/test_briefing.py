@@ -1125,3 +1125,46 @@ def test_a_recorded_chip_is_already_played_and_every_chip_is_marked():
 
 def test_a_briefing_with_nothing_entered_is_unchanged():
     assert briefing(inputs=replace(pipeline_inputs(), executed=None)) == briefing()
+
+
+# --- the news ledger: what we already know, and the search budget -----------
+
+from aigaffer.news_ledger import Entry, Judged, LedgerView  # noqa: E402
+
+
+def known(pid: int, fresh: bool, reason: str | None = None, *, category: str = "doubt",
+          minutes: float = 25.0, quote: str = "2025-08-18") -> Judged:
+    entry = Entry(player_id=pid, gw=2, category=category, expected_minutes=minutes, tier=1,
+                  quote_date=quote, source="presser", note="said so", return_gw=None,
+                  checked_at="2025-08-19T20:00:00+00:00", run="scout",
+                  fpl={"status": "a", "chance_of_playing_next_round": None, "news": "", "news_added": None})
+    return Judged(entry, fresh, reason)
+
+
+def ledger_briefing(view: LedgerView, budget: int | None = None) -> str:
+    return build_briefing(pipeline_inputs(), solved(), XP, 1, today=TODAY, ledger=view, budget=budget)
+
+
+def test_an_empty_or_absent_ledger_changes_nothing():
+    assert ledger_briefing(LedgerView({})) == briefing()
+    assert headings(ledger_briefing(LedgerView({}))) == HEADINGS
+
+
+def test_the_known_section_says_fresh_or_why_a_re_check():
+    view = LedgerView({1: known(1, True), 2: known(2, False, "his club has played since", category="rotation", minutes=60.0)})
+    lines = section(ledger_briefing(view), "What we already know")
+    # TODAY is date(2025, 8, 21): an 18 Aug quote is 3 days old.
+    assert "- Alvez (id 1, GKP, ASH, £5.5m): doubt, 25 mins, tier 1, quoted Mon 18 Aug (3 days ago): fresh" in lines
+    assert any("(id 2" in line and line.endswith("re-check — his club has played since") for line in lines)
+
+
+def test_only_squad_and_relevant_players_are_listed():
+    view = LedgerView({1: known(1, True), 99999: known(99999, True)})
+    text = ledger_briefing(view)
+    assert "(id 99999" not in text
+
+
+def test_the_budget_line_rides_the_situation_block_only_when_asked():
+    assert "Search budget this run" not in briefing()
+    text = ledger_briefing(LedgerView({}), budget=6)
+    assert "Search budget this run: 6 searches — spend them on the re-check entries, one search per club." in text.split("## ")[0]

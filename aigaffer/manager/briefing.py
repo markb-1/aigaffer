@@ -62,6 +62,7 @@ from aigaffer.solver.lineup import ChipEvs, Lineup
 from aigaffer.solver.optimizer import AVAILABLE, Plan, projected_points
 
 if TYPE_CHECKING:  # the orchestrator imports the manager, so never the reverse
+    from aigaffer.news_ledger import LedgerView
     from aigaffer.orchestrator import PipelineInputs, SolveResult
     from aigaffer.solver.multiweek import PlannedMove
 
@@ -97,6 +98,24 @@ PRICE_WATCH_LINES = 10
 DATE_FORMAT = "%a %d %b %Y"
 
 PICK_MARKER = "  <- solver pick"
+
+# The news ledger's section and the search budget line. Constants because the
+# prompt names the heading and the tests pin the wording.
+KNOWN_HEADING = "## What we already know"
+KNOWN_INTRO = (
+    "From earlier runs. A fresh entry's news stands: carry it into"
+    " adjust_players as it is, without a search. Search only the re-checks."
+)
+KNOWN_LINE = (
+    "- {who}: {category}, {minutes:.0f} mins, tier {tier},"
+    " quoted {quoted} ({age} days ago): {state}"
+)
+KNOWN_FRESH = "fresh"
+KNOWN_RECHECK = "re-check — {reason}"
+BUDGET_LINE = (
+    "Search budget this run: {budget} searches — spend them on the re-check"
+    " entries, one search per club."
+)
 
 # What a chip he cannot play this gameweek is marked with, and the line that
 # says what the mark means: spent, or the next set's. The panel has to
@@ -219,6 +238,9 @@ def build_briefing(
     free_transfers: int | None,
     today: date | None = None,
     xmins: dict[int, float] | None = None,
+    *,
+    ledger: "LedgerView | None" = None,
+    budget: int | None = None,
 ) -> str:
     """The whole briefing as one plain-text string. Pure; no I/O.
 
@@ -235,6 +257,14 @@ def build_briefing(
     ``adjust_players`` sets that number absolutely and he cannot sensibly
     overwrite what he was never shown. Omitted, the briefing is byte for byte
     what it was without it.
+
+    ``ledger`` is what earlier runs learned about players (the news ledger,
+    already judged fresh or due a re-check). Supplied and non-empty for the
+    players this briefing is about, it adds a "What we already know" section
+    so the gaffer carries what is fresh and searches only the re-checks.
+    ``budget`` is how many searches this run may spend; supplied, one line
+    in the situation block says so. Both absent, the briefing is byte for
+    byte what it was before the ledger existed.
 
     A draft — a run with no squad — is a different question and says so in
     its title: fifteen players from nothing, no bank to spend, no free
@@ -261,6 +291,7 @@ def build_briefing(
             free_transfers,
             today or date.today(),
             solve.draft_mode,
+            budget,
         ),
         _squad(held, board, event, solve.draft_mode),
         _team_sheet(solve.lineup, board, event, pick),
@@ -274,6 +305,16 @@ def build_briefing(
     watch = _price_watch(solve, board)
     if watch is not None:
         sections.append(watch)
+    # What earlier runs found, after the relevant list it is keyed to. None
+    # for no ledger or nothing to say, so the briefing is unchanged.
+    known = _known(
+        ledger,
+        sorted({*held, *relevant_players(solve)}),
+        board,
+        today or date.today(),
+    )
+    if known is not None:
+        sections.append(known)
     return "\n\n".join(sections)
 
 
@@ -381,6 +422,7 @@ def _situation(
     free_transfers: int | None,
     today: date,
     drafting: bool,
+    budget: int | None = None,
 ) -> str:
     """Which gameweek, which deadline, what money, and how to read the columns."""
     event = inputs.event
@@ -426,6 +468,7 @@ def _situation(
         f"Deadline: {deadline(event)}",
         money,
         *([] if entered is None else [entered]),
+        *([] if budget is None else [BUDGET_LINE.format(budget=budget)]),
         f"Numbers:{minutes}"
         f' "xP GW{event.id}" is next gameweek alone;'
         f' "xP{board.horizon}" is the decayed {board.horizon}-gameweek'
@@ -437,6 +480,43 @@ def _situation(
     if note:
         lines += ["", note]
     return "\n".join(lines)
+
+
+def _known(
+    view: "LedgerView | None", pids: list[int], board: _Board, today: date
+) -> str | None:
+    """What earlier runs learned about the players this run is about, or None.
+
+    One line a player, fresh or re-check with the rule that said so — the
+    gaffer searches the second kind and carries the first. Omitted when
+    there is nothing to say, so a run with an empty ledger reads exactly
+    as it did before there was one.
+    """
+    if view is None:
+        return None
+    lines = []
+    for pid in pids:
+        judged = view.entries.get(pid)
+        if judged is None or pid not in board.players:
+            continue
+        entry = judged.entry
+        quoted = date.fromisoformat(entry.quote_date)
+        lines.append(
+            KNOWN_LINE.format(
+                who=_described(pid, board),
+                category=entry.category,
+                minutes=entry.expected_minutes,
+                tier=entry.tier,
+                quoted=quoted.strftime("%a %d %b"),
+                age=(today - quoted).days,
+                state=KNOWN_FRESH
+                if judged.fresh
+                else KNOWN_RECHECK.format(reason=judged.reason),
+            )
+        )
+    if not lines:
+        return None
+    return "\n".join([KNOWN_HEADING, "", KNOWN_INTRO, "", *lines])
 
 
 def _early_season_note(events: list[Event]) -> str:

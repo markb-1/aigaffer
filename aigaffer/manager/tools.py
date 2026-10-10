@@ -61,15 +61,19 @@ Work in this order.
 1. Read the briefing. It carries the deadline, the date it was written, your \
 squad, the candidate plans and the players any of them would buy or sell.
 2. Search for what the model cannot know: injuries, suspensions, rotation, \
-press-conference minutes, a manager saying somebody is a doubt. Search only the \
-players the briefing lists as relevant — a search spent on anyone else is a \
-search you do not have for the players you might own. Within that list, verify \
-in this order: first the players the plan you are minded to finalize would buy \
-or sell — a transfer entered on an unverified target is the one mistake this \
-job exists to prevent — then your own likely starters, then the rest. Check \
-the date on every report against the date in the briefing: a fitness update \
-from three weeks ago is not team news, and a headline about last season is not \
-news at all. Your search allowance is per turn, not for the whole job: when \
+press-conference minutes, a manager saying somebody is a doubt. The briefing's "What we already know" lists what earlier runs found, each \
+entry marked fresh or re-check. Do not search a fresh entry: its news stands. \
+A test_on_day entry is never fresh: one search for him, once per run. \
+Search the entries marked re-check, and the players the briefing lists as \
+relevant who have no entry — first the players the plan you are minded to \
+finalize would buy or sell — a transfer entered on an unverified target is \
+the one mistake this job exists to prevent — then your own likely starters, \
+then the rest. \
+Search per club, not per player: one "<club> team news press conference" \
+search covers everyone you care about at that club. Check the date on every \
+report against the date in the briefing, and record the day the quote was \
+given, not the date of the article — aggregator pages recycle old quotes. \
+Social media and unverified claims may prompt a search but never set anything. Your search allowance is per turn, not for the whole job: when \
 the tool stops answering mid-turn, end the turn — carrying any adjust_players \
 calls for what you have already learned, rather than bare prose — and the \
 allowance comes back fresh on the next one, so running dry is never a reason \
@@ -80,7 +84,17 @@ adjust_players. It sets a player's expected minutes for the coming gameweek \
 absolutely — 0 for a player who is out, 20 for a substitute, 90 for a starter — \
 and the briefing shows you the number you are overwriting. It is the coming \
 gameweek only: the weeks after it keep the model's minutes. Say why, in the \
-reason: it goes into the written record.
+reason: it goes into the written record. Each entry also records what you found: its category (nailed, rotation, \
+doubt, test_on_day, injured, suspended or ill), the source's tier (1: the FPL \
+flag, the manager's own words or an official club update; 2: a club \
+reporter, The Athletic, BBC, Sky or Premier Injuries; 3: predicted \
+line-ups), the date of the quote, the source, and for an injury or a ban the \
+gameweek he is due back. A fresh entry's minutes are not yet in the \
+projections: carry each fresh entry whose minutes differ from xMins into \
+adjust_players as it stands — same category, tier and quote date, no search. \
+A fresh entry's minutes stand unless you have newer news or a different \
+category. For a nailed starter, the quote date is the date of the latest \
+evidence — his last start or the manager's last word.
 4. Call resolve to re-run the projection and the solver with your adjustments. \
 It comes back with fresh plans and fresh ids. The old ids stay valid.
 5. Finish with finalize_decision, and finish with it exactly once.
