@@ -6,8 +6,9 @@ by design — the decisions are all made elsewhere — but there are three
 judgements it has to make on its own:
 
 * **When to run.** A report is only worth reading at three moments: two days
-  out, when there is still time to plan; a day out, when the week has taken
-  shape and there is still an evening to act; and three hours out, when the
+  out, when there is still time to plan; eighteen hours out, when the Friday
+  press conferences and the flags that follow them are in and there is still
+  an evening and a morning to act; and three hours out, when the
   team news is in and the only question left is whether yesterday's plan
   survived it — which is the reminder, a short alert and not a report.
   :func:`decide_mode` turns the hours to the deadline into one of those or
@@ -380,9 +381,9 @@ def decide_mode(
     Three windows, nearest the deadline first, and contiguous from sixty
     hours out to the deadline itself. The last three hours hold the reminder
     — the solver checking the full report against the morning's news. From
-    a day out to those three hours is the full deadline report, aimed at the
-    T-24h anchor and caught up late when the schedule failed it. Beyond a
-    day and up to two and a half days out is the scout report. Past sixty
+    eighteen hours out to those three hours is the full deadline report, aimed
+    at the T-18h anchor and caught up late when the schedule failed it. Beyond
+    that and up to two and a half days out is the scout report. Past sixty
     hours there is nothing worth saying yet — unless the round just played
     ended, and ``last_kickoff`` says when: from the evening of the day after
     it (:func:`early_anchor`) until the scout's window opens is the early
@@ -589,7 +590,7 @@ def run_pipeline(
     # that can honestly mean "the news moved" is solver-then against
     # solver-now; diffed against the gaffer's verdict instead, every week he
     # overrode the solver would shout at T-3h about a disagreement that was
-    # settled at T-24h. His verdict stays the operative plan everywhere it is
+    # settled at T-18h. His verdict stays the operative plan everywhere it is
     # shown — this is only the yardstick the reminder measures the news with.
     solver_chip = played_chip(solved.choice, None, executed)
     solver_lineup = _fielded_lineup(
@@ -771,7 +772,7 @@ def _run_reminder(
 ) -> str:
     """Three hours out: solve again, diff against yesterday's solve, buzz once.
 
-    The full report was decided a day ago, with the manager in the loop; what
+    The full report was decided at the full report, with the manager in the loop; what
     is left to learn between then and the deadline is the team news, and what
     is left to do about it is small. So this run is the solver alone — the
     manager is structurally never consulted here, key or no key, because
@@ -790,7 +791,7 @@ def _run_reminder(
     (:func:`diff_actions`). Diffed against the verdict instead, every week
     the gaffer overrode the solver — his own captain, adjusted minutes, a
     chip — would shout at T-3h about a disagreement that was settled at
-    T-24h, and a warning that cries wolf weekly is unread by October. What
+    T-18h, and a warning that cries wolf weekly is unread by October. What
     the alert *shows* keeps its authority unchanged: the gaffer's stored
     verdict, labelled as the operative plan, with the fresh solve beside it
     as information — the reminder never enters anything and never pretends
@@ -799,7 +800,7 @@ def _run_reminder(
     A record from before ``solver_actions`` was kept has no solver-then to
     compare, and unknowable is not changed — the same rule the diff applies
     to a record from before formations were kept — so the alert stays calm
-    over the verdict. When there is no record at all — the T-24h tick was
+    over the verdict. When there is no record at all — the T-18h tick was
     dropped wholesale — the fresh block goes out with a line saying there
     was nothing to check it against.
 
@@ -849,7 +850,7 @@ def _run_reminder(
     """
     # The same week the full report opens with (prepare_week). A fresh
     # calendar for a fresh solve: the deadline run's was built on the board as
-    # it stood a day ago, and the yardstick here is solver-then against
+    # it stood at the full report, and the yardstick here is solver-then against
     # solver-now, each on its own day's calendar. The coming week's minutes
     # are the manager's to read, and the reminder never asks him, so they go
     # unread here.
@@ -984,7 +985,7 @@ def _against_the_entered_week(
     What the alert *shows* as operative is the baseline; what it *measures*
     the news with is the solver's side of the verdict he entered
     (:func:`_entered_yardstick`), like against like as the ordinary reminder
-    measures it, so an armband or bench the gaffer overruled a day ago is not
+    measures it, so an armband or bench the gaffer overruled at the full report is not
     news now. On a free hit he entered, the fresh solve's moves are dropped:
     they are moves to the standing squad, which he cannot touch this week.
     """
@@ -1173,7 +1174,7 @@ def _entered_yardstick(executed: Executed, record: dict | None) -> dict:
     verdict before the gaffer touched it (``solver_actions`` and
     ``solver_bench``) — the fresh side is a solver alone, and only solver
     against solver can mean the news moved: a solver chip the gaffer
-    overruled a day ago is not news now. A record without them (gone, or
+    overruled at the full report is not news now. A record without them (gone, or
     written before they were kept) leaves them None, and the diff skips
     what it cannot know.
 
@@ -1327,7 +1328,7 @@ def diff_actions(stored: dict, fresh: dict) -> dict:
     The reminder hands this the solver's stored pre-manager plan and its own
     fresh solve, so a non-empty diff means the news moved the solver off its
     own day-old answer — never that the gaffer and the solver disagree,
-    which was settled at T-24h and is not news.
+    which was settled at T-18h and is not news.
 
     Sells and buys are compared as two independent sets, never as pairs: the
     ``[out, in]`` pairing in the actions dict is presentational (both lists

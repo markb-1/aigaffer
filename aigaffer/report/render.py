@@ -162,7 +162,7 @@ ADVISORY = "Advisory — re-planned every run; only this week's moves are ever m
 # line in either document that shouts — a warning that appears every week is a
 # warning nobody reads by October. Loud means the *news* moved: the shout is
 # earned by the solver disagreeing with its own day-old answer, never by the
-# gaffer having disagreed with the solver, which was settled at T-24h.
+# gaffer having disagreed with the solver, which was settled at T-18h.
 REMINDER_UNCHANGED = (
     "The news has not moved since the full report — the plan above stands."
 )
@@ -172,7 +172,7 @@ NO_FULL_REPORT = (
     " happened. This is the solver's fresh answer, unreviewed."
 )
 # What a changed reminder must say about authority, in so many words: the
-# verdict was the gaffer's — or the solver's wearing his label, a day ago with
+# verdict was the gaffer's — or the solver's wearing his label, at the full report with
 # the manager in the loop — and the fresh block is a solver that has read
 # nothing. Neither overrules the other; the person holding the phone does.
 HUMAN_JUDGES = (
@@ -366,7 +366,7 @@ def render_reminder(
     nothing about whether the news moved; it only says so — which is why
     ``changes`` is never derived from the two dicts on show: the verdict and
     the fresh solve may differ simply because the gaffer overrode the solver
-    a day ago, and that is a settled decision, not news.
+    at the full report, and that is a settled decision, not news.
 
     Three shapes. ``stored`` is None when the full report never ran, and the
     fresh block goes out with one line admitting there was nothing to check
@@ -396,7 +396,7 @@ def render_reminder(
     shapes. ``planned`` is the deadline verdict's own lineup, rebuilt from its
     record by the orchestrator, and is what a calm week shows — the plan he
     has been told, not a fresh pick that only disagrees because the gaffer
-    overrode the solver a day ago. ``fresh_lineup`` is this run's solve, which
+    overrode the solver at the full report. ``fresh_lineup`` is this run's solve, which
     is what a changed week shows (as ``Lineup now``, straight after what
     moved) and what a week with no full report shows, having nothing else.
     Both default to None, which leaves the block out — a legacy record whose

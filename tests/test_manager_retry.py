@@ -25,7 +25,7 @@ import pytest
 
 from aigaffer import __main__ as cli
 from aigaffer import orchestrator
-from aigaffer.config import MANAGER_RETRY_FLOOR_HOURS, MANAGER_RETRY_LIMIT, Config
+from aigaffer.config import DEADLINE_ANCHOR_HOURS, MANAGER_RETRY_FLOOR_HOURS, MANAGER_RETRY_LIMIT, Config
 from aigaffer.orchestrator import run_pipeline
 from aigaffer.store import Store
 from tests.fixtures import PICKS_15_JSON
@@ -52,7 +52,7 @@ from tests.test_orchestrator import (
 DEADLINE = datetime(2025, 8, 22, 17, 30, tzinfo=UTC)
 # The floors as the design states them: the last three hours of each window.
 DEADLINE_FLOOR = 3.0 + MANAGER_RETRY_FLOOR_HOURS
-SCOUT_FLOOR = 24.0 + MANAGER_RETRY_FLOOR_HOURS
+SCOUT_FLOOR = DEADLINE_ANCHOR_HOURS + MANAGER_RETRY_FLOOR_HOURS
 
 AUTH_FAILED = partial(unavailable, reason="AuthenticationError")
 RATE_LIMITED = partial(unavailable, reason="RateLimitError")
@@ -424,7 +424,7 @@ def test_auto_withholds_then_reports_then_stands_down(
     monkeypatch, tmp_path, capsys, store
 ):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
-    serve(monkeypatch, pipeline_routes(bootstrap=bootstrap_due_in(20)))
+    serve(monkeypatch, pipeline_routes(bootstrap=bootstrap_due_in(12)))
 
     stub_gaffer(monkeypatch, AUTH_FAILED)
     assert cli.main(["auto"]) == 0

@@ -222,7 +222,7 @@ def test_no_remote_to_ask_is_no_run(tmp_path, capsys):
 # --- through the command line ----------------------------------------------
 
 
-def cli_tick(monkeypatch, hours: float = 20) -> None:
+def cli_tick(monkeypatch, hours: float = 12) -> None:
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
     serve(monkeypatch, pipeline_routes(bootstrap=bootstrap_due_in(hours)))
     stub_gaffer(monkeypatch, decided)

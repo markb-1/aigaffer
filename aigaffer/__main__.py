@@ -310,7 +310,7 @@ def _mode(
             return None, event.id
         mode = chosen
         # The reminder checks the full report against the morning's news —
-        # but when every tick since T-24h was dropped there is no full report
+        # but when every tick since T-18h was dropped there is no full report
         # to check, and a solver-only alert is a poor substitute for the one
         # report the week is actually about. So the reminder's hour runs the
         # missing report instead, and the reminder gets a later tick — when

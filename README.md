@@ -17,8 +17,8 @@ to the round just played:
 | When | Report | What it is for |
 | --- | --- | --- |
 | the evening after the last match | `early` | the early scout: a first look at the plans while the results are fresh, from 18:00 UTC the day after the round's last kickoff |
-| 24–60h before the deadline | `scout` | transfer plans while there is still time to think — aimed at ~60h out |
-| 3–24h | `deadline` | the full verdict, aimed at T-24h so an evening is left to act on it |
+| 18–60h before the deadline | `scout` | transfer plans while there is still time to think — aimed at ~60h out |
+| 3–18h | `deadline` | the full verdict, aimed at T-18h: after Friday's press conferences and the flags that follow, with an evening and a morning left to act on it |
 | 0–3h | `reminder` | a short alert: the moves, and whether the plan survived the team news |
 
 Each report is aimed at the top of its window and sent by the first

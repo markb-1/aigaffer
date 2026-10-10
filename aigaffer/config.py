@@ -3,13 +3,19 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 # Where in the week each report is aimed, in hours before the deadline. The
-# full report lands a day out — late enough that the week has taken shape,
-# early enough that there is a whole evening to read it, argue with it and act
-# on it — and the reminder lands three hours out, after the press conferences,
-# to say whether anything moved. Constants rather than environment variables,
+# full report lands eighteen hours out — for the usual Saturday-morning
+# deadline that is Friday evening, after the Friday press conferences (most
+# clubs speak that morning, and the league's media cut-off is early
+# afternoon) and after FPL's flags have caught up with them a few hours
+# later, yet with Friday night and Saturday morning left to read it, argue
+# with it and act on it. A day out it landed in the middle of the pressers,
+# and the reminder was the first run to see them. For a Friday-night deadline
+# eighteen hours out is early Friday, after the Thursday pressers such games
+# get. The reminder lands three hours out, before the deadline itself, to say
+# whether anything moved since. Constants rather than environment variables,
 # like ``horizon`` and ``decay``: an anchor is part of the design, and nothing
 # should be able to shift a report by six hours from a shell.
-DEADLINE_ANCHOR_HOURS = 24.0
+DEADLINE_ANCHOR_HOURS = 18.0
 REMINDER_ANCHOR_HOURS = 3.0
 
 # Where the week's reporting begins: the scout window opens this many hours
