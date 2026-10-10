@@ -4495,6 +4495,26 @@ def test_a_free_hit_record_with_no_free_hit_team_has_no_rebuildable_lineup():
     assert _recorded_lineup({**record, "freehit_xi": [], "freehit_squad": []}, PLAYERS) is None
 
 
+def test_a_free_hit_lineup_is_built_from_the_records_bench_not_its_xi():
+    # The record's freehit_xi (the MILP's) has 3 where the picker's bench
+    # [20, 2, 12, 3] has put him, so it disagrees with the fifteen less the
+    # bench by one player. The block must still be there, built from the
+    # bench: 1, 4, 5, 6, 8, 9, 10, 11, 13, 14, 21.
+    squad = [1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 20, 21]
+    record = {
+        **PLAN_RECORD, "chip": "free_hit", "freehit_squad": squad,
+        "freehit_xi": [1, 4, 5, 6, 8, 9, 10, 11, 13, 14, 21],
+        "bench": [20, 2, 12, 3],
+    }
+
+    lineup = _recorded_lineup(record, PLAYERS)
+
+    assert lineup.xi == [1, 4, 5, 6, 8, 9, 10, 11, 13, 14, 21]
+    assert lineup.bench == [20, 2, 12, 3]
+    disagreeing = {**record, "freehit_xi": [1, 3, 4, 5, 8, 9, 10, 11, 13, 14, 21]}
+    assert _recorded_lineup(disagreeing, PLAYERS).xi == lineup.xi, "same eleven"
+
+
 def test_a_bench_of_the_wrong_length_has_no_rebuildable_lineup():
     # Three on the bench leaves a twelve, which is no eleven to field.
     assert _recorded_lineup({**PLAN_RECORD, "bench": [2, 12, 6]}, PLAYERS) is None
@@ -4580,3 +4600,47 @@ def test_a_reminder_with_no_full_report_carries_the_fresh_lineup(tmp_path):
 
     assert "Starting XI (" in alert and "Bench: 1 " in alert
     assert alert.index("Bench:") < alert.index(render.NO_FULL_REPORT)
+
+
+def test_a_calm_reminder_after_a_free_hit_deadline_carries_the_free_hit_team(
+    monkeypatch, tmp_path
+):
+    # A stubbed planned free hit (as the record test above builds it), the
+    # deadline run, then a calm reminder. The block is headed as the free hit
+    # team and its eleven is the temporary fifteen less the record's bench.
+    cfg = config(state_dir=tmp_path / "state")
+    client = make_client(pipeline_routes())
+    inputs = fetch_inputs(cfg, client)
+    _, projections = build_projections(inputs, config())
+    standing = inputs.squad.player_ids
+    positions = {pid: p.element_type for pid, p in inputs.players.items()}
+    gw_xp = {pid: pr.per_gw.get(inputs.event.id, 0.0) for pid, pr in projections.items()}
+    choice = Plan(
+        squad=standing, xi=[], transfers_in=[], transfers_out=[], hits=0,
+        xp_total=0.0, objective=0.0,
+        path=PlannedPath(
+            moves=[], objective=0.0, weekly_xp={}, week1_chip="free_hit",
+            week1_freehit_squad=FH_SQUAD, week1_freehit_xi=FH_XI,
+        ),
+    )
+    solved = SolveResult(
+        plans=[choice], choice=choice,
+        lineup=pick_lineup(standing, positions, gw_xp),
+        chips=NO_CHIPS, draft_mode=False,
+    )
+    monkeypatch.setattr(orchestrator, "solve", lambda *a, **k: solved)
+    store = Store(tmp_path / "aigaffer.db")
+
+    run_pipeline(cfg, client, store, "deadline", send=False)
+    alert = run_pipeline(cfg, client, store, "reminder", send=False)
+    record = store.decision(2, "deadline")
+
+    eleven = sorted(set(FH_SQUAD) - set(record["bench"]))
+    assert len(eleven) == 11
+    assert render.REMINDER_UNCHANGED in alert
+    block = alert[alert.index("Starting XI \u2014 free hit team"):]
+    shown = block[: block.index("Bench:")]
+    for pid in eleven:
+        assert PLAYERS[pid].web_name in shown
+    for pid in record["bench"]:
+        assert PLAYERS[pid].web_name not in shown

@@ -1082,7 +1082,11 @@ def _recorded_lineup(
     captain, vice = record.get("captain"), record.get("vice")
     try:
         if record.get("freehit_xi") and record.get("freehit_squad"):
-            xi = list(record["freehit_xi"])
+            # The temporary fifteen less the record's own bench. The record's
+            # freehit_xi is the MILP's one-week eleven, but its bench and
+            # armbands come from the lineup picker over the same fifteen, and
+            # the two can differ by a player: one source keeps them whole.
+            xi = sorted(set(record["freehit_squad"]) - set(bench))
         else:
             squad = (
                 set(record["squad_before"])
@@ -1117,14 +1121,11 @@ def _entered_lineup(
     fifteen = executed.freehit_squad if free_hit else executed.squad_after
     if not fifteen:
         return None
-    # On a free hit: his recorded eleven (the row's, else the verdict's);
-    # otherwise the fifteen less the bench.
-    xi = (
-        executed.freehit_xi or (record or {}).get("freehit_xi")
-        if free_hit
-        else None
-    ) or sorted(set(fifteen) - set(bench))
-    return _checked_lineup(list(xi), list(bench), executed.captain, executed.vice, players)
+    # Always the fifteen less the verdict's own bench, free hit or not: the
+    # row's freehit_xi is only copied from the record and is the MILP's
+    # eleven, which can differ from the bench the picker chose by a player.
+    xi = sorted(set(fifteen) - set(bench))
+    return _checked_lineup(xi, list(bench), executed.captain, executed.vice, players)
 
 
 def _checked_lineup(
