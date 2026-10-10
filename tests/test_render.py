@@ -1775,6 +1775,23 @@ def test_phone_lineup_on_a_free_hit_week_says_so_in_the_heading():
     assert text.splitlines()[1:] == PHONE_XI.splitlines()[1:]
 
 
+def test_phone_lineup_puts_a_note_after_the_name_and_before_the_armband():
+    # Hume is captain (8) and doubtful: the note comes first, so the armband
+    # still ends the name -- "Hume (75%) (C)". A benched player (12 Lang) is
+    # noted too; a note for someone not in the team is ignored.
+    text = phone_lineup(LINEUP, BOOTSTRAP_PLAYERS, notes={8: "75%", 12: "doubtful", 99: "x"})
+
+    assert text.splitlines()[3] == "MID Hume (75%) (C), Innes, Jonker, Kerr"
+    assert text.splitlines()[-1] == (
+        "Bench: 1 Byrne \u00b7 2 Lang (doubtful) \u00b7 3 Fenn \u00b7 4 Gale"
+    )
+
+
+def test_phone_lineup_without_notes_is_unchanged():
+    assert phone_lineup(LINEUP, BOOTSTRAP_PLAYERS, notes={}) == PHONE_XI
+    assert phone_lineup(LINEUP, BOOTSTRAP_PLAYERS, notes=None) == PHONE_XI
+
+
 def test_phone_lineup_takes_its_heading():
     assert phone_lineup(LINEUP, BOOTSTRAP_PLAYERS, "Lineup now").splitlines()[0] == (
         "Lineup now (3-4-3)"

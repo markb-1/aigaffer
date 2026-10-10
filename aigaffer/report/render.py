@@ -1135,6 +1135,7 @@ def phone_lineup(
     players: dict[int, Player],
     heading: str = PHONE_HEADING,
     free_hit: bool = False,
+    notes: dict[int, str] | None = None,
 ) -> str:
     """The eleven and the bench as plain lines, for every text the phone gets.
 
@@ -1152,17 +1153,30 @@ def phone_lineup(
     one, not the standing squad. A bench id the board does not know prints as
     ``player {id}``, as everywhere in this module; the eleven's players must
     be on the board, as :func:`formation` needs their positions.
+
+    ``notes`` maps a player id to a short doubt (``75%``, ``60 mins``) printed
+    in brackets after his name, eleven or bench: the what-if text uses it to
+    flag a newcomer he might field. The note comes before the armband, so a
+    doubtful captain reads ``Guehi (75%) (C)`` and the armband still ends the
+    name. Omitted, or for an id not in the team, it changes nothing: the
+    other texts' output is byte-identical to what it was.
     """
+    notes = notes or {}
+
+    def noted(pid: int) -> str:
+        return f"{_who(pid, players)} ({notes[pid]})" if pid in notes else _who(pid, players)
+
     rows: dict[int, list[str]] = defaultdict(list)
     for pid in lineup.xi:
-        rows[players[pid].element_type].append(_armband(pid, lineup, players))
+        marker = {lineup.captain: " (C)", lineup.vice: " (V)"}.get(pid, "")
+        rows[players[pid].element_type].append(f"{noted(pid)}{marker}")
     suffix = PHONE_FREE_HIT if free_hit else ""
     lines = [f"{heading}{suffix} ({formation(lineup, players)})"]
     lines += [f"{tag} {', '.join(rows[position])}" for position, tag in PHONE_ROWS]
     lines.append(
         PHONE_BENCH
         + PHONE_BENCH_JOIN.join(
-            f"{order} {_who(pid, players)}"
+            f"{order} {noted(pid)}"
             for order, pid in enumerate(lineup.bench, start=1)
         )
     )

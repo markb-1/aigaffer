@@ -84,10 +84,11 @@ GAFFER = "gaffer"
 FAILED = "failed: {reason}"
 UNREACHABLE = "The gaffer couldn't be reached ({reason}) — the numbers above stand."
 
-# Long enough to be a reading of the numbers and not a one-liner; short enough
-# for a phone. Neither number is clever.
-MIN_OPINION = 200
-MAX_OPINION = 1200
+# A synopsis: two or three sentences, because the lineup and the numbers have
+# already gone to his phone in message 1 and this is only what they cannot
+# see. Long enough not to be a one-liner, short enough to read at a glance.
+MIN_OPINION = 80
+MAX_OPINION = 400
 
 VERDICTS = [PLAY, MARGINAL, HOLD]
 # How far apart two bands are: Play and Hold are two steps, either and
@@ -95,6 +96,9 @@ VERDICTS = [PLAY, MARGINAL, HOLD]
 _STEP = {PLAY: 0, MARGINAL: 1, HOLD: 2}
 _SHOUTED = {PLAY: "PLAY", MARGINAL: "MARGINAL", HOLD: "HOLD"}
 _SPOKEN = {PLAY: "Play", MARGINAL: "Marginal", HOLD: "Hold"}
+# The words on the owner's phone: the band constant stays "marginal" in the
+# code, but he reads MAYBE.
+_PHONE = {PLAY: "PLAY", MARGINAL: "MAYBE", HOLD: "HOLD"}
 
 NUDGE = (
     "That is not an answer yet. If you ended your turn to refresh your search"
@@ -158,9 +162,12 @@ Search the simulated squad's players and the flagged ones, not general \
 previews. A turn boundary refreshes your search allowance.
 
 Finish with {ANSWER}, exactly once: the verdict, the better week (a gameweek \
-number, or null), the new fact (or null), and the opinion — {MIN_OPINION} to \
-{MAX_OPINION} characters of plain prose for the owner, who reads it on his \
-phone. Anything you write outside that call is discarded."""
+number, or null), the new fact (or null), and the opinion — a synopsis of two \
+or three sentences ({MIN_OPINION} to {MAX_OPINION} characters of plain prose): \
+the key reasons and anything the numbers cannot see (injury news, a better \
+week). Not the lineup or the numbers: he already has both, in the message \
+before yours. He reads it on his phone. Anything you write outside that call \
+is discarded."""
 
 SYSTEM_PROMPT = _BASE + "\n\n" + CHIP_PLAYBOOK
 
@@ -199,8 +206,11 @@ TOOLS: list[dict] = [
                 "opinion": {
                     "type": "string",
                     "description": (
-                        f"Your reading of the numbers for the owner,"
-                        f" {MIN_OPINION}-{MAX_OPINION} characters of plain prose."
+                        f"A synopsis for the owner of two or three sentences,"
+                        f" {MIN_OPINION}-{MAX_OPINION} characters of plain prose:"
+                        " the key reasons and anything the numbers cannot see"
+                        " (injury news, a better week), not the lineup or"
+                        " numbers he already has."
                     ),
                 },
             },
@@ -317,14 +327,15 @@ def validate_opinion(args: dict, band: str) -> tuple[str, int | None, str | None
     if len(opinion) < MIN_OPINION:
         raise ToolError(
             f"That opinion is {len(opinion)} characters; the owner reads it as"
-            f" your whole view. Write {MIN_OPINION} to {MAX_OPINION} characters:"
-            " what the numbers say, what the news adds, and what you would do."
+            f" your whole view. Write a synopsis of two or three sentences,"
+            f" {MIN_OPINION} to {MAX_OPINION} characters: the key reasons and"
+            " what the numbers cannot see."
         )
     if len(opinion) > MAX_OPINION:
         raise ToolError(
             f"That opinion is {len(opinion)} characters; it goes to a phone."
-            f" Keep it to {MAX_OPINION}: the verdict, the one or two facts that"
-            " decide it, and what you would do."
+            f" Keep it to {MAX_OPINION}, two or three sentences: the key reasons"
+            " and anything the numbers cannot see, not the lineup or numbers."
         )
     if abs(_STEP[verdict] - _STEP.get(band, _STEP[MARGINAL])) == 2 and not fact:
         raise ToolError(
@@ -514,27 +525,21 @@ class _Conversation:
 
 
 def render_opinion(opinion: ChipOpinion, band: str) -> str:
-    """Message 2: the gaffer's verdict and opinion, or why there is none.
+    """Message 2: the gaffer's brief synopsis, or why there is none.
 
-    Plain text — the Telegram layer escapes every line — and the band he is
-    measured against is named when he departs from it, with the fact if he
-    gave one.
+    One line: ``🧠 Gaffer: HOLD — <synopsis>``, with the better week in
+    brackets when he named one. Message 1 already carries the numbers' word,
+    the points and the lineup, so this only adds what he thinks; when he
+    departs from the numbers' band it says so in the same line, ``HOLD, not
+    MAYBE``. The words are the phone's: PLAY, MAYBE (the code's marginal),
+    HOLD. No search count: the owner does not read it, and the log has it.
     """
     if opinion.verdict is None:
         reason = opinion.source.removeprefix("failed: ")
         return UNREACHABLE.format(reason=reason)
-    better = f" (better week GW{opinion.better_week})" if opinion.better_week else ""
-    searches = "1 search" if opinion.searches == 1 else f"{opinion.searches} searches"
-    body = f"🧠 Gaffer: {_SHOUTED[opinion.verdict]}{better} — {opinion.opinion} · {searches}"
-    if opinion.verdict == band:
-        return body
-    numbers = _SPOKEN.get(band, band)
-    gaffer = _SPOKEN[opinion.verdict]
-    if opinion.new_fact:
-        head = f"Numbers: {numbers} · Gaffer: {gaffer}, because {opinion.new_fact.rstrip('.')}."
-    else:
-        head = f"Numbers: {numbers} · Gaffer: {gaffer} — his judgement, below."
-    return head + "\n" + body
+    better = f" (GW{opinion.better_week})" if opinion.better_week else ""
+    dissent = f", not {_PHONE.get(band, band.upper())}" if opinion.verdict != band else ""
+    return f"🧠 Gaffer: {_PHONE[opinion.verdict]}{better}{dissent} — {opinion.opinion}"
 
 
 # --- the briefing ---------------------------------------------------------------

@@ -8,6 +8,7 @@ number is chosen by hand. Pinning itself is the solver's business and is tested
 with the solver (tests/test_multiweek.py).
 """
 
+import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -17,12 +18,15 @@ import pytest
 from aigaffer import whatif
 from aigaffer.chips import BENCH_BOOST, FREE_HIT, WILDCARD, HeldChip
 from aigaffer.model.xp import PlayerProjection
+from aigaffer.manager.chip_opinion import build_chip_briefing
 from aigaffer.orchestrator import PreparedWeek, prepare_week
+from aigaffer.report.whatif import render_numbers
 from aigaffer.solver.lineup import Lineup
 from aigaffer.solver.calendar import CalendarEntry, ChipCalendar
 from aigaffer.solver.multiweek import PlannedMove, PlannedPath
 from aigaffer.solver.optimizer import Plan
 from aigaffer.store import DB_NAME, Store
+from aigaffer.whatif_log import numbers_entry
 from aigaffer.whatif import (
     HOLD,
     MARGINAL,
@@ -492,6 +496,32 @@ def test_the_real_solver_end_to_end_keeps_the_invariants(tmp_path: Path):
     # the on side, the standing plan's squad on the off side.
     assert set(result.on.lineup.xi) <= set(result.on.path.week1_freehit_squad)
     assert set(result.off.lineup.xi) <= set(result.off.plan.squad)
+
+
+@pytest.mark.parametrize("chip", [FREE_HIT, WILDCARD])
+def test_the_real_solver_result_renders_logs_and_briefs_for_both_chips(tmp_path: Path, chip):
+    """The same real pipeline board, taken all the way through the three things
+    that read a what-if: message 1, the log line and the gaffer's briefing.
+    The hand-built render tests cannot catch a field the real solver leaves
+    empty or shaped differently; this can. Both chips are held on this board.
+    Message 1 must carry the eleven and the four on the bench by name, and
+    open with the chip header, whatever band the board lands in."""
+    cfg = config(chips=True, state_dir=tmp_path)
+    store = Store(tmp_path / DB_NAME)
+    week = prepare_week(cfg, make_client(pipeline_routes()), store)
+    result = simulate(week, cfg, chip)
+    assert result is not None
+    now = week.effective.event.deadline_time - timedelta(days=2)
+
+    text = render_numbers(result, week, verdict=None, now=now, numbers_only=False)
+    json.dumps(numbers_entry(result, ts="2026-10-10T09:00:00+00:00", total_seconds=1.0))
+    briefing = build_chip_briefing(week, result, None)
+
+    assert text.startswith("🃏 ")
+    assert briefing
+    players = week.effective.players
+    for pid in [*result.on.lineup.xi, *result.on.lineup.bench]:
+        assert players[pid].web_name in text
 
 
 def test_next_break_finds_the_first_long_gap():

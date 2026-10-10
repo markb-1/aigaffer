@@ -360,7 +360,9 @@ PLAY_HEADS_UP = (
     " this recording is wrong — the first report after the deadline will read"
     " your real squad."
 )
-UK = ZoneInfo("Europe/London")
+# The owner is in Ireland. Europe/Dublin keeps the same offsets as London, so
+# only the name changes; the heads-up prints no zone label, as before.
+IRISH = ZoneInfo("Europe/Dublin")
 
 
 @dataclass(frozen=True)
@@ -501,7 +503,7 @@ def _heads_up(log: WhatIfLog | None, outcome: Outcome) -> str:
     play = log.latest_play(outcome.gw, after=outcome.verdict_ts)
     if play is None:
         return ""
-    when = datetime.fromisoformat(play["ts"]).astimezone(UK)
+    when = datetime.fromisoformat(play["ts"]).astimezone(IRISH)
     return "\n\n" + PLAY_HEADS_UP.format(
         chip=chip_label(play["chip"]).lower(),
         gw=outcome.gw,

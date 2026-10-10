@@ -533,30 +533,33 @@ def test_the_price_is_the_models_table_and_unknown_models_have_none():
 def test_message_two_when_he_agrees_with_the_numbers():
     body = render_opinion(sample_opinion(verdict=MARGINAL, better_week=None), MARGINAL)
 
-    assert body.startswith("🧠 Gaffer: MARGINAL — ")
-    assert OPINION in body
-    assert body.endswith("· 3 searches")
+    # MARGINAL is the code's band; on the phone it is MAYBE. No search count.
+    assert body == f"🧠 Gaffer: MAYBE — {OPINION}"
 
 
 def test_message_two_names_the_better_week():
     body = render_opinion(sample_opinion(), HOLD)
 
-    assert body.startswith("🧠 Gaffer: HOLD (better week GW5) — ")
+    assert body == f"🧠 Gaffer: HOLD (GW5) — {OPINION}"
 
 
-def test_message_two_when_he_overturns_the_numbers_on_a_fact():
-    body = render_opinion(
-        sample_opinion(new_fact="Reid is out for two weeks.", searches=1), PLAY
-    )
+def test_message_two_when_he_disagrees_names_the_numbers_word_after_not():
+    body = render_opinion(sample_opinion(better_week=None), MARGINAL)
 
-    assert body.splitlines()[0] == "Numbers: Play · Gaffer: Hold, because Reid is out for two weeks."
-    assert body.endswith("· 1 search")
+    assert body == f"🧠 Gaffer: HOLD, not MAYBE — {OPINION}"
 
 
-def test_message_two_when_he_moves_one_step_on_judgement():
-    body = render_opinion(sample_opinion(), MARGINAL)
+def test_message_two_disagreeing_with_a_better_week_keeps_both():
+    body = render_opinion(sample_opinion(new_fact="Reid is out for two weeks."), PLAY)
 
-    assert body.splitlines()[0] == "Numbers: Marginal · Gaffer: Hold — his judgement, below."
+    assert body == f"🧠 Gaffer: HOLD (GW5), not PLAY — {OPINION}"
+
+
+def test_the_opinion_is_a_short_synopsis_not_a_report():
+    assert (MIN_OPINION, MAX_OPINION) == (80, 400)
+    assert "synopsis of two or three sentences" in chip_opinion.SYSTEM_PROMPT
+    description = chip_opinion.TOOLS[1]["input_schema"]["properties"]["opinion"]["description"]
+    assert "80-400" in description
 
 
 @pytest.mark.parametrize(
