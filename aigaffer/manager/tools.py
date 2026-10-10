@@ -652,7 +652,9 @@ def _quote_date(value: object, today: date) -> str:
             f"quote_date {value} is after today ({today.isoformat()}): give the day"
             " the quote was given."
         )
-    return value
+    # Stored canonical: fromisoformat also takes "20261006", and the ledger
+    # must only ever hold YYYY-MM-DD.
+    return given.isoformat()
 
 
 def _source(value: object) -> str | None:

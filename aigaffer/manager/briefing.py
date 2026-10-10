@@ -103,8 +103,9 @@ PICK_MARKER = "  <- solver pick"
 # prompt names the heading and the tests pin the wording.
 KNOWN_HEADING = "## What we already know"
 KNOWN_INTRO = (
-    "From earlier runs. A fresh entry's news stands: carry it into"
-    " adjust_players as it is, without a search. Search only the re-checks."
+    "From earlier runs. Carry each fresh entry whose minutes differ from"
+    " xMins into adjust_players as it stands — same category, tier and"
+    " quote date, no search. Search only the re-checks."
 )
 KNOWN_LINE = (
     "- {who}: {category}, {minutes:.0f} mins, tier {tier},"
@@ -484,7 +485,11 @@ def _situation(
 
 
 def _known(
-    view: "LedgerView | None", pids: list[int], board: _Board, today: date
+    view: "LedgerView | None",
+    pids: list[int],
+    board: _Board,
+    today: date,
+    intro: str = KNOWN_INTRO,
 ) -> str | None:
     """What earlier runs learned about the players this run is about, or None.
 
@@ -492,6 +497,10 @@ def _known(
     gaffer searches the second kind and carries the first. Omitted when
     there is nothing to say, so a run with an empty ledger reads exactly
     as it did before there was one.
+
+    ``intro`` is what the section tells its reader to do with a fresh entry.
+    The weekly gaffer carries entries into ``adjust_players``; the chip
+    what-if's gaffer has no such tool, so it passes its own words.
     """
     if view is None:
         return None
@@ -517,7 +526,7 @@ def _known(
         )
     if not lines:
         return None
-    return "\n".join([KNOWN_HEADING, "", KNOWN_INTRO, "", *lines])
+    return "\n".join([KNOWN_HEADING, "", intro, "", *lines])
 
 
 def _early_season_note(events: list[Event]) -> str:

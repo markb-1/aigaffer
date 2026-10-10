@@ -228,6 +228,15 @@ def test_a_missing_file_reads_as_empty_and_quietly(tmp_path, capsys):
     assert capsys.readouterr().out == ""
 
 
+def test_a_file_that_is_not_utf8_reads_as_empty_with_one_line(tmp_path, capsys):
+    # read_text raises UnicodeDecodeError, a ValueError and not an OSError.
+    path = tmp_path / "ledger.json"
+    path.write_bytes(b"\xff\xfe{\x80")
+    assert read_ledger(path) == {}
+    lines = capsys.readouterr().out.splitlines()
+    assert lines == [UNREADABLE.format(reason="UnicodeDecodeError")]
+
+
 def test_an_unreadable_file_reads_as_empty_with_one_line(tmp_path, capsys):
     for text in ("{not json", "[1, 2]", ""):
         path = tmp_path / "ledger.json"

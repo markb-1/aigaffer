@@ -153,7 +153,9 @@ Before you give your answer, use web_search on current team news for the \
 chip's new signings and for any flagged or doubtful players (the briefing \
 names them): at least one search, at most {MAX_SEARCHES} a turn. The briefing's \
 "What we already know" lists what earlier runs found: search only the players \
-it marks re-check, and the new players it does not list. The numbers cannot \
+it marks re-check, and the new players it does not list. If nothing is marked \
+re-check and no new player is unlisted, still make one search, on the most \
+fragile player, for the latest press-conference news. The numbers cannot \
 see Friday's press conference; you can. Do not answer from the numbers alone.
 
 Check, in this order, and spend your searches on what matters:
@@ -581,6 +583,14 @@ def render_opinion(opinion: ChipOpinion, band: str) -> str:
 
 # --- the briefing ---------------------------------------------------------------
 
+# What the ledger section says to the opinion gaffer. The weekly intro tells
+# its reader to carry entries into adjust_players, a tool this gaffer does not
+# have (an unknown tool costs him a turn), so the what-if has its own words.
+WHATIF_KNOWN_INTRO = (
+    "Fresh entries' news stands — no need to search them; search only the"
+    " re-check players and new players with no entry."
+)
+
 _CHIP_NAMES = {chip: chip_label(chip) for chip in CHIP_ORDER}
 
 
@@ -638,6 +648,7 @@ def build_chip_briefing(
         ])),
         board,
         today,
+        WHATIF_KNOWN_INTRO,
     )
     if known is not None:
         sections.append(known)

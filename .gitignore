@@ -12,3 +12,7 @@ build/
 
 # A recording interrupted mid-write; the real row is renamed into place.
 state/executed/.*.tmp
+
+# A news-ledger write interrupted mid-way (write_ledger renames it into place);
+# run-tick.sh does `git add state/`, so it must not be committed.
+state/news/.*.tmp

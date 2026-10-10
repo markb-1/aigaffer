@@ -133,7 +133,9 @@ def read_ledger(path: Path) -> dict:
         text = path.read_text(encoding="utf-8")
     except FileNotFoundError:
         return {}
-    except OSError as error:
+    except (OSError, ValueError) as error:
+        # ValueError: read_text on bytes that are not UTF-8 raises
+        # UnicodeDecodeError, which is not an OSError.
         print(UNREADABLE.format(reason=type(error).__name__))
         return {}
     try:

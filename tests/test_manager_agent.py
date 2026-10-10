@@ -1458,6 +1458,19 @@ def test_a_quote_dated_after_today_or_not_a_date_is_refused():
         assert only_result(client.requests[1])["is_error"] is True
 
 
+def test_a_quote_date_is_stored_as_a_canonical_day():
+    # date.fromisoformat accepts the basic form; the ledger must still only
+    # ever hold YYYY-MM-DD.
+    _, decision = converse(
+        [
+            reply(use("adjust_players", adjust(quote_date="20260820"))),
+            reply(use("resolve", {})),
+            reply(use("finalize_decision", finalize(plan_id=2))),
+        ]
+    )
+    assert [r["quote_date"] for r in decision.record] == ["2026-08-20"]
+
+
 def test_a_return_gameweek_before_this_one_is_refused():
     client, _ = converse(
         [

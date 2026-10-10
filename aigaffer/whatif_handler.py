@@ -162,14 +162,21 @@ def chip_whatif(
             # Judged inside this try: the ledger is memory, but a shape nobody
             # foresaw is raised after message 1 like any other, and reads as
             # "the gaffer couldn't be reached" while the numbers stand.
-            news = evaluate_ledger(
-                raw_ledger, week.effective.bootstrap, week.effective.fixtures,
-                week.effective.event, now(),
-            )
-            briefing = (
-                build_chip_briefing(week, whatif, verdict, ledger=news)
-                if cfg.manager_enabled else None
-            )
+            # Only with the gaffer on: with him off there is no briefing to
+            # build, and judging a ledger nobody reads could only fail into
+            # "couldn't be reached" for a gaffer that was switched off.
+            if cfg.manager_enabled:
+                moment = now()
+                news = evaluate_ledger(
+                    raw_ledger, week.effective.bootstrap, week.effective.fixtures,
+                    week.effective.event, moment,
+                )
+                # The ledger's age clock is the handler's, not the machine's.
+                briefing = build_chip_briefing(
+                    week, whatif, verdict, today=moment.date(), ledger=news
+                )
+            else:
+                briefing = None
         except Exception as error:
             # Message 1 has gone, so the numbers line is still owed (the cap
             # is spent and a resume must find it) — with no briefing, since
