@@ -447,10 +447,29 @@ def reply(*blocks: Block, stop: str = "tool_use", container: Any = None) -> Resp
     return Response(content=list(blocks), stop_reason=stop, container=container)
 
 
-def adjust(pid: int = 7, minutes: float = 0.0, reason: str = "hamstring") -> dict:
+def adjust(
+    pid: int = 7,
+    minutes: float = 0.0,
+    reason: str = "hamstring",
+    *,
+    category: str = "doubt",
+    tier: int = 1,
+    quote_date: str = "2026-08-20",
+    source: str | None = "club update",
+    return_gw: int | None = None,
+) -> dict:
     return {
         "adjustments": [
-            {"player_id": pid, "expected_minutes": minutes, "reason": reason}
+            {
+                "player_id": pid,
+                "expected_minutes": minutes,
+                "reason": reason,
+                "category": category,
+                "tier": tier,
+                "quote_date": quote_date,
+                "source": source,
+                "return_gw": return_gw,
+            }
         ]
     }
 
@@ -1410,6 +1429,92 @@ def test_an_adjustment_with_no_reason_given_is_refused():
     assert only_result(client.requests[1])["is_error"] is True
 
 
+def test_an_adjustment_without_a_category_is_refused():
+    payload = adjust()
+    del payload["adjustments"][0]["category"]
+    client, _ = converse(
+        [reply(use("adjust_players", payload)), reply(use("finalize_decision", finalize()))]
+    )
+    refusal = only_result(client.requests[1])
+    assert refusal["is_error"] is True and "category" in refusal["content"]
+
+
+def test_a_category_or_tier_outside_the_vocabulary_is_refused():
+    for bad in (adjust(category="knackered"), adjust(tier=4), adjust(tier=True)):
+        client, _ = converse(
+            [reply(use("adjust_players", bad)), reply(use("finalize_decision", finalize()))]
+        )
+        assert only_result(client.requests[1])["is_error"] is True
+
+
+def test_a_quote_dated_after_today_or_not_a_date_is_refused():
+    for bad in ("2099-01-01", "last Tuesday", 20261006):
+        client, _ = converse(
+            [
+                reply(use("adjust_players", adjust(quote_date=bad))),
+                reply(use("finalize_decision", finalize())),
+            ]
+        )
+        assert only_result(client.requests[1])["is_error"] is True
+
+
+def test_a_return_gameweek_before_this_one_is_refused():
+    client, _ = converse(
+        [
+            reply(use("adjust_players", adjust(return_gw=EVENT_ID - 1))),
+            reply(use("finalize_decision", finalize())),
+        ]
+    )
+    assert only_result(client.requests[1])["is_error"] is True
+
+
+def test_the_decision_keeps_every_call_in_order_and_the_record_shape_unchanged():
+    resolver = FakeResolver()
+    _, decision = converse(
+        [
+            reply(use("adjust_players", adjust(7, 60.0, "a doubt (paper)", category="doubt"))),
+            reply(use("resolve", {})),
+            reply(
+                use(
+                    "adjust_players",
+                    adjust(7, 0.0, "out (club)", category="injured", return_gw=EVENT_ID + 2),
+                )
+            ),
+            reply(use("finalize_decision", finalize())),
+        ],
+        resolver=resolver,
+    )
+    assert [r["expected_minutes"] for r in decision.record] == [60.0, 0.0]
+    assert decision.record[1]["category"] == "injured"
+    assert decision.record[1]["return_gw"] == EVENT_ID + 2
+    # The decision's own halves keep the three keys the record and the report
+    # have always read.
+    assert decision.adjustments == [
+        {"player_id": 7, "expected_minutes": 60.0, "reason": "a doubt (paper)"}
+    ]
+    assert decision.unapplied == [
+        {"player_id": 7, "expected_minutes": 0.0, "reason": "out (club)"}
+    ]
+
+
+def test_a_fallback_keeps_no_record():
+    _, decision = converse([Refusal()])
+    assert decision.source.startswith("solver-fallback") and decision.record == []
+
+
+def test_the_tool_schema_requires_the_new_fields_strictly():
+    from aigaffer.manager.tools import TOOLS
+
+    tool = next(t for t in TOOLS if t.get("name") == "adjust_players")
+    item = tool["input_schema"]["properties"]["adjustments"]["items"]
+    assert item["required"] == [
+        "player_id", "expected_minutes", "reason", "category", "tier",
+        "quote_date", "source", "return_gw",
+    ]
+    assert item["properties"]["tier"]["enum"] == [1, 2, 3]
+    assert item["properties"]["source"]["anyOf"] == [{"type": "string"}, {"type": "null"}]
+
+
 def test_an_id_that_is_not_a_number_is_refused_rather_than_believed():
     client, _ = converse(
         [
@@ -1443,8 +1548,18 @@ def test_one_bad_id_in_a_batch_voids_the_whole_batch():
                     "adjust_players",
                     {
                         "adjustments": [
-                            {"player_id": 7, "expected_minutes": 0, "reason": "out"},
-                            {"player_id": 4242, "expected_minutes": 0, "reason": "who"},
+                            {
+                                "player_id": 7, "expected_minutes": 0, "reason": "out",
+                                "category": "injured", "tier": 1,
+                                "quote_date": "2026-08-20", "source": None,
+                                "return_gw": None,
+                            },
+                            {
+                                "player_id": 4242, "expected_minutes": 0, "reason": "who",
+                                "category": "injured", "tier": 1,
+                                "quote_date": "2026-08-20", "source": None,
+                                "return_gw": None,
+                            },
                         ]
                     },
                 )

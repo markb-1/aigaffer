@@ -31,6 +31,7 @@ cannot be reached is not a reason to miss one.
 
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
+from datetime import UTC, date, datetime
 from time import monotonic
 from typing import TYPE_CHECKING, Any
 
@@ -177,6 +178,10 @@ class ManagerDecision:
     nothing, and saying otherwise would be a report claiming a minutes model it
     did not use. Both halves are kept because both happened: one is what he
     did, the other is what he only said.
+
+    ``record`` is every ``adjust_players`` call he made, in order, applied or
+    not, with the news fields the three-key halves above leave out. The news
+    ledger's write reads it; the decision record and the report never do.
     """
 
     plan: Plan
@@ -191,6 +196,10 @@ class ManagerDecision:
     source: str
     projections: dict[int, PlayerProjection] | None = None
     unapplied: list[dict] = field(default_factory=list)
+    # Every adjust_players record he made, in order, applied or not, with
+    # the news fields (news-ledger spec §6). The ledger's write reads it;
+    # the decision record and the report never do.
+    record: list[dict] = field(default_factory=list)
 
 
 def run_manager(
@@ -201,6 +210,8 @@ def run_manager(
     projections0: dict[int, PlayerProjection],
     briefing: str,
     resolver: Resolver,
+    *,
+    today: date | None = None,
 ) -> ManagerDecision:
     """Put the week to the manager and come back with a decision, always.
 
@@ -222,11 +233,21 @@ def run_manager(
     the fetch — clubs off the bootstrap, positions off the board — and a fetch
     that came back malformed would otherwise raise past every handler here and
     take the report with it, which is exactly the failure this is for.
+
+    ``today`` is the briefing's own date, so that a quote the briefing allows
+    is never refused; it defaults to the current UTC date.
     """
     conversation = None
     try:
         conversation = _Conversation(
-            client, cfg, inputs, solve0, projections0, briefing, resolver
+            client,
+            cfg,
+            inputs,
+            solve0,
+            projections0,
+            briefing,
+            resolver,
+            today or datetime.now(UTC).date(),
         )
         return conversation.run()
     except (
@@ -291,7 +312,9 @@ class _Conversation:
         projections: dict[int, PlayerProjection],
         briefing: str,
         resolver: Resolver,
+        today: date,
     ) -> None:
+        self.today = today
         self.client = client
         self.cfg = cfg
         self.inputs = inputs
@@ -566,7 +589,9 @@ class _Conversation:
         else. Every other field we hold about a player came off a public API,
         and this document's structure is its own.
         """
-        records = validate_adjustments(args, self.inputs.players)
+        records = validate_adjustments(
+            args, self.inputs.players, today=self.today, event=self.inputs.event.id
+        )
         self.record.extend(records)
         for record in records:
             self.adjustments[record["player_id"]] = record["expected_minutes"]
@@ -651,6 +676,7 @@ class _Conversation:
             rationale=final.rationale,
             adjustments=applied,
             unapplied=unapplied,
+            record=[dict(r) for r in self.record],
             searches=self.searches,
             source=MANAGER,
             # The ones in force: the re-solve's if he re-solved, the
@@ -678,7 +704,9 @@ class _Conversation:
         for record in self.record:
             spent = self.spent.get(record["player_id"])
             side = applied if spent == record["expected_minutes"] else unapplied
-            side.append(record)
+            # The halves keep the three keys the decision record and the
+            # report have always read; the news fields ride on ``record``.
+            side.append(_brief(record))
         return applied, unapplied
 
     def _lineup(self, plan: Plan) -> Lineup:
@@ -789,6 +817,15 @@ def _result(tool_use_id: str, content: str, failed: bool = False) -> dict:
     if failed:
         result["is_error"] = True
     return result
+
+
+def _brief(record: dict) -> dict:
+    """The three keys of a record that the decision's halves keep."""
+    return {
+        "player_id": record["player_id"],
+        "expected_minutes": record["expected_minutes"],
+        "reason": record["reason"],
+    }
 
 
 def _minutes(records: list[dict]) -> str:

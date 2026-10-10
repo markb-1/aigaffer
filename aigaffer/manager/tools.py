@@ -39,9 +39,11 @@ the id.
 import re
 from collections.abc import Callable, Container
 from dataclasses import dataclass
+from datetime import date
 from math import isfinite
 
 from aigaffer.manager.playbook import CHIP_PLAYBOOK
+from aigaffer.news_ledger import CATEGORIES, TIERS
 from aigaffer.solver.optimizer import Plan
 
 # The gaffer, as he is briefed once and cached. Byte-stable by contract: the
@@ -233,8 +235,53 @@ TOOLS: list[dict] = [
                                     " the written record of the decision."
                                 ),
                             },
+                            "category": {
+                                "type": "string",
+                                "enum": list(CATEGORIES),
+                                "description": (
+                                    "What kind of news: nailed, rotation, doubt,"
+                                    " test_on_day, injured, suspended or ill."
+                                ),
+                            },
+                            "tier": {
+                                "type": "integer",
+                                "enum": list(TIERS),
+                                "description": (
+                                    "How good the source is. 1: the FPL flag, the"
+                                    " manager's own words, an official club update."
+                                    " 2: a club reporter, The Athletic, BBC, Sky,"
+                                    " Premier Injuries. 3: predicted line-ups."
+                                ),
+                            },
+                            "quote_date": {
+                                "type": "string",
+                                "description": (
+                                    "YYYY-MM-DD: the day the quote or evidence was"
+                                    " given — not the article's date."
+                                ),
+                            },
+                            "source": {
+                                "anyOf": [{"type": "string"}, {"type": "null"}],
+                                "description": "Where you read it. null if the FPL flag alone.",
+                            },
+                            "return_gw": {
+                                "anyOf": [{"type": "integer"}, {"type": "null"}],
+                                "description": (
+                                    "For an injury or a ban, the gameweek he is due"
+                                    " back. null otherwise."
+                                ),
+                            },
                         },
-                        "required": ["player_id", "expected_minutes", "reason"],
+                        "required": [
+                            "player_id",
+                            "expected_minutes",
+                            "reason",
+                            "category",
+                            "tier",
+                            "quote_date",
+                            "source",
+                            "return_gw",
+                        ],
                         "additionalProperties": False,
                     },
                 }
@@ -365,13 +412,21 @@ class Finalized:
     rationale: str
 
 
-def validate_adjustments(args: dict, known: Container[int]) -> list[dict]:
+def validate_adjustments(
+    args: dict, known: Container[int], *, today: date, event: int
+) -> list[dict]:
     """The adjustments in ``args``, checked, clamped and in the order given.
 
     ``known`` is the player board — anything keyed by player id — and a player
     who is not on it is refused rather than silently dropped: an id nobody
     recognises usually means the model has invented a transfer target, and
     quietly ignoring it would leave him believing the minutes were set.
+
+    Each record also carries what he found (news-ledger spec §6): the
+    category, the source tier, the date of the quote — never after ``today``,
+    the briefing's own date — the source, and for an injury or a ban the
+    gameweek he is due back, never before ``event``. They become the news
+    ledger's entry when the run is saved.
 
     One bad entry voids the whole call. A tool result that reported half a
     batch applied would leave the model to work out which half, and the cheap
@@ -382,13 +437,15 @@ def validate_adjustments(args: dict, known: Container[int]) -> list[dict]:
         raise ToolError(
             "adjust_players needs at least one adjustment:"
             " {'adjustments': [{'player_id': int, 'expected_minutes': number,"
-            " 'reason': string}]}."
+            " 'reason': string, 'category': string, 'tier': 1|2|3,"
+            " 'quote_date': 'YYYY-MM-DD', 'source': string|null,"
+            " 'return_gw': int|null}]}."
         )
 
     records = []
     for entry in entries:
         if not isinstance(entry, dict):
-            raise ToolError("Every adjustment must be an object with the three keys.")
+            raise ToolError("Every adjustment must be an object with the eight keys.")
         pid = _whole(entry.get("player_id"), "player_id")
         if pid not in known:
             raise ToolError(
@@ -401,6 +458,11 @@ def validate_adjustments(args: dict, known: Container[int]) -> list[dict]:
                 "player_id": pid,
                 "expected_minutes": _minutes(entry.get("expected_minutes")),
                 "reason": _words(entry.get("reason"), "reason"),
+                "category": _category(entry.get("category")),
+                "tier": _tier(entry.get("tier")),
+                "quote_date": _quote_date(entry.get("quote_date"), today),
+                "source": _source(entry.get("source")),
+                "return_gw": _return_gw(entry.get("return_gw"), event),
             }
         )
     return records
@@ -546,6 +608,54 @@ def _whole(value: object, field: str) -> int:
     """A player or plan id: an integer, and not a boolean wearing one."""
     if isinstance(value, bool) or not isinstance(value, int):
         raise ToolError(f"{field} must be a whole number, not {value!r}.")
+    return value
+
+
+def _category(value: object) -> str:
+    if value not in CATEGORIES:
+        raise ToolError(f"category must be one of {', '.join(CATEGORIES)}, not {value!r}.")
+    return value
+
+
+def _tier(value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value not in TIERS:
+        raise ToolError(
+            f"tier must be 1, 2 or 3, not {value!r}. Social media and unverified"
+            " claims are not a tier: search for something better or leave him be."
+        )
+    return value
+
+
+def _quote_date(value: object, today: date) -> str:
+    if not isinstance(value, str):
+        raise ToolError(f"quote_date must be a date like 2026-10-06, not {value!r}.")
+    try:
+        given = date.fromisoformat(value)
+    except ValueError:
+        raise ToolError(f"quote_date must be a date like 2026-10-06, not {value!r}.") from None
+    if given > today:
+        raise ToolError(
+            f"quote_date {value} is after today ({today.isoformat()}): give the day"
+            " the quote was given."
+        )
+    return value
+
+
+def _source(value: object) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ToolError(f"source must be a string or null, not {value!r}.")
+    return value.strip() or None
+
+
+def _return_gw(value: object, event: int) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value < event:
+        raise ToolError(
+            f"return_gw must be null or a gameweek from GW{event} on, not {value!r}."
+        )
     return value
 
 
