@@ -8,10 +8,12 @@ on: [push, pull_request]
 jobs:
   pytest:
     runs-on: ubuntu-latest
-    # Four hundred tests that fake every HTTP call take seconds. Ten minutes is
-    # a cap on something having hung — a solve that will not converge, a
-    # download that will not finish — rather than a budget anything spends.
-    timeout-minutes: 10
+    # Every HTTP call is faked, but some fifteen hundred tests now include real
+    # CBC solves with wall-clock time limits, and on a hosted runner the suite
+    # takes over ten minutes (about seven on a laptop). Twenty-five is a cap on
+    # something having hung — a solve that will not converge, a download that
+    # will not finish — with room for the suite to keep growing, not a budget.
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
