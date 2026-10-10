@@ -55,6 +55,7 @@ from aigaffer.executed import Executed
 from aigaffer.inbox import Reply, confirm_handled, mark_failed, marked_failed
 from aigaffer.manager.chip_opinion import build_chip_briefing, render_opinion, run_chip_opinion
 from aigaffer.manager.client import build_client
+from aigaffer.news_ledger import evaluate_ledger, ledger_path, read_ledger
 from aigaffer.orchestrator import SINGLE, prepare_week
 from aigaffer.report.render import chip_label
 from aigaffer.report.whatif import render_numbers
@@ -138,6 +139,9 @@ def chip_whatif(
         snapshot = Path(scratch) / DB_NAME
         with state_lock(lock_path, on_wait=lambda: reply(REPORT_RUNNING)):
             _copy_store(cfg.state_dir / DB_NAME, snapshot)
+            # The news ledger is read under the same lock and never written:
+            # a what-if is a question, and what it learns is not news.
+            raw_ledger = read_ledger(ledger_path(cfg.state_dir))
         store = Store(snapshot)
         overrides, source, verdict = verdict_minutes(store, event_id)
         renice(WHATIF_NICE)
@@ -155,8 +159,16 @@ def chip_whatif(
             numbers_only=not cfg.manager_enabled,
         ))
         try:
+            # Judged inside this try: the ledger is memory, but a shape nobody
+            # foresaw is raised after message 1 like any other, and reads as
+            # "the gaffer couldn't be reached" while the numbers stand.
+            news = evaluate_ledger(
+                raw_ledger, week.effective.bootstrap, week.effective.fixtures,
+                week.effective.event, now(),
+            )
             briefing = (
-                build_chip_briefing(week, whatif, verdict) if cfg.manager_enabled else None
+                build_chip_briefing(week, whatif, verdict, ledger=news)
+                if cfg.manager_enabled else None
             )
         except Exception as error:
             # Message 1 has gone, so the numbers line is still owed (the cap
