@@ -100,6 +100,14 @@ _SPOKEN = {PLAY: "Play", MARGINAL: "Marginal", HOLD: "Hold"}
 # code, but he reads MAYBE.
 _PHONE = {PLAY: "PLAY", MARGINAL: "MAYBE", HOLD: "HOLD"}
 
+# Turned back once if he answers having searched nothing. The first live run
+# answered in two turns with no searches at all, judging from the numbers
+# alone, which defeats the point of asking him.
+SEARCH_FIRST = (
+    "Search first: you have not checked any team news. Search the new"
+    " signings and flagged players, then answer."
+)
+
 NUDGE = (
     "That is not an answer yet. If you ended your turn to refresh your search"
     " allowance, it is fresh now — continue the research you paused for."
@@ -138,6 +146,11 @@ step on judgement (Play to Marginal, Marginal to Hold, and back). Moving it two 
 steps — Play to Hold, or Hold to Play — needs a named fact the numbers do not \
 contain, such as an injury or press-conference news, given in new_fact. If \
 your view differs from the latest report's chip plan, say why.
+
+Before you give your answer, use web_search on current team news for the \
+chip's new signings and for any flagged or doubtful players (the briefing \
+names them): at least one search, at most {MAX_SEARCHES}. The numbers cannot \
+see Friday's press conference; you can. Do not answer from the numbers alone.
 
 Check, in this order, and spend your searches on what matters:
 1. Where the gain comes from. If more than about 40% of it comes from one or \
@@ -359,6 +372,10 @@ class _Conversation:
         # system prompt.
         self.messages: list[dict] = [{"role": "user", "content": [_cached(briefing)]}]
         self.searches = 0
+        # Whether the search-first guard has fired: it fires once, and the
+        # next answer stands whatever the count, since search may really be
+        # unavailable.
+        self.search_first_given = False
         self.turns = 0
         self.container: str | None = None
         self.tokens = {"input": 0, "cache_read": 0, "cache_write": 0, "output": 0}
@@ -484,10 +501,25 @@ class _Conversation:
                         f"There is no tool called '{name}'. The tools are"
                         f" web_search and {ANSWER}."
                     )
+                if self._must_search_first():
+                    self.search_first_given = True
+                    raise ToolError(SEARCH_FIRST)
                 return validate_opinion(args, self.band), results
             except ToolError as error:
                 results.append(_result(block_id, str(error), failed=True))
         return None, results
+
+    def _must_search_first(self) -> bool:
+        """True for an answer that arrives with nothing searched, once.
+
+        Not on a turn where the answer was asked for in words: that text
+        tells him not to search, and the guard must not contradict it.
+        """
+        if self.searches or self.search_first_given:
+            return False
+        last = self.messages[-1]
+        asked_in_words = last["role"] == "user" and bool(last["content"]) and last["content"][-1] == _text(ANSWER_NOW)
+        return not asked_in_words
 
     def _count(self, response: Any) -> None:
         for block in getattr(response, "content", None) or []:

@@ -268,8 +268,50 @@ def test_he_searches_and_answers_in_one_turn():
     assert len(client.requests) == 1
 
 
+def test_an_answer_before_any_search_is_turned_back_once():
+    # He judged from the numbers alone on the first live run. The first bare
+    # answer goes back with a search-first error; the second is accepted even
+    # with still no search, because search may genuinely be unavailable.
+    client, opinion = ask(
+        [
+            reply(use(ANSWER, answer(), block_id="tu_1")),
+            reply(use(ANSWER, answer(), block_id="tu_2")),
+        ]
+    )
+
+    assert opinion.verdict == HOLD and opinion.searches == 0 and opinion.turns == 2
+    turned_back = client.requests[1]["messages"][-1]["content"][0]
+    assert turned_back["type"] == "tool_result" and turned_back["tool_use_id"] == "tu_1"
+    assert turned_back["is_error"] is True
+    assert "Search first" in turned_back["content"]
+    assert len(client.requests) == 2
+
+
+def test_an_answer_after_a_search_is_accepted_first_time():
+    client, opinion = ask([reply(searched(), use(ANSWER, answer()))])
+    assert opinion.verdict == HOLD and opinion.searches == 1 and len(client.requests) == 1
+
+
+def test_an_answer_on_the_ask_in_words_turn_needs_no_search():
+    # ANSWER_NOW tells him not to search, so the guard must not contradict it.
+    # Five turns of wrong tools, then the sixth asks in words and he answers.
+    script = [reply(use("adjust_players", {}, block_id=f"tu_{n}")) for n in range(1, MAX_TURNS)]
+    script.append(reply(use(ANSWER, answer(), block_id="tu_last")))
+    client, opinion = ask(script)
+
+    assert opinion.verdict == HOLD and opinion.searches == 0
+    assert opinion.turns == MAX_TURNS and len(client.requests) == MAX_TURNS
+
+
+def test_the_prompt_tells_him_to_search_the_news_before_answering():
+    prompt = chip_opinion.SYSTEM_PROMPT
+    assert "Before you give your answer, use web_search" in prompt
+    assert "at least one search" in prompt
+    assert f"at most {MAX_SEARCHES}" in prompt
+
+
 def test_the_request_is_the_managers_model_effort_and_cached_prompt():
-    client, _ = ask([reply(use(ANSWER, answer()))])
+    client, _ = ask([reply(searched(), use(ANSWER, answer()))])
     request = client.requests[0]
 
     assert request["model"] == "claude-opus-5-5"
@@ -286,7 +328,7 @@ def test_the_request_is_the_managers_model_effort_and_cached_prompt():
 
 
 def test_the_tools_are_a_capped_search_and_one_strict_answer():
-    client, _ = ask([reply(use(ANSWER, answer()))])
+    client, _ = ask([reply(searched(), use(ANSWER, answer()))])
     tools = client.requests[0]["tools"]
 
     assert tools[0] == {"type": "web_search_20260209", "name": "web_search", "max_uses": MAX_SEARCHES}
@@ -302,7 +344,7 @@ def test_the_tools_are_a_capped_search_and_one_strict_answer():
 def test_an_opinion_too_short_goes_back_as_an_error_he_can_act_on():
     client, opinion = ask(
         [
-            reply(use(ANSWER, answer(opinion="Hold, it's marginal."), block_id="tu_1")),
+            reply(searched(), use(ANSWER, answer(opinion="Hold, it's marginal."), block_id="tu_1")),
             reply(use(ANSWER, answer(), block_id="tu_2")),
         ]
     )
@@ -316,7 +358,7 @@ def test_an_opinion_too_short_goes_back_as_an_error_he_can_act_on():
 def test_an_opinion_too_long_is_refused_too():
     client, opinion = ask(
         [
-            reply(use(ANSWER, answer(opinion="x" * (MAX_OPINION + 1)))),
+            reply(searched(), use(ANSWER, answer(opinion="x" * (MAX_OPINION + 1)))),
             reply(use(ANSWER, answer(), block_id="tu_2")),
         ]
     )
@@ -332,7 +374,7 @@ def test_two_bands_from_the_numbers_needs_a_new_fact():
     fact = "Reid limped out of training on Thursday; his manager says two weeks."
     client, opinion = ask(
         [
-            reply(use(ANSWER, answer(verdict=HOLD))),
+            reply(searched(), use(ANSWER, answer(verdict=HOLD))),
             reply(use(ANSWER, answer(verdict=HOLD, new_fact=fact), block_id="tu_2")),
         ],
         band=PLAY,
@@ -345,7 +387,7 @@ def test_two_bands_from_the_numbers_needs_a_new_fact():
 
 
 def test_one_band_from_the_numbers_is_his_judgement_to_make():
-    _, opinion = ask([reply(use(ANSWER, answer(verdict=HOLD)))], band=MARGINAL)
+    _, opinion = ask([reply(searched(), use(ANSWER, answer(verdict=HOLD)))], band=MARGINAL)
 
     assert opinion.verdict == HOLD and opinion.new_fact is None
 
@@ -513,7 +555,7 @@ def test_tokens_are_summed_over_every_response_paused_ones_included():
 
 
 def test_a_response_without_usage_counts_nothing():
-    _, opinion = ask([reply(use(ANSWER, answer()))])
+    _, opinion = ask([reply(searched(), use(ANSWER, answer()))])
 
     assert opinion.usage == Usage()
 

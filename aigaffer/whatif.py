@@ -54,8 +54,13 @@ from aigaffer.store import Store
 # the what-if log once twenty or more cases have been scored.
 WHATIF_MARGIN = {WILDCARD: 8.0, FREE_HIT: 4.0}
 # Seconds each of the two solves may take. CBC's limit is wall-clock, and the
-# VM has one vCPU it may be sharing with an hourly tick.
-WHATIF_TIME_LIMIT = 60
+# VM has one vCPU it may be sharing with an hourly tick. The first live
+# wildcard what-if stopped both solves on a 60 s limit, so neither was proven
+# and the band needed twice the margin (UNSURE_FACTOR): the common case on a
+# wildcard board. A what-if is asked rarely and the owner accepted waiting
+# minutes for it, so each solve gets two and a half; the hourly sweep keeps its
+# own, shorter limits (plans.SWEEP_TIME_LIMIT).
+WHATIF_TIME_LIMIT = 150
 PLAY, MARGINAL, HOLD = "play", "marginal", "hold"
 # A week to hold for further out than this is marked provisional: projections
 # five and more gameweeks ahead are the weakest the model makes.

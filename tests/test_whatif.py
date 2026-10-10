@@ -32,6 +32,7 @@ from aigaffer.whatif import (
     MARGINAL,
     PLAY,
     WHATIF_MARGIN,
+    WHATIF_TIME_LIMIT,
     band_for,
     simulate,
     verdict_minutes,
@@ -186,6 +187,13 @@ def test_the_band_reads_the_net_against_the_chip_margin(kind, net, unsure, band,
 
 def test_the_margins_are_the_expert_bands():
     assert WHATIF_MARGIN == {WILDCARD: 8.0, FREE_HIT: 4.0}
+
+
+def test_each_solve_gets_two_and_a_half_minutes_by_default():
+    # The first live wildcard stopped both 60 s solves on the limit on the
+    # VM's single CPU, which doubles the bar the net must clear. A what-if is
+    # asked rarely and the owner accepted waiting minutes for a proven answer.
+    assert WHATIF_TIME_LIMIT == 150
 
 
 # ----------------------------------------------------------------- simulate
