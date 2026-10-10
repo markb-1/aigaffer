@@ -134,11 +134,15 @@ def chips_off_from_the_environment(monkeypatch):
         (3.5, "deadline"),
         (6, "deadline"),
         (17.6, "deadline"),
-        (20, "deadline"),
-        (22.5, "deadline"),
-        (23, "deadline"),
-        (23.9, "deadline"),
-        (24, "deadline"),
+        # The deadline report's anchor is T-18h, after Friday's press
+        # conferences: 18 is still its window, and 20 (where it used to be
+        # called) is the scout's.
+        (18, "deadline"),
+        (18.1, "scout"),
+        (20, "scout"),
+        (22.5, "scout"),
+        (23.9, "scout"),
+        (24, "scout"),
         (25, "scout"),
         (36, "scout"),
         (36.5, "scout"),
@@ -2697,7 +2701,7 @@ def test_team_strengths_are_fitted_once_a_run(monkeypatch, tmp_path, mode):
 # pre-manager plan, which the deadline record keeps under ``solver_actions``,
 # against the fresh solver-only solve — because diffing the gaffer's verdict
 # against a fresh solver would shout on every week he overrode the solver,
-# which is settled at T-24h and is not news. What the alert shows is still
+# which is settled at T-18h and is not news. What the alert shows is still
 # the gaffer's verdict. The diff is machine-readable and decided in one
 # place, so the record and the message cannot disagree about whether the
 # news moved.
@@ -2824,7 +2828,7 @@ def test_a_plan_that_held_reads_as_a_calm_reminder(tmp_path):
 
 
 def test_the_gaffer_deviating_from_the_solver_is_not_news(monkeypatch, tmp_path):
-    # At T-24h the manager overrode the solver: he rolled the transfer the
+    # At T-18h the manager overrode the solver: he rolled the transfer the
     # solver wanted and moved the armband. The T-3h solve re-derives roughly
     # the solver's own answer, so a diff of verdict-against-fresh-solver
     # would shout every week he ever deviates — crying wolf about a
@@ -2968,7 +2972,7 @@ def test_a_record_from_before_solver_actions_were_kept_stays_calm(tmp_path):
 
 
 def test_a_reminder_with_no_full_report_behind_it_says_so(tmp_path):
-    # The T-24h tick can be dropped wholesale. The reminder still goes, with
+    # The T-18h tick can be dropped wholesale. The reminder still goes, with
     # the fresh block and one honest line about what it could not compare.
     cfg = config(state_dir=tmp_path / "state")
     store = Store(cfg.state_dir / "aigaffer.db")
@@ -3290,8 +3294,8 @@ def test_auto_runs_the_scout_two_days_out(monkeypatch, store):
     assert store.has_run(2, "scout") is True
 
 
-def test_auto_runs_the_full_report_the_day_before(monkeypatch, store):
-    serve(monkeypatch, pipeline_routes(bootstrap=bootstrap_due_in(23)))
+def test_auto_runs_the_full_report_the_evening_before(monkeypatch, store):
+    serve(monkeypatch, pipeline_routes(bootstrap=bootstrap_due_in(17)))
 
     assert cli.main(["auto"]) == 0
     assert store.has_run(2, "deadline") is True
@@ -3301,7 +3305,7 @@ def test_auto_runs_the_reminder_in_the_final_hours(monkeypatch, store):
     # The full report went out the day before, as it should have; the final
     # hours then belong to the reminder. Without that first run the same tick
     # would catch the full report up instead — pinned at the _mode tests.
-    serve(monkeypatch, pipeline_routes(bootstrap=bootstrap_due_in(23)))
+    serve(monkeypatch, pipeline_routes(bootstrap=bootstrap_due_in(17)))
     assert cli.main(["auto"]) == 0
 
     serve(monkeypatch, pipeline_routes(bootstrap=bootstrap_due_in(2)))
@@ -3315,7 +3319,7 @@ def test_a_deadline_tick_that_died_is_retried_by_the_next(monkeypatch, capsys, s
     # try again, and the retry must not then produce a duplicate of anything.
     serve(
         monkeypatch,
-        pipeline_routes(bootstrap=bootstrap_due_in(23)),
+        pipeline_routes(bootstrap=bootstrap_due_in(17)),
         statuses={"/api/fixtures/": 500},
     )
 
@@ -3323,7 +3327,7 @@ def test_a_deadline_tick_that_died_is_retried_by_the_next(monkeypatch, capsys, s
     assert store.has_run(2, "deadline") is False
     assert "the deadline run failed" in capsys.readouterr().out
 
-    serve(monkeypatch, pipeline_routes(bootstrap=bootstrap_due_in(23)))
+    serve(monkeypatch, pipeline_routes(bootstrap=bootstrap_due_in(17)))
 
     assert cli.main(["auto"]) == 0
     assert store.has_run(2, "deadline") is True
@@ -3459,7 +3463,7 @@ def test_a_failed_run_tells_the_phone_that_expects_the_report(
     posted = telegram(monkeypatch)
     serve(
         monkeypatch,
-        pipeline_routes(bootstrap=bootstrap_due_in(23)),
+        pipeline_routes(bootstrap=bootstrap_due_in(17)),
         statuses={"/api/fixtures/": 500},
     )
 
@@ -4084,7 +4088,7 @@ def test_the_withheld_alert_on_the_phone_says_it_too(monkeypatch, tmp_path):
 #
 # The armbands, shape and bench are diffed solver-then against solver-now,
 # as the ordinary reminder diffs them: a week where the gaffer overruled the
-# solver's armband was settled at T-24h, and is not news at T-3h. What he
+# solver's armband was settled at T-18h, and is not news at T-3h. What he
 # entered is still the plan the alert shows as operative.
 
 
@@ -4231,7 +4235,7 @@ def test_a_solver_chip_the_gaffer_overruled_is_not_news_at_t_minus_3(
     # Yesterday the solver wanted to bench boost and the gaffer said no, so
     # he entered no chip. Today the solver, alone, still wants to: solver
     # against solver, nothing moved. Measured against the "none" he entered
-    # it would cry "Chip changed" over a call settled at T-24h.
+    # it would cry "Chip changed" over a call settled at T-18h.
     cfg, store, row = entered_week(tmp_path)
     assert row.chip == "none"
     read_back_as(
