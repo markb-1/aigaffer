@@ -234,6 +234,8 @@ STOOD_DOWN = "the gaffer stood down"
 # Appended to the DECIDED line when he used more searches than the run's
 # budget allows: the budget is advice in the briefing, and this is the log
 # that says whether it was taken.
+# Said when the ledger could not be judged at all; the run goes on without it.
+LEDGER_UNREADABLE = "news ledger: could not be judged ({reason}) — running without it"
 BUDGET_EXCEEDED = " — search budget exceeded ({spent}/{budget})"
 # And that the week was not written down over it: the next tick asks again.
 WITHHELD = "the report was withheld for the next tick"
@@ -535,10 +537,17 @@ def run_pipeline(
     # stamps what this run writes into it, and dates the briefing — so a
     # run that spans midnight never refuses a quote the briefing allowed.
     clock = now or datetime.now(UTC)
-    news = evaluate_ledger(
-        read_ledger(ledger_path(cfg.state_dir)),
-        effective.bootstrap, effective.fixtures, effective.event, clock,
-    )
+    # The ledger is memory, not the week: an entry shape nobody foresaw must
+    # not cost the hourly report, so any failure to judge it is a run without
+    # it, said once on the log by the exception's class alone.
+    try:
+        news = evaluate_ledger(
+            read_ledger(ledger_path(cfg.state_dir)),
+            effective.bootstrap, effective.fixtures, effective.event, clock,
+        )
+    except Exception as error:
+        print(LEDGER_UNREADABLE.format(reason=type(error).__name__))
+        news = LedgerView({})
     solved = solve(effective, projections, cfg, prices, calendar)
     # In a week the owner has already played a chip in, the belt inside
     # _consult refuses any chip the gaffer finalizes — held_by_rules on the

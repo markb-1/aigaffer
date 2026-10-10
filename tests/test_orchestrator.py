@@ -1896,6 +1896,14 @@ def recorded(consult, searches=2):
     return decision
 
 
+def fallback_with_a_record(consult):
+    """A fallback-sourced decision that nonetheless carries calls: only the
+    source gate, not the empty record, can keep these out of the ledger."""
+    decision = unavailable(consult)
+    decision.record = recorded(consult).record
+    return decision
+
+
 def test_a_decided_run_writes_his_calls_into_the_ledger_last_call_winning(monkeypatch, tmp_path):
     # gaffer_run runs at PAST_THE_FLOOR; two calls for Grant, the ban is later.
     gaffer_run(monkeypatch, tmp_path, decide=recorded)
@@ -1906,7 +1914,7 @@ def test_a_decided_run_writes_his_calls_into_the_ledger_last_call_winning(monkey
 
 
 def test_a_run_that_saves_nothing_or_has_nothing_to_say_writes_no_ledger(monkeypatch, tmp_path):
-    for decide, extra in ((recorded, {"save": False, "send": False}), (unavailable, {}), (decided, {})):
+    for decide, extra in ((recorded, {"save": False, "send": False}), (unavailable, {}), (decided, {}), (fallback_with_a_record, {})):
         run_dir = tmp_path / decide.__name__ / str(bool(extra))
         run_dir.mkdir(parents=True)
         gaffer_run(monkeypatch, run_dir, decide=decide, **extra)
@@ -1959,6 +1967,18 @@ def test_a_ledger_that_cannot_be_written_never_costs_the_report(monkeypatch, tmp
     assert "aigaffer news ledger: not written (OSError)" in out and "/secret/path" not in out
     assert saved_first == [True]
     assert store.has_run(2, "scout")
+
+
+def test_a_ledger_that_cannot_be_judged_never_costs_the_run(monkeypatch, tmp_path, capsys):
+    def boom(*args, **kwargs):
+        raise ValueError("secret text")
+    monkeypatch.setattr(orchestrator, "evaluate_ledger", boom)
+    report, store, gaffer = gaffer_run(monkeypatch, tmp_path)
+    out = capsys.readouterr().out
+    assert "news ledger: could not be judged (ValueError) — running without it" in out
+    assert "secret text" not in out
+    assert report and store.has_run(2, "scout")
+    assert "## What we already know" not in gaffer.consults[0].briefing
 
 
 def test_a_ledger_write_that_fails_in_any_way_never_costs_the_report(monkeypatch, tmp_path, capsys):
