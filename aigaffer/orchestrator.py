@@ -1072,6 +1072,12 @@ def _recorded_lineup(
     """
     if not record:
         return None
+    # A free hit with no temporary team on record: the standing squad is not
+    # what he fields, and a block headed "free hit team" over it would lie.
+    if record.get("chip") == FREE_HIT and not (
+        record.get("freehit_xi") and record.get("freehit_squad")
+    ):
+        return None
     bench = record.get("bench")
     captain, vice = record.get("captain"), record.get("vice")
     try:
@@ -1105,8 +1111,14 @@ def _entered_lineup(
     bench = None if record is None else record.get("bench")
     if not bench:
         return None
-    free_hit = executed.chip == FREE_HIT and bool(executed.freehit_squad)
+    free_hit = executed.chip == FREE_HIT
+    if free_hit and not executed.freehit_squad:
+        return None  # a free hit with no team on record: nothing true to show
     fifteen = executed.freehit_squad if free_hit else executed.squad_after
+    if not fifteen:
+        return None
+    # On a free hit: his recorded eleven (the row's, else the verdict's);
+    # otherwise the fifteen less the bench.
     xi = (
         executed.freehit_xi or (record or {}).get("freehit_xi")
         if free_hit

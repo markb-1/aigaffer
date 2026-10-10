@@ -4486,6 +4486,15 @@ def test_a_legacy_record_has_no_rebuildable_lineup():
     assert _recorded_lineup({**PLAN_RECORD, "squad_before": None}, PLAYERS) is None
 
 
+def test_a_free_hit_record_with_no_free_hit_team_has_no_rebuildable_lineup():
+    # The chip is free hit but the record names no temporary team: the standing
+    # squad is not what he fields, so no block rather than a mislabelled one.
+    record = {**PLAN_RECORD, "chip": "free_hit"}
+
+    assert _recorded_lineup(record, PLAYERS) is None
+    assert _recorded_lineup({**record, "freehit_xi": [], "freehit_squad": []}, PLAYERS) is None
+
+
 def test_a_bench_of_the_wrong_length_has_no_rebuildable_lineup():
     # Three on the bench leaves a twelve, which is no eleven to field.
     assert _recorded_lineup({**PLAN_RECORD, "bench": [2, 12, 6]}, PLAYERS) is None
@@ -4523,6 +4532,22 @@ def test_an_entered_free_hit_lineup_is_the_temporary_team():
     lineup = _entered_lineup(row, {"bench": [20, 2, 12, 6]}, PLAYERS)
 
     assert lineup.xi == xi and lineup.bench == [20, 2, 12, 6]
+
+
+def test_an_entered_free_hit_with_no_team_on_record_is_left_out():
+    row = make_executed(
+        chip="free_hit", freehit_squad=None, freehit_xi=None,
+        squad_after=[1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15, 18],
+        captain=8, vice=13,
+    )
+
+    assert _entered_lineup(row, {"bench": [2, 12, 6, 14]}, PLAYERS) is None
+
+
+def test_an_entered_row_with_no_squad_is_left_out():
+    row = make_executed(squad_after=None, captain=8, vice=13)
+
+    assert _entered_lineup(row, {"bench": [2, 12, 6, 14]}, PLAYERS) is None
 
 
 def test_an_entered_lineup_with_no_recorded_bench_is_left_out():
