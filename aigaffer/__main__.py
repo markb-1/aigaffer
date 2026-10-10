@@ -39,6 +39,7 @@ from functools import partial
 import httpx
 
 from aigaffer.backtest import backtest_gw, finished_gameweeks
+from aigaffer.chip_forecast import chip_forecast
 from aigaffer.config import SCOUT_HORIZON_HOURS, Config
 from aigaffer.data.fpl_api import FplClient
 from aigaffer.data.models import Bootstrap, Event
@@ -249,6 +250,8 @@ def _inbox(client: FplClient) -> int:
     :mod:`aigaffer.inbox` knows nothing of git or of the store. The chip
     what-if is bound beside it with the inbox directory, where its marker and
     its log live, and the same lock, which it takes only to copy the store.
+    The chip forecast needs only the configuration and the client: it reads
+    the store without the lock, a few rows and nothing written.
     """
     cfg = Config.from_env()
     directory = inbox_dir()
@@ -262,8 +265,10 @@ def _inbox(client: FplClient) -> int:
         log=WhatIfLog(directory / LOG_FILE),
     )
     whatif = partial(chip_whatif, cfg, client, directory, directory / STATE_LOCK)
+    forecast = partial(chip_forecast, cfg, client)
     return run_inbox(
-        cfg.telegram_token, cfg.telegram_chat_id, directory, handler, whatif
+        cfg.telegram_token, cfg.telegram_chat_id, directory, handler, whatif,
+        forecast,
     )
 
 

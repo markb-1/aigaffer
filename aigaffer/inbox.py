@@ -6,11 +6,13 @@ reads Telegram. Each tick asks Telegram for the messages since the last one
 handled, obeys the configured chat and nobody else, answers, and exits — one
 HTTPS call on a quiet minute, and silence on stdout.
 
-Three things can be said to it. "Transfers made" records the latest verdict
+Four things can be said to it. "Transfers made" records the latest verdict
 as entered (:mod:`aigaffer.recording`). "Wildcard?" and "Free hit?" — and
 the words they normalise to — run a chip what-if
 (:mod:`aigaffer.whatif_handler`), which replies for itself, in more than one
-message. Anything else — "help", a typo, a sticker — gets the help.
+message. "Chip forecast" answers at once, from the newest saved report, with
+when the bot currently plans to play each chip (:mod:`aigaffer.chip_forecast`):
+no solve and no gaffer, so a read of a few rows and one text back. Anything else — "help", a typo, a sticker — gets the help.
 
 **Where it is.** The last handled ``update_id`` lives in
 ``$AIGAFFER_INBOX_DIR/offset`` (default ``~/.aigaffer/``), outside the
@@ -51,6 +53,7 @@ OFFSET_FILE = "offset"
 FAILED_FILE = "failed"
 
 TRANSFERS_MADE = "transfers made"
+CHIP_FORECAST = "chip forecast"
 # Every word that asks for a chip what-if, normalised, and the chip it asks
 # about. The keyboard's "Wildcard?" and "Free hit?" normalise to the first and
 # third (``normalise`` strips the question mark).
@@ -71,11 +74,15 @@ HELP = (
     "• Wildcard? / Free hit? — what playing that chip this gameweek would do:"
     " numbers in a few minutes, the gaffer's view after. Nothing is recorded —"
     " if you play it, don't send Transfers made.\n"
+    "• Chip forecast — when the bot currently plans to play each chip, from the"
+    " latest report. Instant.\n"
     "• help — this message."
 )
 SOMETHING_WRONG = "Something went wrong recording that — try again in a minute."
 WHATIF_WRONG = "Something went wrong with that what-if — ask again in a minute."
 WHATIFS_OFF = "Chip what-ifs aren't set up on this box."
+CHIP_FORECAST_OFF = "Chip forecast is not configured."
+FORECAST_WRONG = "Something went wrong with that forecast — try again in a minute."
 
 # What a handler answers with: one text, sent with the keyboard like every
 # reply (send_message always attaches it, hence no keyboard keyword). A
@@ -110,6 +117,7 @@ def dispatch(
     reply: Reply,
     transfers_made: Callable[[datetime], str],
     chip_whatif: ChipWhatIf | None = None,
+    chip_forecast: Callable[[datetime], str] | None = None,
 ) -> str | None:
     """The reply to one normalised message, or None when the handler has
     already replied for itself — which is what a chip what-if does.
@@ -117,9 +125,14 @@ def dispatch(
     ``chip_whatif`` None is a box wired without what-ifs (and most tests):
     the chip words then get a line saying so, never the help, so a tap on the
     keyboard is not answered with a list that offers the very button tapped.
+    The same goes for ``chip_forecast`` None and the forecast.
     """
     if command == TRANSFERS_MADE:
         return transfers_made(sent_at)
+    if command == CHIP_FORECAST:
+        if chip_forecast is None:
+            return CHIP_FORECAST_OFF
+        return chip_forecast(sent_at)
     kind = CHIP_KINDS.get(command)
     if kind is not None:
         if chip_whatif is None:
@@ -134,6 +147,7 @@ def run_inbox(
     directory: Path,
     transfers_made: Callable[[datetime], str],
     chip_whatif: ChipWhatIf | None = None,
+    chip_forecast: Callable[[datetime], str] | None = None,
     *,
     get: Callable[[str, int | None], list[dict]] = get_updates,
     send: Callable[[str, str, str], None] = send_message,
@@ -192,8 +206,11 @@ def run_inbox(
                 command = normalise(message.get("text") or "")
                 if command in CHIP_KINDS:
                     apology = WHATIF_WRONG
+                elif command == CHIP_FORECAST:
+                    apology = FORECAST_WRONG
                 answer = dispatch(
-                    command, uid, sent_at, reply, transfers_made, chip_whatif
+                    command, uid, sent_at, reply, transfers_made, chip_whatif,
+                    chip_forecast,
                 )
                 if answer is not None:
                     send(token, chat_id, answer)

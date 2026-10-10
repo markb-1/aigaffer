@@ -608,9 +608,9 @@ so near the top, it never sells a player you have just bought or buys back
 one you have just sold, and the T-3h reminder checks your armbands, your
 shape, your bench order and the fitness of the players you signed instead
 of re-recommending the moves. If you changed anything, don't send it; the
-runs then behave exactly as before. The chat carries four buttons under
-your message box — **Transfers made**, **Wildcard?**, **Free hit?** and
-**Help** — and tapping one sends that text, so you never have to type. A second "Transfers made" after a later
+runs then behave exactly as before. The chat carries five buttons under
+your message box — **Transfers made**, **Wildcard?**, **Free hit?**,
+**Chip forecast** and **Help** — and tapping one sends that text, so you never have to type. A second "Transfers made" after a later
 report you also acted on adds that report's moves on top; the same one twice
 changes nothing. The reply echoes the whole position — moves, armbands,
 squad, bank, free transfers — so a mismatch shows at once. Text it straight
@@ -628,6 +628,12 @@ which never reads Telegram, sees what you entered through the store like
 everything else. A push that fails is sent by the next hourly tick.
 
 ### Asking about a chip
+
+Tap **Chip forecast** (or text `chip forecast`) for when the bot currently
+plans to play each chip you hold, read instantly and for free from the newest
+saved report: the week each is planned for or saved for, what it is worth, when
+it expires, the second set's chips and what you have played. It is only as
+fresh as that report, says which one, and is re-planned every run.
 
 Tap **Wildcard?** or **Free hit?** (or text `wildcard`, `wc`, `free hit`,
 `fh`) and the bot works out what playing that chip at the coming deadline

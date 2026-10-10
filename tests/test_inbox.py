@@ -18,7 +18,10 @@ from aigaffer import __main__ as cli
 from aigaffer import inbox
 from aigaffer.chips import FREE_HIT, WILDCARD
 from aigaffer.inbox import (
+    CHIP_FORECAST,
+    CHIP_FORECAST_OFF,
     CHIP_KINDS,
+    FORECAST_WRONG,
     HELP,
     NOT_CONFIGURED,
     SOMETHING_WRONG,
@@ -434,9 +437,12 @@ def test_the_cli_inbox_reads_the_inbox_directory(monkeypatch, tmp_path):
     monkeypatch.setenv("TELEGRAM_CHAT_ID", CHAT)
     seen = {}
 
-    def fake_run_inbox(token, chat_id, directory, handler, chip_whatif=None):
+    def fake_run_inbox(
+        token, chat_id, directory, handler, chip_whatif=None, chip_forecast=None
+    ):
         seen.update(token=token, chat_id=chat_id, directory=directory,
-                    handler=handler, chip_whatif=chip_whatif)
+                    handler=handler, chip_whatif=chip_whatif,
+                    chip_forecast=chip_forecast)
         return 0
 
     monkeypatch.setattr(cli, "run_inbox", fake_run_inbox)
@@ -453,6 +459,9 @@ def test_the_cli_inbox_reads_the_inbox_directory(monkeypatch, tmp_path):
     assert whatif.func.__name__ == "chip_whatif"
     assert whatif.args[2] == tmp_path / "inbox"
     assert whatif.args[3] == tmp_path / "inbox" / "state.lock"
+    forecast = seen["chip_forecast"]
+    assert forecast.func.__name__ == "chip_forecast"
+    assert len(forecast.args) == 2, "bound with the config and the client only"
 
 
 def test_the_inbox_directory_defaults_to_the_home_dot_directory(monkeypatch, tmp_path):
@@ -470,6 +479,7 @@ def test_the_inbox_directory_defaults_to_the_home_dot_directory(monkeypatch, tmp
         ("Transfers made", "the transfers-made handler ran"),
         ("Wildcard?", f"what-if {WILDCARD}"),
         ("Free hit?", f"what-if {FREE_HIT}"),
+        ("Chip forecast", "the chip forecast ran"),
         ("Help", HELP),
     ],
 )
@@ -478,6 +488,7 @@ def test_each_keyboard_button_reaches_its_command(label, expected):
         normalise(label), 7, datetime.now(UTC), no_reply,
         lambda sent_at: "the transfers-made handler ran",
         lambda kind, uid, sent_at, reply: f"what-if {kind}",
+        lambda sent_at: "the chip forecast ran",
     )
 
     assert reply == expected
@@ -486,7 +497,56 @@ def test_each_keyboard_button_reaches_its_command(label, expected):
 def test_the_keyboard_labels_are_exactly_the_buttons_tested_above():
     labels = [button["text"] for row in KEYBOARD["keyboard"] for button in row]
 
-    assert labels == ["Transfers made", "Wildcard?", "Free hit?", "Help"]
+    assert labels == [
+        "Transfers made", "Wildcard?", "Free hit?", "Chip forecast", "Help",
+    ]
+
+
+def test_chip_forecast_is_the_normalised_words_and_the_button(tmp_path):
+    assert CHIP_FORECAST == "chip forecast"
+    assert normalise("Chip  Forecast!") == CHIP_FORECAST
+    seen = []
+
+    def forecast(sent_at):
+        seen.append(sent_at)
+        return "the plan"
+
+    phone = Phone([update(10, "Chip forecast"), update(11, "chip forecast.")])
+    run_inbox(
+        TOKEN, CHAT, tmp_path, recorded, chip_forecast=forecast,
+        get=phone.get, send=phone.send,
+    )
+
+    assert phone.sent == ["the plan", "the plan"]
+    assert seen == [datetime.fromtimestamp(DATE, UTC)] * 2
+
+
+def test_an_unconfigured_forecast_says_so_not_the_help():
+    reply = dispatch(
+        CHIP_FORECAST, 7, datetime.now(UTC), no_reply, lambda sent_at: "recorded"
+    )
+
+    assert reply == CHIP_FORECAST_OFF == "Chip forecast is not configured."
+
+
+def test_a_forecast_that_raises_gets_its_own_apology(tmp_path):
+    def broken(sent_at):
+        raise httpx.ConnectError("fpl down")
+
+    phone = Phone([update(10, "Chip forecast")])
+    run_inbox(
+        TOKEN, CHAT, tmp_path, recorded, chip_forecast=broken,
+        get=phone.get, send=phone.send,
+    )
+
+    assert phone.sent == [FORECAST_WRONG]
+
+
+def test_help_lists_the_chip_forecast():
+    assert (
+        "• Chip forecast — when the bot currently plans to play each chip,"
+        " from the latest report. Instant."
+    ) in HELP.splitlines()
 
 
 def test_the_inboxs_default_reply_path_sends_with_the_keyboard(monkeypatch, tmp_path):
