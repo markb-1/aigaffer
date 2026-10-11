@@ -187,3 +187,41 @@ def test_the_facts_round_trip_as_json():
     import json
 
     assert json.loads(json.dumps(facts().to_json()))["gw"] == 2
+
+
+def test_a_no_view_rationale_is_the_solvers_even_under_the_manager_source():
+    from aigaffer.manager.agent import NO_VIEW
+
+    assert facts(verdict=verdict(decision_source="manager", rationale=NO_VIEW)).gaffer_decided is False
+    assert facts(verdict=verdict(decision_source="manager")).gaffer_decided is True
+
+
+def test_the_manager_source_is_the_managers_own_constant():
+    from aigaffer import review
+    from aigaffer.manager.agent import MANAGER
+
+    assert review.GAFFER_SOURCE == MANAGER
+
+
+def test_no_highest_score_leaves_the_clause_out():
+    assert BOARD.events[1].highest_score is None
+    text = review_facts(facts())
+    assert "; highest" not in text and text.splitlines()[0].endswith(".")
+
+
+def test_a_minutes_miss_is_worded_with_the_call_and_the_minutes():
+    text = review_facts(facts(verdict=verdict(
+        adjustments=[{"player_id": 3, "expected_minutes": 0.0, "reason": "banned"}])))
+    assert f"{NAMES[3]} called 0, played 90" in text
+
+
+def test_neither_armband_playing_is_said_so():
+    picks = [pick(1, 1), pick(3, 2), pick(4, 3), pick(5, 4, 0, captain=True),
+             pick(6, 5), pick(7, 6, 1, vice=True), pick(2, 12, 0), pick(8, 13, 0)]
+    assert "did not play, and neither did the vice: 0." in review_facts(facts(entry=entry(picks)))
+
+
+def test_a_free_hit_weeks_transfers_are_marked_temporary():
+    text = review_facts(facts(entry=entry(chip="freehit"),
+                              transfers=[{"element_in": 7, "element_out": 2, "event": 2}]))
+    assert "(free hit: the moves were for this week only)" in text

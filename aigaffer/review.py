@@ -16,7 +16,7 @@ the report prints, so the two cannot disagree.
 """
 
 from collections.abc import Iterable
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 
 from aigaffer.chips import CHIPS_BY_API_NAME, FREE_HIT
 from aigaffer.data.models import Bootstrap, EntryPick, EntryWeek, HistoryRow, LiveStats
@@ -182,7 +182,7 @@ def build_facts(
         armband = next((p for p in ordered if p.is_captain), None)
     captain = None if armband is None else starter(armband)
     if captain is not None and armband.multiplier < 2:
-        captain = Starter(**{**asdict(captain), "multiplier": 0})
+        captain = replace(captain, multiplier=0)
     best = max(starters, key=lambda s: s.points, default=None)
 
     ranks = {row.event: row.overall_rank for row in history}
@@ -215,12 +215,22 @@ def build_facts(
         chip=chip,
         free_hit=chip == FREE_HIT,
         verdict_mode=None if verdict is None else verdict.mode,
-        gaffer_decided=None if record is None else record.get("decision_source") == GAFFER_SOURCE,
+        gaffer_decided=None if record is None else _gaffer_decided(record),
         followed=None if record is None else _followed(record, fielded, chosen, name),
         minute_calls=None if record is None else _minute_calls(record, live, name),
         rationale=_cut(record.get("rationale")) if record else "",
         chip_justification=_cut(record.get("chip_justification")) if record else "",
     )
+
+
+def _gaffer_decided(record: dict) -> bool:
+    """Did the gaffer decide the week? Not when the solver stood in for him,
+    and not when the source says manager but the rationale is the no-view
+    text (he produced no view, so the solver's own pick went out). Imported
+    here so that loading this module never loads the manager package."""
+    from aigaffer.manager.agent import NO_VIEW
+
+    return record.get("decision_source") == GAFFER_SOURCE and record.get("rationale") != NO_VIEW
 
 
 def _followed(record: dict, fielded: set[int], chosen: int | None, name) -> Followed | None:
