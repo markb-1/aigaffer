@@ -564,8 +564,12 @@ def review_tick(
             print(f"review: could not be asked ({type(error).__name__})")
             return
         reason = str(error) if isinstance(error, ReviewUnavailable) else type(error).__name__
-        store.record_withheld(gw, REVIEW_MODE, reason)
-        if store.withheld_count(gw, REVIEW_MODE) >= REVIEW_ATTEMPTS:
+        try:
+            store.record_withheld(gw, REVIEW_MODE, reason)
+            gave_up = store.withheld_count(gw, REVIEW_MODE) >= REVIEW_ATTEMPTS
+        except Exception:  # a full disk or a sqlite error must not reach the tick either
+            gave_up = False
+        if gave_up:
             print(GAVE_UP.format(gw=gw, attempts=REVIEW_ATTEMPTS))
         else:
             print(FAILED.format(gw=gw, reason=reason))

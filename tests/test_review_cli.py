@@ -6,7 +6,6 @@ import pytest
 
 from aigaffer import __main__ as cli
 from aigaffer import review
-from aigaffer.store import Store
 from tests.test_orchestrator import (  # noqa: F401 — store and the chips switch are fixtures
     bootstrap_due_in,
     chips_off_from_the_environment,
@@ -53,12 +52,27 @@ def test_a_scout_or_deadline_tick_skips_the_review(monkeypatch, store):
 
 def test_an_early_tick_runs_the_review_before_the_report(monkeypatch, store):
     order = []
+    given = []
     monkeypatch.setattr(cli, "review_tick", lambda *a, **k: order.append("review"))
-    monkeypatch.setattr(cli, "run_pipeline", lambda *a, **k: order.append("report") or "report")
+    monkeypatch.setattr(
+        cli, "run_pipeline", lambda *a, **k: order.append("report") or given.append(a[1]) or "report"
+    )
     monkeypatch.setattr(cli, "_mode", lambda args, client, store: ("early", 2))
     serve(monkeypatch, pipeline_routes(bootstrap=final(bootstrap_due_in(100))))
     assert cli.main(["auto"]) == 0
     assert order == ["review", "report"]
+    # The report gets the real client, which fetches its own fresh bootstrap.
+    assert not isinstance(given[0], cli._OneBootstrap)
+
+
+def test_the_peer_check_rides_along_unless_forced(monkeypatch, store):
+    calls = spy(monkeypatch)
+    store.save_run(2, "early", "md", {})  # a stand-down tick
+    serve(monkeypatch, pipeline_routes(bootstrap=final(bootstrap_due_in(100))))
+    assert cli.main(["auto"]) == 0
+    assert calls[0][1]["overtaken"] is not None
+    assert cli.main(["auto", "--force"]) == 0
+    assert calls[1][1]["overtaken"] is None
 
 
 def test_a_dry_run_tick_skips_the_review(monkeypatch, store):
@@ -85,7 +99,7 @@ def test_the_tick_asks_the_api_for_the_bootstrap_once(monkeypatch, store):
     assert len(seen) == 1 and len(fetched) == 1
 
 
-def test_the_hand_command_prints_on_a_dry_run_and_writes_nothing(monkeypatch, store, capsys, tmp_path):
+def test_the_hand_command_prints_on_a_dry_run_and_writes_nothing(monkeypatch, store, capsys):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
     monkeypatch.setattr(review, "_writer", lambda: lambda cfg, facts: WRITTEN)
     serve(monkeypatch, final_routes())

@@ -430,8 +430,26 @@ def test_the_sixth_failure_says_it_gave_up(tmp_path, capsys, monkeypatch):
     for _ in range(REVIEW_ATTEMPTS - 1):
         store.record_withheld(1, "review", "x")
     client = api(routes(), statuses={"/api/event/1/live/": 500})
+    monkeypatch.setattr("aigaffer.review._writer", lambda: fake_write)
     review_tick(cfg(tmp_path), client, store)
-    assert "review: GW1 gave up after 6 attempts" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "review: GW1 gave up after 6 attempts" in out
+    assert "will try again" not in out
+
+
+def test_a_store_that_fails_while_recording_does_not_escape_the_tick(tmp_path, capsys, monkeypatch):
+    import sqlite3
+
+    store = Store(tmp_path / "state" / "aigaffer.db")
+
+    def broken(*args, **kwargs):
+        raise sqlite3.OperationalError("disk is full")
+
+    monkeypatch.setattr(store, "record_withheld", broken)
+    monkeypatch.setattr("aigaffer.review._writer", lambda: fake_write)
+    client = api(routes(), statuses={"/api/event/1/live/": 500})
+    review_tick(cfg(tmp_path), client, store)  # must not raise
+    assert "review: GW1 failed (HTTPStatusError)" in capsys.readouterr().out
 
 
 def test_the_tick_stands_down_when_the_peer_wrote_it(tmp_path, monkeypatch):
@@ -440,6 +458,7 @@ def test_the_tick_stands_down_when_the_peer_wrote_it(tmp_path, monkeypatch):
     monkeypatch.setattr("aigaffer.review._writer", lambda: lambda c, f: called.append(f) or WRITTEN)
     review_tick(cfg(tmp_path), api(routes()), store, overtaken=lambda gw, mode: True)
     assert called == [] and not store.has_run(1, "review")
+    assert store.withheld_count(1, "review") == 0
 
 
 def test_the_tick_writes_the_review_when_due(tmp_path, monkeypatch):
