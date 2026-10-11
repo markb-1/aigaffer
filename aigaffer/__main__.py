@@ -71,6 +71,7 @@ INBOX = "inbox"
 REVIEW = "review"
 COMMANDS = (AUTO, "early", "scout", "deadline", "reminder", BACKTEST, INBOX, REVIEW)
 
+NEEDS_MANAGER = "aigaffer: the review needs the manager (ANTHROPIC_API_KEY, AIGAFFER_MANAGER not 0)"
 SCHEDULE_STAGE = "reading the schedule"
 BACKTEST_STAGE = "the backtest"
 
@@ -261,9 +262,6 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-NEEDS_MANAGER = "aigaffer: the review needs the manager (ANTHROPIC_API_KEY, AIGAFFER_MANAGER not 0)"
-
-
 def _review(args: argparse.Namespace, client: FplClient) -> int:
     """``review``: look back on a finished week by hand — the latest final
     one, or ``--gw``. ``--force`` writes it again over the old section;
@@ -275,7 +273,7 @@ def _review(args: argparse.Namespace, client: FplClient) -> int:
     store = Store(cfg.state_dir / DB_NAME)
     try:
         bootstrap = client.bootstrap()
-        gw = args.gw or review_target(bootstrap)
+        gw = args.gw if args.gw is not None else review_target(bootstrap)
         if gw is None:
             print("aigaffer: no finished gameweek to review yet")
             return 0
@@ -283,7 +281,7 @@ def _review(args: argparse.Namespace, client: FplClient) -> int:
             print(f"aigaffer: GW{gw} review has run already — use --force")
             return 0
         section = run_review(cfg, client, store, bootstrap, gw, dry_run=args.dry_run)
-    except (ReviewUnavailable, httpx.HTTPError) as error:
+    except Exception as error:  # by hand or not, a failed review says so and exits 1
         print(f"aigaffer: review failed ({error if isinstance(error, ReviewUnavailable) else type(error).__name__})")
         return 1
     if args.dry_run:
