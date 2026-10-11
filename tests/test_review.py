@@ -10,12 +10,14 @@ from aigaffer.data.fpl_api import FplClient
 from aigaffer.data.models import Bootstrap, EntryWeek, HistoryRow, LiveStats
 from aigaffer.executed import Verdict
 from aigaffer.review import (
+    LastWeek,
     MINUTES_MISS,
     REVIEW_ATTEMPTS,
     ReviewUnavailable,
     Written,
     append_review,
     build_facts,
+    last_week,
     render_review,
     review_facts,
     review_record,
@@ -466,3 +468,18 @@ def test_the_tick_writes_the_review_when_due(tmp_path, monkeypatch):
     monkeypatch.setattr("aigaffer.review._writer", lambda: fake_write)
     review_tick(cfg(tmp_path), api(routes()), store, overtaken=lambda gw, mode: False)
     assert store.has_run(1, "review")
+
+
+def test_last_week_reads_the_review_before_this_week(tmp_path):
+    store = Store(tmp_path / "s.db")
+    assert last_week(store, 3) is None
+    store.save_run(2, "review", "md", {"lessons": ["Bench the rotation risk.", "  "]})
+    assert last_week(store, 3) == LastWeek(gw=2, lessons=("Bench the rotation risk.",))
+
+
+def test_a_malformed_or_empty_review_record_is_no_last_week(tmp_path):
+    store = Store(tmp_path / "s.db")
+    store.save_run(2, "review", "md", {"lessons": "not a list"})
+    assert last_week(store, 3) is None
+    store.save_run(2, "review", "md", {"lessons": []})
+    assert last_week(store, 3) is None

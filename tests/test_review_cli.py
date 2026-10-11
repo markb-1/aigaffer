@@ -2,8 +2,6 @@
 
 import copy
 
-import pytest
-
 from aigaffer import __main__ as cli
 from aigaffer import review
 from tests.test_orchestrator import (  # noqa: F401 — store and the chips switch are fixtures
@@ -128,7 +126,6 @@ def test_the_hand_command_needs_the_manager(monkeypatch, store, capsys):
     assert "needs the manager" in capsys.readouterr().out
 
 
-@pytest.mark.xfail(reason="needs Task 6: the Last week briefing section", strict=True)
 def test_an_early_tick_reviews_first_and_the_scout_reads_the_lessons(monkeypatch, store):
     # The behaviour the feature exists for, end to end across the CLI, the
     # review and the briefing: GW1 goes final, the early scout's tick reviews

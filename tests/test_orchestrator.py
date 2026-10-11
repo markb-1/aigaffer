@@ -1904,6 +1904,19 @@ def fallback_with_a_record(consult):
     return decision
 
 
+def test_last_weeks_review_reaches_this_weeks_briefing(monkeypatch, tmp_path):
+    # The pipeline universe's coming gameweek is GW2, so GW1's review is "last week".
+    Store(tmp_path / "aigaffer.db").save_run(1, "review", "md", {"lessons": ["Bench the rotation risk."]})
+    _, _, gaffer = gaffer_run(monkeypatch, tmp_path, decide=decided)
+    assert "## Last week (GW1)\n" in gaffer.consults[0].briefing
+    assert "- Bench the rotation risk." in gaffer.consults[0].briefing
+
+
+def test_no_review_no_last_week_section(monkeypatch, tmp_path):
+    _, _, gaffer = gaffer_run(monkeypatch, tmp_path, decide=decided)
+    assert "## Last week" not in gaffer.consults[0].briefing
+
+
 def test_a_decided_run_writes_his_calls_into_the_ledger_last_call_winning(monkeypatch, tmp_path):
     # gaffer_run runs at PAST_THE_FLOOR; two calls for Grant, the ban is later.
     gaffer_run(monkeypatch, tmp_path, decide=recorded)

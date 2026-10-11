@@ -573,3 +573,22 @@ def review_tick(
             print(GAVE_UP.format(gw=gw, attempts=REVIEW_ATTEMPTS))
         else:
             print(FAILED.format(gw=gw, reason=reason))
+
+
+@dataclass(frozen=True)
+class LastWeek:
+    """The lessons the review of week ``gw`` took, for the week after's briefing."""
+
+    gw: int
+    lessons: tuple[str, ...]
+
+
+def last_week(store: "Store", gw: int) -> LastWeek | None:
+    """The review of the week before ``gw``, as the briefing carries it, or
+    None for no review, a malformed one, or one with no lessons."""
+    record = store.decision(gw - 1, REVIEW_MODE)
+    lessons = record.get("lessons") if isinstance(record, dict) else None
+    if not isinstance(lessons, list):
+        return None
+    kept = tuple(" ".join(item.split()) for item in lessons if isinstance(item, str) and item.strip())
+    return LastWeek(gw - 1, kept) if kept else None

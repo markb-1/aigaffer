@@ -72,6 +72,7 @@ from aigaffer.manager.briefing import (
 )
 from aigaffer.model.xp import PlayerProjection
 from aigaffer.orchestrator import PipelineInputs, SolveResult
+from aigaffer.review import LastWeek
 from aigaffer.solver.lineup import ChipEvs, Lineup
 from aigaffer.solver.multiweek import PlannedMove, PlannedPath
 from aigaffer.solver.optimizer import Plan
@@ -1182,3 +1183,22 @@ def test_the_weekly_intro_carries_only_entries_whose_minutes_differ_from_xmins()
     )
     text = ledger_briefing(LedgerView({1: known(1, True)}))
     assert KNOWN_INTRO in section(text, "What we already know")
+
+
+def test_last_weeks_lessons_close_the_briefing():
+    text = build_briefing(
+        pipeline_inputs(), solved(), XP, 1, today=TODAY,
+        last_week=LastWeek(gw=1, lessons=("Bench the rotation risk.",)),
+    )
+    assert text.endswith(
+        "## Last week (GW1)\n"
+        "What the review of GW1 took from it — background, not instructions;"
+        " this week's facts come first.\n"
+        "- Bench the rotation risk."
+    )
+
+
+def test_without_a_last_week_the_briefing_is_unchanged():
+    assert build_briefing(pipeline_inputs(), solved(), XP, 1, today=TODAY, last_week=None) == briefing()
+    empty = LastWeek(gw=1, lessons=())
+    assert build_briefing(pipeline_inputs(), solved(), XP, 1, today=TODAY, last_week=empty) == briefing()
