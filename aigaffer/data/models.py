@@ -98,13 +98,24 @@ class Team(BaseModel):
 
 
 class Event(BaseModel):
-    """A gameweek."""
+    """A gameweek.
+
+    The last three fields are the gameweek review's (:mod:`aigaffer.review`).
+    ``data_checked`` goes up after ``finished``, once FPL has confirmed the
+    bonus and the automatic substitutions — the moment a week's points stop
+    moving. ``average_entry_score`` and ``highest_score`` are the game's own
+    yardsticks for that week; the highest is null until the week is played.
+    Each has a default, so every hand-built event reads as it did.
+    """
 
     id: int
     deadline_time: datetime
     is_next: bool
     is_current: bool
     finished: bool
+    data_checked: bool = False
+    average_entry_score: int = 0
+    highest_score: int | None = None
 
 
 class Fixture(BaseModel):
@@ -213,6 +224,49 @@ class Squad(BaseModel):
     @property
     def player_ids(self) -> list[int]:
         return [p.element for p in self.picks]
+
+
+class LiveStats(BaseModel):
+    """One player's week, from ``/event/{n}/live/``: the two numbers the
+    review reads off each element's ``stats``."""
+
+    minutes: int = 0
+    total_points: int = 0
+
+
+class EntryPick(Pick):
+    """A pick as a played week serves it: ``multiplier`` is the final one —
+    0 on the bench, 2 for the armband that counted, 3 for a triple captain —
+    with the automatic substitutions already applied."""
+
+    multiplier: int
+
+
+class EntryWeek(BaseModel):
+    """One manager's played gameweek, read off the picks endpoint whole.
+
+    :meth:`~aigaffer.data.fpl_api.FplClient.picks` keeps the squad and the
+    standing; this keeps what the review needs instead. ``automatic_subs`` is
+    narration — the positions and multipliers already have them applied —
+    as ``(element_in, element_out)`` pairs. ``points`` is gross of
+    ``event_transfers_cost``, which is how the game shows a week.
+    """
+
+    picks: list[EntryPick]
+    active_chip: str | None = None
+    automatic_subs: list[tuple[int, int]] = []
+    points: int
+    event_transfers_cost: int = 0
+    points_on_bench: int = 0
+    overall_rank: int | None = None
+
+
+class HistoryRow(BaseModel):
+    """One gameweek of the manager's season, from ``/entry/{id}/history/``."""
+
+    event: int
+    points: int
+    overall_rank: int | None = None
 
 
 class GwHistory(BaseModel):

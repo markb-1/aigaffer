@@ -242,3 +242,10 @@ def test_held_in_week_drops_a_chip_whose_window_ends_in_the_recorded_week():
     held = held_in_week(board(), played, 19, row)
 
     assert all(chip.stop_event == 38 for chip in held)
+
+
+def test_the_api_names_invert_to_ours():
+    from aigaffer.chips import CHIP_API_NAMES, CHIPS_BY_API_NAME
+
+    assert CHIPS_BY_API_NAME == {api: chip for chip, api in CHIP_API_NAMES.items()}
+    assert CHIPS_BY_API_NAME["3xc"] == "triple_captain"
