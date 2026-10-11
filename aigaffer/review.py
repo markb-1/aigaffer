@@ -17,11 +17,12 @@ the report prints, so the two cannot disagree.
 
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass, replace
+from pathlib import Path
 
 from aigaffer.chips import CHIPS_BY_API_NAME, FREE_HIT
 from aigaffer.data.models import Bootstrap, EntryPick, EntryWeek, HistoryRow, LiveStats
 from aigaffer.executed import NO_CHIP, Verdict
-from aigaffer.report.render import POSITIONS
+from aigaffer.report.render import POSITIONS, chip_label
 
 REVIEW_MODE = "review"
 # Failed attempts at one week's review before the schedule stops asking.
@@ -349,3 +350,112 @@ def _followed_line(followed: Followed | None) -> str:
     if not followed.captain:
         parts.append(f"the verdict's captain was {followed.captain_wanted}")
     return "Verdict followed: no — " + "; ".join(parts) + "."
+
+
+MARKER = "<!-- looking-back gw{n} -->"
+HEADING = "## Looking back — GW{n}"
+NONE_SAID = "None."
+
+
+@dataclass(frozen=True)
+class Written:
+    """What the gaffer wrote, already validated, and what it cost."""
+
+    went_well: tuple[str, ...]
+    went_wrong: tuple[str, ...]
+    lessons: tuple[str, ...]
+    tokens: dict[str, int]
+    turns: int
+
+
+def render_review(facts: WeekFacts, written: Written) -> str:
+    """The section appended to ``GW{n}.md``: marker, rule, heading, two lines
+    of numbers, then the gaffer's three lists."""
+    lines = [
+        MARKER.format(n=facts.gw),
+        "---",
+        "",
+        HEADING.format(n=facts.gw),
+        "",
+        _score_line(facts),
+        _team_line(facts),
+    ]
+    for title, items in (
+        ("What went well", written.went_well),
+        ("What went wrong", written.went_wrong),
+        ("Lessons", written.lessons),
+    ):
+        lines += ["", f"### {title}", *(f"- {item}" for item in (items or (NONE_SAID,)))]
+    return "\n".join(lines) + "\n"
+
+
+def _score_line(facts: WeekFacts) -> str:
+    net = ""
+    if facts.hits:
+        net = f" ({facts.net_points} after the {'hit' if facts.hits == 4 else 'hits'})"
+    parts = [f"**{facts.points} pts**{net}", f"average {facts.average}"]
+    if facts.highest is not None:
+        parts.append(f"highest {facts.highest}")
+    if facts.rank_after is not None:
+        if facts.rank_before is None:
+            parts.append(f"overall rank {facts.rank_after:,}")
+        else:
+            moved = facts.rank_before - facts.rank_after
+            arrow = "=" if moved == 0 else f"▲ {moved:,}" if moved > 0 else f"▼ {-moved:,}"
+            parts.append(f"overall rank {facts.rank_before:,} → {facts.rank_after:,} ({arrow})")
+    return " · ".join(parts)
+
+
+def _team_line(facts: WeekFacts) -> str:
+    captain = facts.captain
+    if captain is None:
+        head = "Captain —"
+    elif captain.multiplier == 0:
+        head = f"Captain {captain.name} 0 (no armband played)"
+    else:
+        head = f"Captain {captain.name} {captain.points} ×{captain.multiplier}"
+        best = facts.best_in_xi
+        if best is not None and best.player_id != captain.player_id and best.points > captain.points:
+            head += f" (best in the XI: {best.name} {best.points})"
+    parts = [head, f"bench {facts.bench_points}"]
+    if facts.hits:
+        parts.append(f"hits −{facts.hits}")
+    parts.append("no chip" if facts.chip == NO_CHIP else chip_label(facts.chip))
+    return " · ".join(parts)
+
+
+def append_review(root: Path, gw: int, section: str) -> None:
+    """Put ``section`` at the end of ``root/GW{gw}.md``, leaving every byte
+    above it alone.
+
+    A file with the marker already in it (a forced re-review) has everything
+    from the marker on replaced; a file without one gets two newlines and the
+    section; a week with no report gets a file holding the section alone.
+    Read and written as bytes-faithful text (``newline=""``), so a CRLF
+    report or one with no final newline keeps exactly the bytes it had.
+    """
+    path = root / f"GW{gw}.md"
+    marker = MARKER.format(n=gw)
+    if not path.exists():
+        path.write_text(section, encoding="utf-8", newline="")
+        return
+    with path.open(encoding="utf-8", newline="") as handle:
+        text = handle.read()
+    cut = text.find(marker)
+    head = text[:cut] if cut >= 0 else text + "\n\n"
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        handle.write(head + section)
+
+
+def review_record(facts: WeekFacts, written: Written) -> dict:
+    """The run row's decision: the three lists, the facts, the cost."""
+    return {
+        "mode": REVIEW_MODE,
+        "event": facts.gw,
+        "went_well": list(written.went_well),
+        "went_wrong": list(written.went_wrong),
+        "lessons": list(written.lessons),
+        "facts": facts.to_json(),
+        "tokens": dict(written.tokens),
+        "turns": written.turns,
+    }

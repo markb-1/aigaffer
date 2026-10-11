@@ -4,8 +4,12 @@ from aigaffer.data.models import Bootstrap, EntryWeek, HistoryRow, LiveStats
 from aigaffer.executed import Verdict
 from aigaffer.review import (
     MINUTES_MISS,
+    Written,
+    append_review,
     build_facts,
+    render_review,
     review_facts,
+    review_record,
     review_target,
 )
 from tests.fixtures import BOOTSTRAP_JSON
@@ -225,3 +229,82 @@ def test_a_free_hit_weeks_transfers_are_marked_temporary():
     text = review_facts(facts(entry=entry(chip="freehit"),
                               transfers=[{"element_in": 7, "element_out": 2, "event": 2}]))
     assert "(free hit: the moves were for this week only)" in text
+
+
+WRITTEN = Written(
+    went_well=("Captaincy paid.",), went_wrong=("The hit lost points.",),
+    lessons=("Avoid -4 for a one-week punt.",), tokens={"input": 1, "output": 2}, turns=1,
+)
+
+
+def test_the_section_reads_as_the_spec_shows():
+    f = facts(entry=entry(points=68, cost=4, bench=9))
+    section = render_review(f, WRITTEN)
+    lines = section.splitlines()
+    assert lines[0] == "<!-- looking-back gw2 -->"
+    assert lines[1] == "---"
+    assert lines[3] == "## Looking back — GW2"
+    avg = BOARD.events[1].average_entry_score
+    assert lines[5] == f"**68 pts** (64 after the hit) · average {avg} · overall rank 1,200,000 → 900,000 (▲ 300,000)"
+    assert lines[6] == f"Captain {NAMES[5]} 5 ×2 (best in the XI: {NAMES[7]} 7) · bench 9 · hits −4 · no chip"
+    assert "### What went well\n- Captaincy paid." in section
+    assert "### What went wrong\n- The hit lost points." in section
+    assert section.endswith("### Lessons\n- Avoid -4 for a one-week punt.\n")
+
+
+def test_the_rank_falls_and_the_first_week_has_no_rank_before():
+    worse = render_review(facts(history=[HistoryRow(event=1, points=1, overall_rank=800_000),
+                                          HistoryRow(event=2, points=1, overall_rank=900_000)]), WRITTEN)
+    assert "overall rank 800,000 → 900,000 (▼ 100,000)" in worse
+    first = render_review(facts(history=[HistoryRow(event=2, points=1, overall_rank=900_000)]), WRITTEN)
+    assert "· overall rank 900,000\n" in first
+
+
+def test_no_hits_no_net_and_the_captain_best_is_left_out_when_he_was_the_best():
+    picks = [pick(1, 1), pick(3, 2), pick(4, 3), pick(5, 4), pick(6, 5),
+             pick(7, 6, 2, captain=True), pick(2, 12, 0), pick(8, 13, 0)]
+    section = render_review(facts(entry=entry(picks)), WRITTEN)
+    line = section.splitlines()[6]
+    assert line == f"Captain {NAMES[7]} 7 ×2 · bench 5 · no chip"
+    assert "after the hit" not in section
+
+
+def test_an_empty_list_reads_as_none():
+    section = render_review(facts(), Written(("Fine.",), (), (), {}, 1))
+    assert "### What went wrong\n- None.\n" in section
+    assert section.endswith("### Lessons\n- None.\n")
+
+
+def test_appending_keeps_every_byte_above_the_marker(tmp_path):
+    original = "# GW2 report\r\n\r\nPlan: hold.\r\nno trailing newline"
+    (tmp_path / "GW2.md").write_bytes(original.encode("utf-8"))
+    append_review(tmp_path, 2, "<!-- looking-back gw2 -->\nsection\n")
+    written = (tmp_path / "GW2.md").read_bytes()
+    assert written.startswith(original.encode("utf-8"))
+    assert written == (original + "\n\n<!-- looking-back gw2 -->\nsection\n").encode("utf-8")
+
+
+def test_a_second_review_replaces_the_first_through_the_marker(tmp_path):
+    (tmp_path / "GW2.md").write_text("report\n", encoding="utf-8")
+    append_review(tmp_path, 2, "<!-- looking-back gw2 -->\nfirst\n")
+    append_review(tmp_path, 2, "<!-- looking-back gw2 -->\nsecond\n")
+    assert (tmp_path / "GW2.md").read_text(encoding="utf-8") == "report\n\n\n<!-- looking-back gw2 -->\nsecond\n"
+
+
+def test_a_week_with_no_report_gets_the_section_alone(tmp_path):
+    append_review(tmp_path, 2, "<!-- looking-back gw2 -->\nsection\n")
+    assert (tmp_path / "GW2.md").read_text(encoding="utf-8") == "<!-- looking-back gw2 -->\nsection\n"
+
+
+def test_the_readme_is_never_touched(tmp_path):
+    readme = tmp_path / "README.md"
+    readme.write_text("📋 **Latest verdict: [GW3](GW3.md)** <!-- latest-verdict -->\n", encoding="utf-8")
+    append_review(tmp_path, 2, "<!-- looking-back gw2 -->\nsection\n")
+    assert readme.read_text(encoding="utf-8").endswith("[GW3](GW3.md)** <!-- latest-verdict -->\n")
+
+
+def test_the_record_keeps_the_lessons_and_the_facts():
+    record = review_record(facts(), WRITTEN)
+    assert record["mode"] == "review" and record["event"] == 2
+    assert record["lessons"] == ["Avoid -4 for a one-week punt."]
+    assert record["facts"]["gw"] == 2 and record["tokens"] == {"input": 1, "output": 2}
