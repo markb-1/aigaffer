@@ -36,7 +36,8 @@ def no_anthropic_key(monkeypatch):
 # so the second answer is the first answer, bought again at several seconds.
 #
 # So the expensive, pure solver entry points (the multi-week path solve and the
-# chip valuations) are memoised for the length of the session, under four rules that keep the cache from changing what a test checks:
+# chip valuations) are memoised for the length of the session, under four rules
+# that keep the cache from changing what a test checks:
 #
 # * The key is a hash of the function's name and the pickled arguments. The
 #   arguments are the whole input, so an equal board is a hit and any change to
