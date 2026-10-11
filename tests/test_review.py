@@ -1,6 +1,7 @@
 """The gameweek review: facts, rendering, the file, the tick (aigaffer/review.py)."""
 
 import copy
+import sqlite3
 
 import httpx
 import pytest
@@ -475,6 +476,20 @@ def test_last_week_reads_the_review_before_this_week(tmp_path):
     assert last_week(store, 3) is None
     store.save_run(2, "review", "md", {"lessons": ["Bench the rotation risk.", "  "]})
     assert last_week(store, 3) == LastWeek(gw=2, lessons=("Bench the rotation risk.",))
+
+
+def test_a_store_error_is_no_last_week_not_a_lost_report(tmp_path, monkeypatch):
+    # last_week runs inside run_pipeline, outside any try: a sqlite error or a
+    # corrupt row raised here would abort the week's report for the sake of a
+    # nice-to-have paragraph, so any failure to read means no review.
+    store = Store(tmp_path / "s.db")
+
+    def boom(*args, **kwargs):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(store, "decision", boom)
+
+    assert last_week(store, 3) is None
 
 
 def test_a_malformed_or_empty_review_record_is_no_last_week(tmp_path):

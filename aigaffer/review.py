@@ -586,7 +586,13 @@ class LastWeek:
 def last_week(store: "Store", gw: int) -> LastWeek | None:
     """The review of the week before ``gw``, as the briefing carries it, or
     None for no review, a malformed one, or one with no lessons."""
-    record = store.decision(gw - 1, REVIEW_MODE)
+    # Any failure to read is no review: this runs inside run_pipeline, outside
+    # any try, and a corrupt row or a sqlite error here must never cost the
+    # week its report.
+    try:
+        record = store.decision(gw - 1, REVIEW_MODE)
+    except Exception:
+        return None
     lessons = record.get("lessons") if isinstance(record, dict) else None
     if not isinstance(lessons, list):
         return None
