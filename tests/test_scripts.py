@@ -270,3 +270,35 @@ def test_the_inbox_stands_down_without_secrets_and_says_so(
     assert ".env" in result.stderr
     assert len(result.stderr.strip().splitlines()) == 1
     assert not (tmp_path / "inbox" / "ran").exists()
+
+
+def failing_python(clone: Path, writes: str | None) -> None:
+    """The stub interpreter: write ``writes`` into the store (or nothing), then fail."""
+    body = "#!/bin/sh\n"
+    if writes is not None:
+        body += f"printf '{writes}' > state/aigaffer.db\n"
+    body += "exit 1\n"
+    python = clone / ".venv" / "bin" / "python"
+    python.write_text(body)
+    python.chmod(0o755)
+
+
+def test_a_failing_run_still_commits_what_it_wrote_and_exits_non_zero(box, tmp_path):
+    clone, remote = box
+    failing_python(clone, "reviewed")
+
+    result = tick(clone, tmp_path, check=False)
+
+    assert result.returncode == 1
+    blob = git("show", "main:state/aigaffer.db", cwd=remote)
+    assert blob == "reviewed"
+
+
+def test_a_failing_run_that_wrote_nothing_still_exits_non_zero(box, tmp_path):
+    clone, remote = box
+    failing_python(clone, None)
+
+    result = tick(clone, tmp_path, check=False)
+
+    assert result.returncode == 1
+    assert git("rev-list", "--count", "main", cwd=remote).strip() == "1"

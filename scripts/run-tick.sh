@@ -49,7 +49,14 @@ main() {
   # moves on a plain rebase pull refuses — every tick after would die here.
   # Stashed across the pull, the row is committed below like any other.
   git pull --rebase -q --autostash origin main
-  .venv/bin/python -m aigaffer auto
+  # A run that fails still commits what it wrote: the gameweek review can
+  # save its section and its row and then the report fail, and a dirty store
+  # left behind would be autostashed over a peer's commit on the next pull.
+  # So the exit status is kept, everything below runs, and the tick ends with
+  # it — the timer still sees the failure. (The workflow's commit step runs
+  # on always() for the same reason.)
+  status=0
+  .venv/bin/python -m aigaffer auto || status=$?
 
   # state/ includes state/executed/, the inbox's recorded weeks.
   git add state/
@@ -61,7 +68,7 @@ main() {
     if [ -n "$(git rev-list origin/main..HEAD 2>/dev/null)" ]; then
       git push -q origin HEAD:main
     fi
-    exit 0
+    exit "$status"
   fi
   # A fresh clone has no identity to commit as; the box's own, if it has
   # one, wins.
@@ -71,6 +78,7 @@ main() {
     -m "chore: gaffer run $(date -u +%FT%H:%M) (${AIGAFFER_TICK_LABEL:-self-hosted})"
   git pull --rebase -q --autostash origin main
   git push -q origin HEAD:main
+  exit "$status"
 }
 
 main "$@"
