@@ -82,7 +82,7 @@ def validate_review(args: dict) -> tuple[tuple[str, ...], tuple[str, ...], tuple
         raise ToolError("Say at least one thing that went well or went wrong.")
     words = sum(len(point.split()) for points in lists for point in points)
     if words > REVIEW_MAX_WORDS:
-        raise ToolError(f"That is {words} words; keep the whole review to 250 or fewer.")
+        raise ToolError(f"That is {words} words; keep it near 250, and {REVIEW_MAX_WORDS} at most.")
     return lists[0], lists[1], lists[2]
 
 
@@ -144,32 +144,44 @@ class _Conversation:
                 reason = "max_tokens"
                 self._join_ask()
                 continue
-            use = next(
-                (b for b in getattr(response, "content", None) or [] if getattr(b, "type", None) == "tool_use"),
-                None,
-            )
             self._append(response)
-            if use is None:
+            answer, results = self._act(response)
+            if answer is not None:
+                well, wrong, lessons = answer
+                return Written(well, wrong, lessons, dict(self.tokens), self.turns)
+            if not results:
                 reason = "no tool call"
-                self.messages.append({"role": "user", "content": [_text(ASK)]})
+                self._join_ask()
                 continue
-            try:
-                if getattr(use, "name", "") != ANSWER:
-                    raise ToolError(f"There is no tool called '{use.name}'. Call {ANSWER}.")
-                given = getattr(use, "input", None)
-                well, wrong, lessons = validate_review(given if isinstance(given, dict) else {})
-            except ToolError as error:
-                reason = "invalid answer"
-                self.messages.append({"role": "user", "content": [_result(use.id, str(error), failed=True)]})
-                continue
-            return Written(well, wrong, lessons, dict(self.tokens), self.turns)
+            # Every tool_use needs its own tool_result, in one user message,
+            # or the API answers 400.
+            reason = "invalid answer"
+            self.messages.append({"role": "user", "content": results})
         raise ReviewUnavailable(reason)
+
+    def _act(self, response: Any) -> tuple[tuple | None, list[dict]]:
+        """Every tool call in the turn; the first valid answer wins."""
+        results: list[dict] = []
+        for block in getattr(response, "content", None) or []:
+            if getattr(block, "type", None) != "tool_use":
+                continue
+            name = getattr(block, "name", "")
+            given = getattr(block, "input", None)
+            try:
+                if name != ANSWER:
+                    raise ToolError(f"There is no tool called '{name}'. Call {ANSWER}.")
+                return validate_review(given if isinstance(given, dict) else {}), results
+            except ToolError as error:
+                results.append(_result(getattr(block, "id", ""), str(error), failed=True))
+        return None, results
 
     def _join_ask(self) -> None:
         last = self.messages[-1]
         block = _text(ASK)
         if last["role"] == "user" and last["content"][-1] != block:
             self.messages[-1] = {"role": "user", "content": [*last["content"], block]}
+        elif last["role"] != "user":
+            self.messages.append({"role": "user", "content": [block]})
 
     def _ask(self) -> Any:
         """One assistant turn, resumed as often as the server pauses it."""
