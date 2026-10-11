@@ -112,3 +112,30 @@ def test_the_briefing_carries_the_facts_and_says_whose_verdict_it_was():
     assert "Verdict followed" not in solver
     none = review_briefing(facts(verdict=None))
     assert "No verdict on record" in none
+
+
+def test_a_valid_answer_after_an_unknown_tool_in_one_turn_is_taken():
+    client = FakeClient([reply(use("other", {}, "tu_a"), use(ANSWER, GOOD, "tu_b"))])
+    written = write_review(CFG, facts(), client=client)
+    assert written.lessons == tuple(GOOD["lessons"]) and len(client.requests) == 1
+
+
+def test_every_tool_call_in_a_failed_turn_gets_its_own_result():
+    bad = {**GOOD, "lessons": ["x"] * 4}
+    client = FakeClient([
+        reply(use(ANSWER, bad, "tu_a"), use(ANSWER, bad, "tu_b")),
+        reply(use(ANSWER, GOOD, "tu_c")),
+    ])
+    write_review(CFG, facts(), client=client)
+    last = client.requests[1]["messages"][-1]
+    assert last["role"] == "user"
+    assert [r["tool_use_id"] for r in last["content"]] == ["tu_a", "tu_b"]
+    assert all(r["is_error"] is True for r in last["content"])
+
+
+def test_an_empty_end_turn_joins_the_ask_to_the_briefing():
+    client = FakeClient([reply(stop="end_turn"), reply(use(ANSWER, GOOD))])
+    write_review(CFG, facts(), client=client)
+    messages = client.requests[1]["messages"]
+    assert len(messages) == 1 and messages[0]["role"] == "user"
+    assert ANSWER in messages[0]["content"][-1]["text"]
