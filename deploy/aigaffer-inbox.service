@@ -9,7 +9,9 @@ After=network-online.target
 Type=oneshot
 User=YOUR_USER
 ExecStart=/path/to/aigaffer/scripts/inbox-tick.sh
-# A recording waits for the state lock, which the hourly tick holds for a
-# whole run — up to forty minutes (aigaffer.service). Forty-five lets it wait
-# that out rather than be killed and start the wait again.
-TimeoutStartSec=2700
+# A what-if waits for the state lock, which the hourly tick holds for a whole
+# run — up to forty minutes (aigaffer.service) — and then needs about fifteen of
+# its own: two 150 s solves, the free-hit pricing and an 8-minute opinion. An
+# hour covers both. A kill at the limit is caught by the inbox's marker/resume
+# path anyway, so the limit is a backstop, not a correctness boundary.
+TimeoutStartSec=3600

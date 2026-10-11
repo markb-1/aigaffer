@@ -4186,7 +4186,7 @@ def test_the_withheld_alert_on_the_phone_says_it_too(monkeypatch, tmp_path):
 
     run_pipeline(
         cfg, make_client(pipeline_routes()), store, "deadline",
-        now=PAST_THE_FLOOR - timedelta(hours=20),
+        now=PAST_THE_FLOOR - timedelta(hours=15),
     )
 
     [(_, _, alert)] = sent
