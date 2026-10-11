@@ -35,8 +35,8 @@ def no_anthropic_key(monkeypatch):
 # squad, the identical one-week draft. CBC is deterministic for a given input,
 # so the second answer is the first answer, bought again at several seconds.
 #
-# So the expensive, pure solver entry points (the multi-week path solve and the chip valuations) are memoised for the length of the
-# session, under four rules that keep the cache from changing what a test checks:
+# So the expensive, pure solver entry points (the multi-week path solve and the
+# chip valuations) are memoised for the length of the session, under four rules that keep the cache from changing what a test checks:
 #
 # * The key is a hash of the function's name and the pickled arguments. The
 #   arguments are the whole input, so an equal board is a hit and any change to
@@ -53,7 +53,10 @@ def no_anthropic_key(monkeypatch):
 #   internals to fake a time-limited stop, say, where a cached answer would hide
 #   the patch) opts out with ``@pytest.mark.no_solver_cache``. Setting
 #   ``AIGAFFER_NO_SOLVER_CACHE=1`` opts everything out, which is how to prove the
-#   allow-listed modules still pass against the real solver.
+#   allow-listed modules still pass against the real solver. By the same token,
+#   an allow-listed test that asserts on solve time (``PathSide.seconds``, the
+#   what-if log's ``solve_seconds``) must carry the marker too: a cache hit
+#   takes about 0 s, so the assertion would measure the cache, not the solver.
 #
 # The wrappers are installed per test with ``monkeypatch.setattr`` at every
 # import site, because callers bind the names at import (``from ... import
@@ -93,6 +96,16 @@ SOLVER_CACHE_SITES = {
     "aigaffer.orchestrator": ("chip_evs",),
 }
 
+# Where each cached name is really defined. A site is wrapped only if the object
+# bound there *is* that function: a module- or session-scoped fixture's stub (or
+# a Mock) at the site is left alone, because memoising it would carry one test's
+# fake answers into the next and its ``__module__``/``__qualname__`` cannot be
+# trusted anyway.
+SOLVER_CACHE_ORIGINS = {
+    "optimize_path": "aigaffer.solver.multiweek",
+    "chip_evs": "aigaffer.solver.lineup",
+}
+
 _SOLVER_MEMO: dict[str, object] = {}
 
 
@@ -112,6 +125,15 @@ def _memoised(func):
         return copy.deepcopy(_SOLVER_MEMO[key])
 
     return cached
+
+
+def _wrap_if_real(module, name):
+    """The memoising wrapper for ``module.name``, or None if it is not the real one."""
+    current = getattr(module, name)
+    origin = importlib.import_module(SOLVER_CACHE_ORIGINS[name])
+    if current is not getattr(origin, name):
+        return None
+    return _memoised(current)
 
 
 def pytest_configure(config):
@@ -135,5 +157,8 @@ def solver_cache(request, monkeypatch):
         module = importlib.import_module(module_name)
         for name in names:
             original = getattr(module, name)
-            wrapper = wrappers.setdefault(id(original), _memoised(original))
-            monkeypatch.setattr(module, name, wrapper)
+            if id(original) not in wrappers:
+                wrappers[id(original)] = _wrap_if_real(module, name)
+            wrapper = wrappers[id(original)]
+            if wrapper is not None:
+                monkeypatch.setattr(module, name, wrapper)
