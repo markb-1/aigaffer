@@ -1,18 +1,31 @@
 """The gameweek review: facts, rendering, the file, the tick (aigaffer/review.py)."""
 
+import copy
+
+import httpx
+import pytest
+
+from aigaffer.config import Config
+from aigaffer.data.fpl_api import FplClient
 from aigaffer.data.models import Bootstrap, EntryWeek, HistoryRow, LiveStats
 from aigaffer.executed import Verdict
 from aigaffer.review import (
     MINUTES_MISS,
+    REVIEW_ATTEMPTS,
+    ReviewUnavailable,
     Written,
     append_review,
     build_facts,
     render_review,
     review_facts,
     review_record,
+    review_due,
     review_target,
+    review_tick,
+    run_review,
 )
-from tests.fixtures import BOOTSTRAP_JSON
+from aigaffer.store import Store
+from tests.fixtures import BOOTSTRAP_JSON, PICKS_JSON, fake_fpl_transport
 
 # The fixture universe's players (tests/fixtures.py ELEMENTS_JSON): ids 1-8.
 BOARD = Bootstrap.model_validate(BOOTSTRAP_JSON)
@@ -308,3 +321,129 @@ def test_the_record_keeps_the_lessons_and_the_facts():
     assert record["mode"] == "review" and record["event"] == 2
     assert record["lessons"] == ["Avoid -4 for a one-week punt."]
     assert record["facts"]["gw"] == 2 and record["tokens"] == {"input": 1, "output": 2}
+
+
+TEAM = 42
+
+
+def final_board(gw=1):
+    payload = copy.deepcopy(BOOTSTRAP_JSON)
+    payload["events"][gw - 1].update(finished=True, data_checked=True, highest_score=99)
+    return payload
+
+
+def routes(board=None, **overrides):
+    picks = copy.deepcopy(PICKS_JSON)
+    picks["entry_history"]["points_on_bench"] = 3
+    base = {
+        "/api/bootstrap-static/": board or final_board(),
+        f"/api/entry/{TEAM}/event/1/picks/": picks,
+        f"/api/entry/{TEAM}/history/": {"current": [{"event": 1, "points": 57, "overall_rank": 1234567}], "past": [], "chips": []},
+        f"/api/entry/{TEAM}/transfers/": [],
+        "/api/event/1/live/": {"elements": [{"id": pid, "stats": {"minutes": 90, "total_points": pid}} for pid in range(1, 9)]},
+    }
+    base.update(overrides)
+    return base
+
+
+def api(route_map, statuses=None):
+    # No sleeping through the client's retry backoff on a scripted 500.
+    return FplClient(
+        http=httpx.Client(transport=fake_fpl_transport(route_map, statuses)),
+        sleep=lambda seconds: None,
+    )
+
+
+def cfg(tmp_path, **kwargs):
+    return Config(team_id=TEAM, state_dir=tmp_path / "state", anthropic_api_key="sk-test", **kwargs)
+
+
+def fake_write(cfg, facts):
+    return WRITTEN
+
+
+def test_a_review_appends_writes_its_file_and_stores_its_row(tmp_path):
+    c = cfg(tmp_path)
+    store = Store(tmp_path / "state" / "aigaffer.db")
+    (tmp_path / "GW1.md").write_text("report\n", encoding="utf-8")
+    client = api(routes())
+    section = run_review(c, client, store, client.bootstrap(), 1, write=fake_write)
+    assert (tmp_path / "GW1.md").read_text(encoding="utf-8") == "report\n\n\n" + section
+    assert (tmp_path / "state" / "reports" / "gw1-review.md").read_text(encoding="utf-8") == section
+    assert store.has_run(1, "review") and store.decision(1, "review")["lessons"] == list(WRITTEN.lessons)
+
+
+def test_a_dry_run_writes_nothing(tmp_path):
+    c = cfg(tmp_path)
+    store = Store(tmp_path / "state" / "aigaffer.db")
+    client = api(routes())
+    section = run_review(c, client, store, client.bootstrap(), 1, dry_run=True, write=fake_write)
+    assert "## Looking back — GW1" in section
+    assert not (tmp_path / "GW1.md").exists() and not store.has_run(1, "review")
+
+
+def test_a_week_that_is_not_final_is_unavailable(tmp_path):
+    client = api(routes(board=copy.deepcopy(BOOTSTRAP_JSON)))
+    with pytest.raises(ReviewUnavailable, match="not final"):
+        run_review(cfg(tmp_path), client, Store(tmp_path / "s.db"), client.bootstrap(), 1, write=fake_write)
+
+
+def test_a_team_with_no_entry_is_unavailable(tmp_path):
+    client = api(routes(), statuses={f"/api/entry/{TEAM}/event/1/picks/": 404})
+    with pytest.raises(ReviewUnavailable, match="no entry for GW1"):
+        run_review(cfg(tmp_path), client, Store(tmp_path / "s.db"), client.bootstrap(), 1, write=fake_write)
+
+
+def test_due_needs_a_final_week_unreviewed_a_manager_and_attempts_left(tmp_path):
+    store = Store(tmp_path / "s.db")
+    board = Bootstrap.model_validate(final_board())
+    assert review_due(cfg(tmp_path), store, board) == 1
+    assert review_due(cfg(tmp_path, manager_enabled=False), store, board) is None
+    assert review_due(cfg(tmp_path), store, BOARD) is None  # nothing final
+    for _ in range(REVIEW_ATTEMPTS):
+        store.record_withheld(1, "review", "x")
+    assert review_due(cfg(tmp_path), store, board) is None
+    store2 = Store(tmp_path / "s2.db")
+    store2.save_run(1, "review", "md", {})
+    assert review_due(cfg(tmp_path), store2, board) is None
+
+
+def test_the_target_moves_on_when_the_next_week_is_final(tmp_path):
+    payload = final_board()
+    payload["events"][1].update(finished=True, data_checked=True)
+    store = Store(tmp_path / "s.db")
+    store.save_run(1, "review", "md", {})
+    assert review_due(cfg(tmp_path), store, Bootstrap.model_validate(payload)) == 2
+
+
+def test_the_tick_records_a_failure_and_never_raises(tmp_path, capsys, monkeypatch):
+    store = Store(tmp_path / "state" / "aigaffer.db")
+    client = api(routes(), statuses={"/api/event/1/live/": 500})
+    monkeypatch.setattr("aigaffer.review._writer", lambda: fake_write)
+    review_tick(cfg(tmp_path), client, store)
+    assert store.withheld_count(1, "review") == 1
+    assert "review: GW1 failed (HTTPStatusError)" in capsys.readouterr().out
+
+
+def test_the_sixth_failure_says_it_gave_up(tmp_path, capsys, monkeypatch):
+    store = Store(tmp_path / "state" / "aigaffer.db")
+    for _ in range(REVIEW_ATTEMPTS - 1):
+        store.record_withheld(1, "review", "x")
+    client = api(routes(), statuses={"/api/event/1/live/": 500})
+    review_tick(cfg(tmp_path), client, store)
+    assert "review: GW1 gave up after 6 attempts" in capsys.readouterr().out
+
+
+def test_the_tick_stands_down_when_the_peer_wrote_it(tmp_path, monkeypatch):
+    store = Store(tmp_path / "state" / "aigaffer.db")
+    called = []
+    monkeypatch.setattr("aigaffer.review._writer", lambda: lambda c, f: called.append(f) or WRITTEN)
+    review_tick(cfg(tmp_path), api(routes()), store, overtaken=lambda gw, mode: True)
+    assert called == [] and not store.has_run(1, "review")
+
+
+def test_the_tick_writes_the_review_when_due(tmp_path, monkeypatch):
+    store = Store(tmp_path / "state" / "aigaffer.db")
+    monkeypatch.setattr("aigaffer.review._writer", lambda: fake_write)
+    review_tick(cfg(tmp_path), api(routes()), store, overtaken=lambda gw, mode: False)
+    assert store.has_run(1, "review")

@@ -17,6 +17,9 @@ makes it safe against the live API.
 has already been played instead of advising on one to come, so it wants no
 team, no store and no schedule — only a gameweek and the API.
 
+``review`` looks back on a finished gameweek (:mod:`aigaffer.review`); ``auto``
+runs it on its own once a week is final.
+
 ``inbox`` is the VM's other timer, once a minute: it reads what the owner has
 texted the bot and answers (:mod:`aigaffer.inbox`). It wants no schedule and no
 report; it does want the team and the store, because "Transfers made" is
@@ -56,6 +59,7 @@ from aigaffer.orchestrator import (
 from aigaffer.peer import peer_has_run
 from aigaffer.recording import transfers_made
 from aigaffer.report.telegram import send_report
+from aigaffer.review import REVIEW_MODE, ReviewUnavailable, review_target, review_tick, run_review
 from aigaffer.statesync import STATE_LOCK, GitStateSync
 from aigaffer.store import DB_NAME, EXECUTED_DIR, Store
 from aigaffer.whatif_handler import chip_whatif
@@ -64,7 +68,8 @@ from aigaffer.whatif_log import LOG_FILE, WhatIfLog
 AUTO = "auto"
 BACKTEST = "backtest"
 INBOX = "inbox"
-COMMANDS = (AUTO, "early", "scout", "deadline", "reminder", BACKTEST, INBOX)
+REVIEW = "review"
+COMMANDS = (AUTO, "early", "scout", "deadline", "reminder", BACKTEST, INBOX, REVIEW)
 
 SCHEDULE_STAGE = "reading the schedule"
 BACKTEST_STAGE = "the backtest"
@@ -81,6 +86,28 @@ NO_MANAGER = (
 )
 
 
+class _OneBootstrap:
+    """The client, asking the API for the bootstrap once per tick.
+
+    The schedule's question and the review's both start from it, and the
+    review must not cost the hour a second copy of the game. The report
+    gets the client itself: its run fetches a bootstrap of its own, fresh,
+    as it always has.
+    """
+
+    def __init__(self, client: FplClient) -> None:
+        self._client = client
+        self._bootstrap: Bootstrap | None = None
+
+    def bootstrap(self) -> Bootstrap:
+        if self._bootstrap is None:
+            self._bootstrap = self._client.bootstrap()
+        return self._bootstrap
+
+    def __getattr__(self, name: str):
+        return getattr(self._client, name)
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run one command and return the process exit code."""
     args = _parse_args(argv)
@@ -92,16 +119,32 @@ def main(argv: list[str] | None = None) -> int:
             return _failed(None, error, event_id=None, stage=BACKTEST_STAGE)
     if args.command == INBOX:
         return _inbox(client)
+    if args.command == REVIEW:
+        return _review(args, client)
 
     cfg = Config.from_env()
     _manager_notice(cfg)
     store = Store(cfg.state_dir / DB_NAME)
     alert_to = None if args.dry_run else cfg
 
+    ticking = _OneBootstrap(client)
     try:
-        mode, event_id = _mode(args, client, store)
+        mode, event_id = _mode(args, ticking, store)
     except httpx.HTTPError as error:
         return _failed(alert_to, error, event_id=None, stage=SCHEDULE_STAGE)
+
+    # The week just finished, looked back on (aigaffer.review) — on the ticks
+    # with time to spare: one that stands down, or the early scout's, which
+    # then reads the lessons. A scout, deadline or reminder tick keeps its hour
+    # for its report; every window has quiet ticks after it. Never on a dry
+    # run, which writes nothing anywhere, and never fatal.
+    if args.command == AUTO and not args.dry_run and mode in (None, EARLY_MODE):
+        review_tick(
+            cfg,
+            ticking,
+            store,
+            overtaken=None if args.force else partial(peer_has_run, cfg.state_dir.parent),
+        )
     if mode is None:
         return 0
 
@@ -213,9 +256,39 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--gw",
         type=int,
-        help="which finished gameweek to backtest (default: the most recent)",
+        help="the finished gameweek to backtest or review (default: the most recent)",
     )
     return parser.parse_args(argv)
+
+
+NEEDS_MANAGER = "aigaffer: the review needs the manager (ANTHROPIC_API_KEY, AIGAFFER_MANAGER not 0)"
+
+
+def _review(args: argparse.Namespace, client: FplClient) -> int:
+    """``review``: look back on a finished week by hand — the latest final
+    one, or ``--gw``. ``--force`` writes it again over the old section;
+    ``--dry-run`` prints it and writes nothing."""
+    cfg = Config.from_env()
+    if not cfg.manager_enabled:
+        print(NEEDS_MANAGER)
+        return 1
+    store = Store(cfg.state_dir / DB_NAME)
+    try:
+        bootstrap = client.bootstrap()
+        gw = args.gw or review_target(bootstrap)
+        if gw is None:
+            print("aigaffer: no finished gameweek to review yet")
+            return 0
+        if store.has_run(gw, REVIEW_MODE) and not args.force and not args.dry_run:
+            print(f"aigaffer: GW{gw} review has run already — use --force")
+            return 0
+        section = run_review(cfg, client, store, bootstrap, gw, dry_run=args.dry_run)
+    except (ReviewUnavailable, httpx.HTTPError) as error:
+        print(f"aigaffer: review failed ({error if isinstance(error, ReviewUnavailable) else type(error).__name__})")
+        return 1
+    if args.dry_run:
+        print(section)
+    return 0
 
 
 def _backtest(client: FplClient, gw: int | None) -> int:

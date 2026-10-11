@@ -15,14 +15,22 @@ same :class:`WeekFacts` renders both the text the gaffer reads and the lines
 the report prints, so the two cannot disagree.
 """
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+import httpx
 
 from aigaffer.chips import CHIPS_BY_API_NAME, FREE_HIT
 from aigaffer.data.models import Bootstrap, EntryPick, EntryWeek, HistoryRow, LiveStats
 from aigaffer.executed import NO_CHIP, Verdict
 from aigaffer.report.render import POSITIONS, chip_label
+
+if TYPE_CHECKING:
+    from aigaffer.config import Config
+    from aigaffer.data.fpl_api import FplClient
+    from aigaffer.store import Store
 
 REVIEW_MODE = "review"
 # Failed attempts at one week's review before the schedule stops asking.
@@ -459,3 +467,105 @@ def review_record(facts: WeekFacts, written: Written) -> dict:
         "tokens": dict(written.tokens),
         "turns": written.turns,
     }
+
+
+FAILED = "review: GW{gw} failed ({reason}) — will try again next tick"
+GAVE_UP = "review: GW{gw} gave up after {attempts} attempts"
+
+
+def _writer():
+    """The writer, imported where it is used: a tick with no review due never
+    imports the SDK. A seam the tests replace."""
+    from aigaffer.manager.review_writer import write_review
+
+    return write_review
+
+
+def run_review(
+    cfg: "Config",
+    client: "FplClient",
+    store: "Store",
+    bootstrap: Bootstrap,
+    gw: int,
+    *,
+    dry_run: bool = False,
+    write: Callable[["Config", WeekFacts], Written] | None = None,
+) -> str:
+    """Review ``gw`` and return the section; unless ``dry_run``, append it to
+    ``GW{gw}.md``, keep it as ``state/reports/gw{gw}-review.md`` and store
+    its run row. Raises ReviewUnavailable, or whatever the API raised."""
+    from aigaffer.recording import VERDICT_MODES
+
+    event = next((e for e in bootstrap.events if e.id == gw), None)
+    if event is None or not (event.finished and event.data_checked):
+        raise ReviewUnavailable(f"GW{gw} is not final yet")
+    try:
+        entry = client.entry_week(cfg.team_id, gw)
+    except httpx.HTTPStatusError as error:
+        if error.response.status_code == 404:
+            raise ReviewUnavailable(f"no entry for GW{gw}") from error
+        raise
+    facts = build_facts(
+        gw,
+        bootstrap,
+        entry,
+        client.season_history(cfg.team_id),
+        client.live(gw),
+        client.transfers(cfg.team_id),
+        store.latest_verdict(gw, VERDICT_MODES),
+    )
+    written = (write or _writer())(cfg, facts)
+    section = render_review(facts, written)
+    if dry_run:
+        return section
+    append_review(cfg.state_dir.parent, gw, section)
+    report = cfg.state_dir / "reports" / f"gw{gw}-review.md"
+    report.parent.mkdir(parents=True, exist_ok=True)
+    report.write_text(section, encoding="utf-8")
+    store.save_run(gw, REVIEW_MODE, section, review_record(facts, written))
+    return section
+
+
+def review_due(cfg: "Config", store: "Store", bootstrap: Bootstrap) -> int | None:
+    """The week a tick should review now, or None."""
+    if not cfg.manager_enabled:
+        return None
+    gw = review_target(bootstrap)
+    if gw is None or store.has_run(gw, REVIEW_MODE):
+        return None
+    if store.withheld_count(gw, REVIEW_MODE) >= REVIEW_ATTEMPTS:
+        return None
+    return gw
+
+
+def review_tick(
+    cfg: "Config",
+    client: "FplClient",
+    store: "Store",
+    overtaken: Callable[[int, str], bool] | None = None,
+) -> None:
+    """The schedule's review: run it when due, and never raise.
+
+    ``overtaken`` is the peer scheduler's word (:func:`aigaffer.peer.peer_has_run`),
+    asked before the gaffer is paid for. A failure is one line on stdout and
+    a withheld row; the sixth says the week is given up.
+    """
+    gw = None
+    try:
+        bootstrap = client.bootstrap()
+        gw = review_due(cfg, store, bootstrap)
+        if gw is None:
+            return
+        if overtaken is not None and overtaken(gw, REVIEW_MODE):
+            return
+        run_review(cfg, client, store, bootstrap, gw)
+    except Exception as error:  # the review is a luxury; the tick is not
+        if gw is None:
+            print(f"review: could not be asked ({type(error).__name__})")
+            return
+        reason = str(error) if isinstance(error, ReviewUnavailable) else type(error).__name__
+        store.record_withheld(gw, REVIEW_MODE, reason)
+        if store.withheld_count(gw, REVIEW_MODE) >= REVIEW_ATTEMPTS:
+            print(GAVE_UP.format(gw=gw, attempts=REVIEW_ATTEMPTS))
+        else:
+            print(FAILED.format(gw=gw, reason=reason))
