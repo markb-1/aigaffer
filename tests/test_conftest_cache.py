@@ -10,7 +10,7 @@ when the object there *is* the function its defining module exports.
 
 from types import SimpleNamespace
 
-from tests.conftest import SOLVER_CACHE_ORIGINS, _wrap_if_real
+from tests.conftest import SOLVER_CACHE_ORIGINS, SOLVER_CACHE_SITES, _wrap_if_real
 
 
 def _site(**names):
@@ -29,10 +29,7 @@ def test_the_real_solver_function_is_wrapped():
 
 
 def test_a_stub_at_the_site_is_left_alone():
-    calls = []
-
     def stub(*args, **kwargs):
-        calls.append(args)
         return "fake"
 
     stub.__module__ = "aigaffer.solver.multiweek"  # even a stub that lies
@@ -41,7 +38,7 @@ def test_a_stub_at_the_site_is_left_alone():
     assert _wrap_if_real(_site(optimize_path=stub), "optimize_path") is None
 
 
-def test_objects_without_function_attributes_are_left_alone():
+def test_anything_that_is_not_the_origins_own_function_is_left_alone():
     class Callable:
         def __call__(self, *args, **kwargs):
             return "fake"
@@ -51,5 +48,8 @@ def test_objects_without_function_attributes_are_left_alone():
 
 
 def test_every_site_name_has_a_known_origin():
-    for names in ("optimize_path", "chip_evs"):
-        assert names in SOLVER_CACHE_ORIGINS
+    # A name added to SOLVER_CACHE_SITES without an origin would KeyError in the
+    # fixture, so check the sites themselves rather than a hand-kept list.
+    for names in SOLVER_CACHE_SITES.values():
+        for name in names:
+            assert name in SOLVER_CACHE_ORIGINS
