@@ -3,7 +3,7 @@ import copy
 import httpx
 import pytest
 
-from aigaffer.data.models import Fixture, Player, Team
+from aigaffer.data.models import EntryWeek, Fixture, HistoryRow, LiveStats, Player, Team
 
 from aigaffer.data.fpl_api import (
     RETRY_BACKOFF,
@@ -472,3 +472,55 @@ def test_a_player_carries_the_markets_pulse():
         payload.pop(field)
     bare = Player.model_validate(payload)
     assert (bare.transfers_in_event, bare.transfers_out_event, bare.cost_change_event) == (0, 0, 0)
+
+
+LIVE_JSON = {
+    "elements": [
+        {"id": 1, "stats": {"minutes": 90, "total_points": 6}, "explain": []},
+        {"id": 5, "stats": {"minutes": 0, "total_points": 0}, "explain": []},
+    ]
+}
+
+
+def test_an_event_reads_the_reviews_fields_and_defaults_without_them():
+    payload = copy.deepcopy(BOOTSTRAP_JSON)
+    payload["events"][0].update(data_checked=True, highest_score=121)
+    events = make_client({"/api/bootstrap-static/": payload}).bootstrap().events
+    assert (events[0].data_checked, events[0].average_entry_score, events[0].highest_score) == (True, 57, 121)
+    # GW2 carries neither key: an event built without them is as it was.
+    assert (events[1].data_checked, events[1].highest_score) == (False, None)
+
+
+def test_live_maps_each_player_to_his_minutes_and_points():
+    live = make_client({"/api/event/1/live/": LIVE_JSON}).live(1)
+    assert live == {1: LiveStats(minutes=90, total_points=6), 5: LiveStats(minutes=0, total_points=0)}
+
+
+def test_entry_week_keeps_what_picks_drops():
+    payload = copy.deepcopy(PICKS_JSON)
+    payload["active_chip"] = "3xc"
+    payload["automatic_subs"] = [{"entry": 42, "element_in": 2, "element_out": 6, "event": 1}]
+    payload["entry_history"]["points_on_bench"] = 9
+    payload["entry_history"]["event_transfers_cost"] = 4
+    week = make_client({"/api/entry/42/event/1/picks/": payload}).entry_week(42, 1)
+    assert isinstance(week, EntryWeek)
+    assert week.active_chip == "3xc"
+    assert week.automatic_subs == [(2, 6)]
+    assert (week.points, week.event_transfers_cost, week.points_on_bench, week.overall_rank) == (57, 4, 9, 1234567)
+    captain = next(p for p in week.picks if p.is_captain)
+    assert (captain.element, captain.multiplier) == (5, 2)
+
+
+def test_entry_week_reads_a_null_cost_and_bench_as_zero():
+    payload = copy.deepcopy(PICKS_JSON)
+    payload["entry_history"]["event_transfers_cost"] = None
+    week = make_client({"/api/entry/42/event/1/picks/": payload}).entry_week(42, 1)
+    assert (week.event_transfers_cost, week.points_on_bench) == (0, 0)
+
+
+def test_season_history_reads_the_current_rows():
+    payload = {"current": [{"event": 1, "points": 57, "total_points": 57, "rank": 9, "overall_rank": 1_000_000},
+                           {"event": 2, "points": 40, "total_points": 97, "rank": 9, "overall_rank": None}],
+               "past": [], "chips": []}
+    rows = make_client({"/api/entry/42/history/": payload}).season_history(42)
+    assert rows == [HistoryRow(event=1, points=57, overall_rank=1_000_000), HistoryRow(event=2, points=40, overall_rank=None)]

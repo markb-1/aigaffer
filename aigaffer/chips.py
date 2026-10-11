@@ -35,7 +35,9 @@ CHIP_API_NAMES = {
     FREE_HIT: "freehit",
     WILDCARD: "wildcard",
 }
-_FROM_API = {api: chip for chip, api in CHIP_API_NAMES.items()}
+# And back: the API's name for a chip, to ours. Public because the chip
+# forecast and the gameweek review read the API's names too.
+CHIPS_BY_API_NAME = {api: chip for chip, api in CHIP_API_NAMES.items()}
 
 FIRST_GW, LAST_GW = 1, 38
 
@@ -78,9 +80,9 @@ def chip_windows(rules: list[ChipRule]) -> tuple[ChipWindow, ...]:
     model the bot had before it knew about halves.
     """
     windows = tuple(
-        ChipWindow(_FROM_API[rule.name], rule.start_event, rule.stop_event)
+        ChipWindow(CHIPS_BY_API_NAME[rule.name], rule.start_event, rule.stop_event)
         for rule in rules
-        if rule.name in _FROM_API
+        if rule.name in CHIPS_BY_API_NAME
     )
     if windows:
         return windows
@@ -107,7 +109,7 @@ def rule_gaps(rules: list[ChipRule]) -> tuple[tuple[str, ...], tuple[str, ...]]:
     missing = tuple(chip for chip in CHIP_ORDER if CHIP_API_NAMES[chip] not in listed)
     if not missing:
         return (), ()
-    return missing, tuple(sorted(listed - set(_FROM_API)))
+    return missing, tuple(sorted(listed - set(CHIPS_BY_API_NAME)))
 
 
 def held_chips(
@@ -130,7 +132,7 @@ def held_chips(
     briefing panel — sees the later start and nothing else needs to know.
     """
     played = [
-        (_FROM_API.get(str(entry.get("name", "")).strip().lower()), entry.get("event"))
+        (CHIPS_BY_API_NAME.get(str(entry.get("name", "")).strip().lower()), entry.get("event"))
         for entry in chips_used
     ]
     free_hit_events = {

@@ -19,8 +19,11 @@ import httpx
 
 from aigaffer.data.models import (
     Bootstrap,
+    EntryWeek,
     Fixture,
     GwHistory,
+    HistoryRow,
+    LiveStats,
     PastSeason,
     Squad,
     Standing,
@@ -95,6 +98,36 @@ class FplClient:
     def chips_used(self, team_id: int) -> list[dict]:
         """Chips already played, as ``{"name": ..., "event": ...}`` dicts."""
         return self._get(f"/entry/{team_id}/history/").get("chips", [])
+
+    def live(self, event: int) -> dict[int, LiveStats]:
+        """Every player's minutes and points in ``event``, by id."""
+        data = self._get(f"/event/{event}/live/")
+        return {
+            element["id"]: LiveStats.model_validate(element.get("stats") or {})
+            for element in data.get("elements", [])
+        }
+
+    def entry_week(self, team_id: int, event: int) -> EntryWeek:
+        """The manager's played ``event`` as the review reads it (EntryWeek)."""
+        data = self._get(f"/entry/{team_id}/event/{event}/picks/")
+        history = data["entry_history"]
+        return EntryWeek(
+            picks=data["picks"],
+            active_chip=data.get("active_chip"),
+            automatic_subs=[
+                (sub["element_in"], sub["element_out"])
+                for sub in data.get("automatic_subs") or []
+            ],
+            points=history["points"],
+            event_transfers_cost=history.get("event_transfers_cost") or 0,
+            points_on_bench=history.get("points_on_bench") or 0,
+            overall_rank=history.get("overall_rank"),
+        )
+
+    def season_history(self, team_id: int) -> list[HistoryRow]:
+        """The manager's season so far, a row a gameweek."""
+        data = self._get(f"/entry/{team_id}/history/")
+        return [HistoryRow.model_validate(row) for row in data.get("current", [])]
 
     def element_summary(
         self, player_id: int

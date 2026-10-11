@@ -28,6 +28,7 @@ from zoneinfo import ZoneInfo
 from aigaffer.chips import (
     CHIP_API_NAMES,
     CHIP_ORDER,
+    CHIPS_BY_API_NAME,
     WILDCARD,
     HeldChip,
     held_in_week,
@@ -55,8 +56,6 @@ FOOTER = "Re-planned every run — this is the current thinking, not a commitmen
 # The owner's clock: a verdict stamped late on a Tuesday UTC night is
 # Wednesday's to him.
 LOCAL_ZONE = ZoneInfo("Europe/Dublin")
-
-_FROM_API = {api: chip for chip, api in CHIP_API_NAMES.items()}
 
 
 def _name(chip: str) -> str:
@@ -176,9 +175,9 @@ def render_forecast(
 
     played = sorted(
         (
-            (entry["event"], _FROM_API[str(entry.get("name", "")).strip().lower()])
+            (entry["event"], CHIPS_BY_API_NAME[str(entry.get("name", "")).strip().lower()])
             for entry in chips_used
-            if str(entry.get("name", "")).strip().lower() in _FROM_API
+            if str(entry.get("name", "")).strip().lower() in CHIPS_BY_API_NAME
             and isinstance(entry.get("event"), int)
         ),
         key=lambda item: item[0],
