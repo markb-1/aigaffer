@@ -23,3 +23,12 @@ def test_the_client_is_built_against_the_clock(monkeypatch):
     assert isinstance(client, Recorder)
     assert built == [{"api_key": "sk-test", "timeout": 300.0, "max_retries": 1}]
     assert (CLIENT_TIMEOUT_SECONDS, CLIENT_RETRIES) == (300.0, 1)
+
+
+def test_the_review_client_is_short_and_never_retries():
+    from aigaffer.manager.client import REVIEW_TIMEOUT_SECONDS, build_review_client
+
+    client = build_review_client(config(anthropic_api_key="sk-test"))
+    assert REVIEW_TIMEOUT_SECONDS == 180.0
+    assert client.max_retries == 0
+    assert client.timeout == REVIEW_TIMEOUT_SECONDS

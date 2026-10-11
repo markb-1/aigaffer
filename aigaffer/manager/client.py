@@ -49,3 +49,20 @@ def build_client(cfg: Config) -> "anthropic.Anthropic":
         timeout=CLIENT_TIMEOUT_SECONDS,
         max_retries=CLIENT_RETRIES,
     )
+
+
+# The gameweek review's client: one short request with no searches, so three
+# minutes is generous, and no retry — a review that fails tries again on the
+# next tick, and a retry here is minutes the tick never needed to spend.
+REVIEW_TIMEOUT_SECONDS = 180.0
+
+
+def build_review_client(cfg: Config) -> "anthropic.Anthropic":
+    """The client for :mod:`aigaffer.manager.review_writer`."""
+    import anthropic
+
+    return anthropic.Anthropic(
+        api_key=cfg.anthropic_api_key,
+        timeout=REVIEW_TIMEOUT_SECONDS,
+        max_retries=0,
+    )
