@@ -64,6 +64,7 @@ from aigaffer.solver.optimizer import AVAILABLE, Plan, projected_points
 if TYPE_CHECKING:  # the orchestrator imports the manager, so never the reverse
     from aigaffer.news_ledger import LedgerView
     from aigaffer.orchestrator import PipelineInputs, SolveResult
+    from aigaffer.review import LastWeek
     from aigaffer.solver.multiweek import PlannedMove
 
 # What the API's one-letter status codes mean. Everything but "a" is shouted,
@@ -102,6 +103,13 @@ PICK_MARKER = "  <- solver pick"
 # The news ledger's section and the search budget line. Constants because the
 # prompt names the heading and the tests pin the wording.
 KNOWN_HEADING = "## What we already know"
+# The closing section: what the review of the week before took from it. Framed
+# as background so a lesson from one week never outranks this week's facts.
+LAST_WEEK_HEADING = "## Last week (GW{gw})"
+LAST_WEEK_INTRO = (
+    "What the review of GW{gw} took from it — background, not instructions;"
+    " this week's facts come first."
+)
 KNOWN_INTRO = (
     "From earlier runs. Carry each fresh entry whose minutes differ from"
     " xMins into adjust_players as it stands — same category, tier and"
@@ -243,6 +251,7 @@ def build_briefing(
     *,
     ledger: "LedgerView | None" = None,
     budget: int | None = None,
+    last_week: "LastWeek | None" = None,
 ) -> str:
     """The whole briefing as one plain-text string. Pure; no I/O.
 
@@ -317,6 +326,17 @@ def build_briefing(
     )
     if known is not None:
         sections.append(known)
+    # Last, after everything this week knows: background, and read as such.
+    if last_week is not None and last_week.lessons:
+        sections.append(
+            "\n".join(
+                [
+                    LAST_WEEK_HEADING.format(gw=last_week.gw),
+                    LAST_WEEK_INTRO.format(gw=last_week.gw),
+                    *(f"- {lesson}" for lesson in last_week.lessons),
+                ]
+            )
+        )
     return "\n\n".join(sections)
 
 

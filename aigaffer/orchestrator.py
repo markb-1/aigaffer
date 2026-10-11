@@ -138,6 +138,7 @@ from aigaffer.report.render import (
     render_withheld,
 )
 from aigaffer.report.telegram import KEYBOARD, send_report
+from aigaffer.review import LastWeek, last_week as review_lessons
 from aigaffer.solver.calendar import (
     ChipCalendar,
     build_calendar,
@@ -557,6 +558,7 @@ def run_pipeline(
     gaffer = _consult(
         cfg, effective, solved, projections, xmins, prices, strengths=strengths,
         mode=mode, today=clock.date(), news=news,
+        last_week=review_lessons(store, effective.event.id),
     )
 
     # From here down the week is his, if there was a him: the plan he chose and
@@ -1792,6 +1794,7 @@ def _consult(
     mode: str | None = None,
     today: date | None = None,
     news: LedgerView | None = None,
+    last_week: LastWeek | None = None,
 ) -> "ManagerDecision | None":
     """Put the week to the manager, and come back with the week to enter.
 
@@ -1900,6 +1903,7 @@ def _consult(
             build_briefing(
                 inputs, solved, projections, inputs.free_transfers,
                 today=today, xmins=xmins, ledger=news, budget=budget,
+                last_week=last_week,
             ),
             resolver,
             today=today,
