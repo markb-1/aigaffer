@@ -1,8 +1,8 @@
 name: tests
 
 # The suite is the only thing standing between a bad edit and a missed report,
-# and it runs offline in seconds, so it runs on everything: every push, and
-# every pull request against any branch.
+# and it runs offline (about 1500 tests, a few minutes), so it runs on
+# everything: every push, and every pull request against any branch.
 on: [push, pull_request]
 
 jobs:
