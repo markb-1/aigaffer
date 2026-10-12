@@ -136,6 +136,30 @@ def test_a_bench_boost_week_starts_all_fifteen():
     assert len(f.starters) == 8 and f.chip == "bench_boost"
 
 
+def test_the_bench_is_named_in_order_with_minutes_and_points():
+    f = facts()
+    assert [(b.player_id, b.points, b.minutes, b.multiplier) for b in f.bench] == [(2, 2, 90, 0), (8, 8, 90, 0)]
+    # Bench players 2 and 8 sit at positions 12 and 13; FPL served bench=5.
+    assert (
+        f"Bench, in order (points, minutes): {NAMES[2]} 2 (90), {NAMES[8]} 8 (90); bench points 5."
+        in review_facts(f).splitlines()
+    )
+
+
+def test_a_bench_boost_week_has_no_bench_and_says_so():
+    picks = [pick(pid, pos, 2 if pid == 5 else 1, captain=pid == 5) for pos, pid in enumerate(range(1, 9), 1)]
+    f = facts(entry=entry(picks, chip="bboost"))
+    assert f.bench == ()
+    assert "Bench: none — the bench boost counted all fifteen." in review_facts(f).splitlines()
+
+
+def test_no_bench_without_a_chip_falls_back_to_the_points_line():
+    picks = [pick(pid, pos, 2 if pid == 5 else 1, captain=pid == 5) for pos, pid in enumerate(range(1, 9), 1)]
+    f = facts(entry=entry(picks, bench=0))
+    assert f.bench == ()
+    assert "Bench points: 0." in review_facts(f).splitlines()
+
+
 def test_transfers_net_of_hits_and_a_player_missing_from_live_scores_nothing():
     rows = [{"element_in": 7, "element_out": 99, "event": 2},
             {"element_in": 6, "element_out": 2, "event": 2},
@@ -305,6 +329,20 @@ def test_a_second_review_replaces_the_first_through_the_marker(tmp_path):
     append_review(tmp_path, 2, "<!-- looking-back gw2 -->\nfirst\n")
     append_review(tmp_path, 2, "<!-- looking-back gw2 -->\nsecond\n")
     assert (tmp_path / "GW2.md").read_text(encoding="utf-8") == "report\n\n\n<!-- looking-back gw2 -->\nsecond\n"
+
+
+def test_a_failed_replace_leaves_the_old_report_whole_and_no_temp_file(tmp_path, monkeypatch):
+    original = b"# GW2 report\r\nPlan: hold.\r\n"
+    (tmp_path / "GW2.md").write_bytes(original)
+
+    def boom(*args, **kwargs):
+        raise OSError("disk went away")
+
+    monkeypatch.setattr("aigaffer.review.os.replace", boom)
+    with pytest.raises(OSError):
+        append_review(tmp_path, 2, "<!-- looking-back gw2 -->\nsection\n")
+    assert (tmp_path / "GW2.md").read_bytes() == original
+    assert not (tmp_path / ".GW2.md.tmp").exists()
 
 
 def test_a_week_with_no_report_gets_the_section_alone(tmp_path):
@@ -478,7 +516,7 @@ def test_last_week_reads_the_review_before_this_week(tmp_path):
     assert last_week(store, 3) == LastWeek(gw=2, lessons=("Bench the rotation risk.",))
 
 
-def test_a_store_error_is_no_last_week_not_a_lost_report(tmp_path, monkeypatch):
+def test_a_store_error_is_no_last_week_not_a_lost_report(tmp_path, monkeypatch, capsys):
     # last_week runs inside run_pipeline, outside any try: a sqlite error or a
     # corrupt row raised here would abort the week's report for the sake of a
     # nice-to-have paragraph, so any failure to read means no review.
@@ -490,6 +528,7 @@ def test_a_store_error_is_no_last_week_not_a_lost_report(tmp_path, monkeypatch):
     monkeypatch.setattr(store, "decision", boom)
 
     assert last_week(store, 3) is None
+    assert "review: last week's lessons could not be read (OperationalError)" in capsys.readouterr().out
 
 
 def test_a_malformed_or_empty_review_record_is_no_last_week(tmp_path):
