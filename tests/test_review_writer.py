@@ -82,6 +82,26 @@ def test_an_api_error_is_unavailable():
         write_review(CFG, facts(), client=FakeClient([error]))
 
 
+def test_three_points_are_too_many_and_the_schema_and_prompt_say_two():
+    # The first live review ran to ~300 words; two points a list keeps it near 180.
+    with pytest.raises(ToolError):
+        validate_review({**GOOD, "lessons": ["a", "b", "c"]})
+    assert validate_review({**GOOD, "lessons": ["a", "b"]})[2] == ("a", "b")
+    client = FakeClient([reply(use(ANSWER, GOOD))])
+    write_review(CFG, facts(), client=client)
+    request = client.requests[0]
+    properties = request["tools"][0]["input_schema"]["properties"]
+    assert [properties[k]["maxItems"] for k in ("went_well", "went_wrong", "lessons")] == [2, 2, 2]
+    assert "up to two points each" in request["system"][0]["text"]
+    assert "100 to 180 words in total" in request["system"][0]["text"]
+
+
+def test_the_word_cap_is_250_and_the_error_says_to_aim_for_180():
+    assert REVIEW_MAX_WORDS == 250
+    with pytest.raises(ToolError, match="keep it near 180, and 250 at most"):
+        validate_review({**GOOD, "went_well": ["word " * 251]})
+
+
 def test_validation_caps_counts_and_words_and_flattens_lines():
     assert validate_review({**GOOD, "lessons": ["  Two\nlines  "]})[2] == ("Two lines",)
     with pytest.raises(ToolError):

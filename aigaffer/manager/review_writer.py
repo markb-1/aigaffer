@@ -22,15 +22,15 @@ from aigaffer.manager.tools import MARKUP, ToolError
 from aigaffer.review import ReviewUnavailable, WeekFacts, Written, review_facts
 
 ANSWER = "write_review"
-MAX_POINTS = 3
-REVIEW_MAX_WORDS = 350
+MAX_POINTS = 2
+REVIEW_MAX_WORDS = 250
 MAX_REQUESTS = 2
 
 SYSTEM_PROMPT = (
     "You are the gaffer of a Fantasy Premier League team, looking back at a"
     " gameweek that has finished. Use only the facts you are given; do not"
-    " guess at anything they do not say. Be honest and brief: 150 to 250"
-    " words in total. Give up to three points each for what went well, what"
+    " guess at anything they do not say. Be honest and brief: 100 to 180"
+    " words in total. Give up to two points each for what went well, what"
     " went wrong, and lessons for the coming weeks. A lesson is something a"
     " future decision could use — captaincy, minutes risk, hits, bench order,"
     " chip timing — not a restatement of the score. Bad luck is not a"
@@ -82,7 +82,7 @@ def validate_review(args: dict) -> tuple[tuple[str, ...], tuple[str, ...], tuple
         raise ToolError("Say at least one thing that went well or went wrong.")
     words = sum(len(point.split()) for points in lists for point in points)
     if words > REVIEW_MAX_WORDS:
-        raise ToolError(f"That is {words} words; keep it near 250, and {REVIEW_MAX_WORDS} at most.")
+        raise ToolError(f"That is {words} words; keep it near 180, and {REVIEW_MAX_WORDS} at most.")
     return lists[0], lists[1], lists[2]
 
 

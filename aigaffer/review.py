@@ -15,6 +15,7 @@ same :class:`WeekFacts` renders both the text the gaffer reads and the lines
 the report prints, so the two cannot disagree.
 """
 
+import os
 from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
@@ -22,7 +23,7 @@ from typing import TYPE_CHECKING
 
 import httpx
 
-from aigaffer.chips import CHIPS_BY_API_NAME, FREE_HIT
+from aigaffer.chips import BENCH_BOOST, CHIPS_BY_API_NAME, FREE_HIT
 from aigaffer.data.models import Bootstrap, EntryPick, EntryWeek, HistoryRow, LiveStats
 from aigaffer.executed import NO_CHIP, Verdict
 from aigaffer.report.render import POSITIONS, chip_label
@@ -104,6 +105,7 @@ class WeekFacts:
     rank_before: int | None
     rank_after: int | None
     starters: tuple[Starter, ...]
+    bench: tuple[Starter, ...]
     captain: Starter | None
     best_in_xi: Starter | None
     auto_subs: tuple[tuple[Scored, Scored], ...]
@@ -189,6 +191,10 @@ def build_facts(
     armband = next((p for p in ordered if p.multiplier >= 2), None)
     if armband is None:
         armband = next((p for p in ordered if p.is_captain), None)
+    # Everyone the endpoint left at multiplier 0, in bench order: on a bench
+    # boost week nobody, because all fifteen counted. Named with minutes and
+    # points so the gaffer can say whether the bench points were avoidable.
+    bench = tuple(starter(p) for p in ordered if p.multiplier == 0)
     captain = None if armband is None else starter(armband)
     if captain is not None and armband.multiplier < 2:
         captain = replace(captain, multiplier=0)
@@ -213,6 +219,7 @@ def build_facts(
         rank_before=ranks.get(gw - 1),
         rank_after=ranks.get(gw, entry.overall_rank),
         starters=starters,
+        bench=bench,
         captain=captain,
         best_in_xi=best,
         auto_subs=tuple(
@@ -328,7 +335,13 @@ def review_facts(facts: WeekFacts) -> str:
         lines.append(f"Best in the XI: {facts.best_in_xi.name} {facts.best_in_xi.points}.")
     subs = "; ".join(f"{i.name} ({i.points}) on for {o.name} ({o.points})" for i, o in facts.auto_subs)
     lines.append(f"Automatic substitutions: {subs or 'none'}.")
-    lines.append(f"Bench points: {facts.bench_points}.")
+    if facts.bench:
+        order = ", ".join(f"{b.name} {b.points} ({b.minutes})" for b in facts.bench)
+        lines.append(f"Bench, in order (points, minutes): {order}; bench points {facts.bench_points}.")
+    elif facts.chip == BENCH_BOOST:
+        lines.append("Bench: none — the bench boost counted all fifteen.")
+    else:
+        lines.append(f"Bench points: {facts.bench_points}.")
     if facts.transfers_in or facts.transfers_out:
         temporary = " (free hit: the moves were for this week only)" if facts.free_hit else ""
         lines.append(
@@ -441,6 +454,11 @@ def append_review(root: Path, gw: int, section: str) -> None:
     section; a week with no report gets a file holding the section alone.
     Read and written as bytes-faithful text (``newline=""``), so a CRLF
     report or one with no final newline keeps exactly the bytes it had.
+
+    The rewrite goes to a sibling temp file and is swapped in with
+    ``os.replace``, so a crash mid-write leaves the old report whole. The
+    temp file's leading dot keeps run-tick.sh's ``GW*.md`` glob from
+    committing a leftover.
     """
     path = root / f"GW{gw}.md"
     marker = MARKER.format(n=gw)
@@ -451,8 +469,14 @@ def append_review(root: Path, gw: int, section: str) -> None:
         text = handle.read()
     cut = text.find(marker)
     head = text[:cut] if cut >= 0 else text + "\n\n"
-    with path.open("w", encoding="utf-8", newline="") as handle:
-        handle.write(head + section)
+    temp = root / f".GW{gw}.md.tmp"
+    try:
+        with temp.open("w", encoding="utf-8", newline="") as handle:
+            handle.write(head + section)
+        os.replace(temp, path)
+    except BaseException:
+        temp.unlink(missing_ok=True)
+        raise
 
 
 def review_record(facts: WeekFacts, written: Written) -> dict:
@@ -591,7 +615,8 @@ def last_week(store: "Store", gw: int) -> LastWeek | None:
     # week its report.
     try:
         record = store.decision(gw - 1, REVIEW_MODE)
-    except Exception:
+    except Exception as error:
+        print(f"review: last week's lessons could not be read ({type(error).__name__})")
         return None
     lessons = record.get("lessons") if isinstance(record, dict) else None
     if not isinstance(lessons, list):
