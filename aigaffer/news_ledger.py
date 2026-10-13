@@ -40,9 +40,12 @@ CATEGORIES = (NAILED, ROTATION, DOUBT, TEST_ON_DAY, INJURED, SUSPENDED, ILL)
 # Social media is not a tier: it may prompt a search and never sets anything.
 TIERS = (1, 2, 3)
 
-# Searches a run should need when the ledger is doing its job (the expert's
-# estimates). Passing one is a defect signal on the log, never a stop.
-SEARCH_BUDGET = {"early": 6, "scout": 6, "deadline": 10}
+# Searches a run may spend, stated in its briefing. Passing one is a defect
+# signal on the log, never a stop. First set to the expert's estimates of what
+# a run needs with the ledger doing its job (6/6/10); raised to 15 each on the
+# owner's word (2026-10-13) after the GW7 early scout ran out with six
+# starters' clubs unchecked.
+SEARCH_BUDGET = {"early": 15, "scout": 15, "deadline": 15}
 
 # How long an entry stays fresh after it was checked, by category. A test on
 # the day is never fresh on read (one look per run); a nailed starter is also
