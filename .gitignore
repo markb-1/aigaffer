@@ -16,3 +16,6 @@ state/executed/.*.tmp
 # A news-ledger write interrupted mid-way (write_ledger renames it into place);
 # run-tick.sh does `git add state/`, so it must not be committed.
 state/news/.*.tmp
+
+# A review append interrupted mid-way (append_review renames it into place).
+/.GW*.md.tmp

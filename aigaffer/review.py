@@ -15,6 +15,7 @@ same :class:`WeekFacts` renders both the text the gaffer reads and the lines
 the report prints, so the two cannot disagree.
 """
 
+import contextlib
 import os
 from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass, replace
@@ -475,7 +476,9 @@ def append_review(root: Path, gw: int, section: str) -> None:
             handle.write(head + section)
         os.replace(temp, path)
     except BaseException:
-        temp.unlink(missing_ok=True)
+        # Cleaning up must never mask the error that brought us here.
+        with contextlib.suppress(OSError):
+            temp.unlink(missing_ok=True)
         raise
 
 

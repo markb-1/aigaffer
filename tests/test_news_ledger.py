@@ -89,7 +89,7 @@ def judge(players: list[Player], raw: dict, fixtures=FIXTURES, event=EVENT, now=
 def test_the_vocabulary_is_the_specs():
     assert CATEGORIES == ("nailed", "rotation", "doubt", "test_on_day", "injured", "suspended", "ill")
     assert TIERS == (1, 2, 3)
-    assert SEARCH_BUDGET == {"early": 6, "scout": 6, "deadline": 10}
+    assert SEARCH_BUDGET == {"early": 15, "scout": 15, "deadline": 15}
 
 
 def test_a_player_gains_fpls_news_fields_with_quiet_defaults():

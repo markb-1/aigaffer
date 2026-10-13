@@ -1956,11 +1956,11 @@ def test_an_existing_ledger_reaches_the_briefing_and_the_budget_is_stated(monkey
     # (status "a", chance None) is a GW1 doubt read in GW2, so rule 4 fires.
     text = gaffer.consults[0].briefing
     assert "## What we already know" in text and "re-check — a new gameweek" in text
-    assert "Search budget this run: 6 searches" in text
+    assert "Search budget this run: 15 searches" in text
     assert gaffer.kwargs[0]["today"] == PAST_THE_FLOOR.date()
 
 
-@pytest.mark.parametrize(("mode", "budget"), [("scout", 6), ("deadline", 10)])
+@pytest.mark.parametrize(("mode", "budget"), [("early", 15), ("scout", 15), ("deadline", 15)])
 def test_a_run_past_its_budget_says_so_on_the_log(monkeypatch, tmp_path, capsys, mode, budget):
     spent = budget + 1
     gaffer_run(monkeypatch, tmp_path, decide=lambda c: decided(c, searches=spent), mode=mode)
