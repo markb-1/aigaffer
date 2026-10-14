@@ -1,0 +1,21 @@
+{
+  "173": {
+    "category": "nailed",
+    "checked_at": "2026-10-14T22:35:04.445830+00:00",
+    "expected_minutes": 88.0,
+    "fpl": {
+      "chance_of_playing_next_round": null,
+      "news": "",
+      "news_added": null,
+      "status": "a"
+    },
+    "gw": 7,
+    "note": "Bobby Thomas started at centre-back in Coventry's 4-1 win over Newcastle on Mon 12 Oct (confirmed line-ups, several outlets). No injury reported. Nailed starter.",
+    "player_id": 173,
+    "quote_date": "2026-10-12",
+    "return_gw": null,
+    "run": "scout",
+    "source": "Confirmed line-ups Coventry v Newcastle (multiple outlets)",
+    "tier": 2
+  }
+}

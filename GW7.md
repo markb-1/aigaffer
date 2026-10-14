@@ -1,68 +1,71 @@
-# AI Gaffer — GW7 early scout
+# AI Gaffer — GW7 scout
 
 Deadline: Sat 17 Oct 2026 10:00 UTC
 
 ## Do this
 
 ⏰ Make these by Sat 17 Oct 2026 10:00 UTC — GW7
-SELL Verbruggen (GKP BHA £4.5m) → BUY Raya (GKP ARS £6.1m)
-SELL B.Fernandes (MID MUN £11.9m) → BUY Tavernier (MID BOU £6.1m)
+SELL Diop (DEF IPS £4.0m) → BUY Tavernier (MID BOU £6.1m)
+SELL B.Fernandes (MID MUN £11.9m) → BUY Thomas (DEF COV £4.0m)
+SELL I.Sangaré (MID NFO £4.8m) → BUY Xhaka (MID SUN £5.4m)
 CAPTAIN Haaland · VICE Mbeumo
-Set lineup (4-3-3): Tzolakis; Calafiori, Muharemović, Guéhi, Vuskovic; Tavernier, Groß, Mbeumo; João Pedro, Calvert-Lewin, Haaland
+Set lineup (4-4-2): Tzolakis; Calafiori, Thomas, Guéhi, Vuskovic; Tavernier, Groß, Mbeumo, Xhaka; Calvert-Lewin, Haaland
 
 ## Recommendation
 
-2 transfers, no hit.
+3 transfers, no hit.
 
-- Out: Verbruggen (GKP, BHA, £4.5m), B.Fernandes (MID, MUN, £11.9m)
-- In: Raya (GKP, ARS, £6.1m), Tavernier (MID, BOU, £6.1m)
+- Out: Diop (DEF, IPS, £4.0m), B.Fernandes (MID, MUN, £11.9m), I.Sangaré (MID, NFO, £4.8m)
+- In: Tavernier (MID, BOU, £6.1m), Thomas (DEF, COV, £4.0m), Xhaka (MID, SUN, £5.4m)
 
 ## The Gaffer's view
 
 WHAT I DID
-I played the solver's plan 0. It uses two of our three free transfers and takes no hit: Bruno Fernandes out, Tavernier (BOU) in, and Verbruggen out, Raya (ARS) in. Haaland is captain and Mbeumo vice. No chip this week. The solver's path saves the Bench Boost for GW8, and this move helps build the bench for it.
+I used all three free transfers. Diop and I.Sangaré go out. Neither was going to give you anything: Diop is projected 1.7, and Sangaré is down for 8 minutes. Bobby Thomas (COV, £4.0m) and Xhaka (SUN, £5.4m) come in for them. Bruno Fernandes goes out and Tavernier (BOU, £6.1m) comes in, which frees about £5.8m for later weeks. Haaland is captain and Mbeumo vice. No chip this week.
 
 WHAT I LEARNED
-- Bruno Fernandes: reports dated 12 Oct say he has a niggling fitness problem. Carrick played down fears that he needs time out, and Bruno started United's Champions League game at Atlético on Tuesday 13 Oct. So he isn't injured. He is carrying a knock and a heavy European workload, and 246k managers are selling him, so his price is falling. Selling him now gets out before it drops. I didn't cut his minutes because he is fit.
-- Tavernier: he was in Bournemouth's team against Chelsea on 10 Oct, and a preview says he had three goals in his first five games. I found no injury news from October. He does have a history of hamstring problems, so that is the risk I'm taking.
-- Raya and Calafiori: both played in Arsenal's 2-1 win over Leeds on 10 Oct, and Calafiori scored. Raya is the starter.
-- João Pedro: one stats site lists a knee knock as a game-time decision with an expected return of 10 Oct. His xMins is already 68. Last week's review warned me against cutting minutes on mixed fitness reports, so I left it alone.
-- I changed nobody's minutes, so I didn't need to re-run the solver. I used all six searches on the transfers and our starters. I didn't check Brighton, City, Leeds, Hull, Brentford, Ipswich or Forest, so news on Groß, Vuskovic, Haaland, Guéhi, Calvert-Lewin or Tzolakis may have been missed.
+- Thomas started Coventry's 4-1 win over Newcastle on Monday 12 Oct and there is no injury news. He is nailed, so I set him to 88 minutes (from 87). That is the only minutes change I made.
+- Xhaka has started every league game this season and is Sunderland's captain. He is listed to start the Europa League game in Portugal on Thursday. He is 34, so there is a small chance he is rested on the weekend. I left him at 90.
+- Tavernier is not on Bournemouth's injury list. Marco Rose's press conference on 14 Oct listed Kroupi, Scott, Kluivert, Adli and others as out, but not him. Bournemouth play Sturm Graz on Thursday and are 18th, so some rotation is possible. The 81 minutes the model already has looks fair.
+- Fernandes is playing through a knock. Carrick (12 Oct) says he isn't fully fit but doesn't need a break, so I'm not selling an injured player. This sale is about the money and a marginal projection.
+- Haaland was a fitness worry after Norway duty, but he started at Anfield on 11 Oct, and City are reported to have a fully fit squad. Guéhi is starting too.
+- Groß, Vuskovic and Verbruggen all started Brighton's 2-0 win over Sunderland on 10 Oct, and Hürzeler says no one is ruled out. Calvert-Lewin played against Arsenal after the international break.
+- What I didn't check: I ran out of searches before covering Arsenal (Calafiori), Chelsea (João Pedro), Leeds' defence (Muharemović) and Everton.
 
 WHY THIS PLAN
-Plan 0 is 8.6 points ahead of rolling over the six-week window, with no hit. That margin is bigger than the noise in the projections. The reasoning is that £11.9m on Bruno buys a Tavernier projected about the same (20.4 v 21.3 xP6) plus a big keeper upgrade, Raya at 18.1 against Verbruggen at 14.7. That also sets up the GW8 bench.
-- Plans 1 and 2 use all three transfers for slightly less (+8.3 and +6.8), and both would buy Tarkowski, whom I hadn't checked.
-- Plan 3, Bruno for Dewsbury-Hall alone, is only +3.8.
-- Rolling to four free transfers isn't worth giving up 8.6 points, and Bruno's niggle and falling price point the same way as the solver.
-Haaland is captain as the top projection in the side (6.7). Mbeumo is vice.
+The solver's margins are all within the noise. Plan 0 was +1.9 over rolling. After I re-ran it, the solver switched to plan 5, at +3.1 over rolling, which buys Tarkowski and Dewsbury-Hall instead of Thomas and Xhaka. That switch came after I changed Thomas by just one minute, which tells you how close these plans are. I hadn't checked the two Everton players, and the brief is never to bring in someone I haven't checked. Plan 0's three buys are all checked, so I picked it over a gain of about 1.3 that may just be noise.
+Why not roll? The roll plan makes these same moves next week anyway: out go Diop, Sangaré and Fernandes, in comes Tavernier. Making them now gets a week of points from three players who will actually play. One caveat: plan 0's numbers are from before the re-run. Since the only change was one minute for Thomas, they should barely move.
+Price note: Fernandes is being heavily sold (294k net out), so he may drop £0.1m before the deadline. Selling tonight rather than Saturday would likely keep that money.
 
-7 web searches. Decided by the gaffer.
+Minutes he overruled:
 
-## Starting XI (4-3-3)
+- Set Thomas to 88 mins — Bobby Thomas started at centre-back in Coventry's 4-1 win over Newcastle on Mon 12 Oct (confirmed line-ups, several outlets). No injury reported. Nailed starter.
+
+13 web searches. Decided by the gaffer.
+
+## Starting XI (4-4-2)
 
 - GKP: Tzolakis
-- DEF: Guéhi, Calafiori, Vuskovic, Muharemović
-- MID: Mbeumo (V), Tavernier, Groß
-- FWD: Haaland (C), Calvert-Lewin, João Pedro
-- Bench: 1. Raya (GKP), 2. Lewis-Potter (MID), 3. Diop (DEF), 4. I.Sangaré (MID)
+- DEF: Guéhi, Calafiori, Thomas, Vuskovic
+- MID: Mbeumo (V), Tavernier, Groß, Xhaka
+- FWD: Haaland (C), Calvert-Lewin
+- Bench: 1. Verbruggen (GKP), 2. Muharemović (DEF), 3. João Pedro (FWD), 4. Lewis-Potter (MID)
 
 ## Candidate plans
 
 xP and net are the whole window, decayed and with the armband in; transfers and hits shown are this week's unless the row says otherwise.
 
-- 2 transfers | 0 hits | 256.7 xP | 256.7 net  <- recommended
-- 3 transfers | 0 hits | 256.4 xP | 256.4 net
-- 3 transfers | 0 hits | 254.9 xP | 254.9 net
-- 1 transfer | 0 hits | 251.8 xP | 251.8 net
-- 0 transfers | 0 hits | 248.0 xP | 248.0 net
+- 3 transfers | 0 hits | 256.4 xP | 256.4 net  <- recommended
+- 3 transfers | 0 hits | 255.0 xP | 255.0 net
+- 0 transfers | 0 hits | 254.5 xP | 254.5 net
+- 1 transfer | 0 hits | 254.3 xP | 254.3 net
+- 2 transfers | 0 hits | 253.9 xP | 253.9 net
 
 ## The road ahead
 
-- GW8: out Diop (£4.0m), I.Sangaré (£4.8m), in Thomas (£4.0m), Gibbs-White (£8.0m) — 2 FTs, no hit — Bench Boost
-- GW9: out Vuskovic (£5.0m), in Tarkowski (£6.2m) — 1 FT, no hit
-- GW10: out Lewis-Potter (£5.5m), in Janelt (£5.0m) — 1 FT, no hit
-- GW11: out Muharemović (£5.0m), in Justin (£4.5m) — 1 FT, no hit
-- GW12: out Raya (£6.1m), in Verbruggen (£4.5m) — 1 FT, no hit
+- GW8: out Lewis-Potter (£5.5m), in Gibbs-White (£8.0m) — 1 FT, no hit — Triple Captain
+- GW9: out Vuskovic (£5.1m), in Tarkowski (£6.2m) — 1 FT, no hit
+- GW12: out Calafiori (£5.9m), Guéhi (£6.0m), in De Cuyper (£5.1m), Justin (£4.5m) — 2 FTs, no hit
 
 Advisory — re-planned every run; only this week's moves are ever made.
 
@@ -73,7 +76,7 @@ Points each chip would add this gameweek — except the wildcard, which is price
 - Bench boost: +9.7
 - Triple captain: +6.7
 - Free hit: +5.4
-- Wildcard: -16.1 xP over 6 GWs (horizon)
+- Wildcard: -22.6 xP over 6 GWs (horizon)
 
 ## Chip calendar
 
