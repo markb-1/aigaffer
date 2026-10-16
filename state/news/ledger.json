@@ -1,7 +1,7 @@
 {
   "173": {
     "category": "nailed",
-    "checked_at": "2026-10-14T22:35:04.445830+00:00",
+    "checked_at": "2026-10-16T16:35:04.393394+00:00",
     "expected_minutes": 88.0,
     "fpl": {
       "chance_of_playing_next_round": null,
@@ -10,12 +10,69 @@
       "status": "a"
     },
     "gw": 7,
-    "note": "Bobby Thomas started at centre-back in Coventry's 4-1 win over Newcastle on Mon 12 Oct (confirmed line-ups, several outlets). No injury reported. Nailed starter.",
+    "note": "Carried from earlier run: nailed starter for Coventry.",
     "player_id": 173,
     "quote_date": "2026-10-12",
     "return_gw": null,
-    "run": "scout",
-    "source": "Confirmed line-ups Coventry v Newcastle (multiple outlets)",
+    "run": "deadline",
+    "source": "earlier run (tier 2 report)",
     "tier": 2
+  },
+  "388": {
+    "category": "rotation",
+    "checked_at": "2026-10-16T16:35:04.393394+00:00",
+    "expected_minutes": 80.0,
+    "fpl": {
+      "chance_of_playing_next_round": null,
+      "news": "",
+      "news_added": null,
+      "status": "a"
+    },
+    "gw": 7,
+    "note": "Maresca named Gu\u00e9hi among players (with Haaland, Dias, Enzo, Anderson) who will need rest during a 7-games-in-22-days stretch. Squad fully fit; small rotation risk vs Ipswich.",
+    "player_id": 388,
+    "quote_date": "2026-10-16",
+    "return_gw": null,
+    "run": "deadline",
+    "source": "Man City official site",
+    "tier": 1
+  },
+  "411": {
+    "category": "rotation",
+    "checked_at": "2026-10-16T16:35:04.393394+00:00",
+    "expected_minutes": 78.0,
+    "fpl": {
+      "chance_of_playing_next_round": null,
+      "news": "",
+      "news_added": null,
+      "status": "a"
+    },
+    "gw": 7,
+    "note": "Maresca pre-Ipswich presser (Fri 16 Oct): Haaland in the squad but 'at some point we probably need to give him rest'; 7 games in 22 days, AEK Athens 3 days later. Vague, so a modest cut rather than a benching.",
+    "player_id": 411,
+    "quote_date": "2026-10-16",
+    "return_gw": null,
+    "run": "deadline",
+    "source": "Man City official site / Sports Mole",
+    "tier": 1
+  },
+  "68": {
+    "category": "nailed",
+    "checked_at": "2026-10-16T16:35:04.393394+00:00",
+    "expected_minutes": 85.0,
+    "fpl": {
+      "chance_of_playing_next_round": null,
+      "news": "",
+      "news_added": null,
+      "status": "a"
+    },
+    "gw": 7,
+    "note": "Fit; with Scott, Kroupi, Kluivert, Adli, Milosavljevic all out, predicted to lead Bournemouth's attack vs Sunderland.",
+    "player_id": 68,
+    "quote_date": "2026-10-15",
+    "return_gw": null,
+    "run": "deadline",
+    "source": "Bournemouth vs Sunderland predicted lineups preview",
+    "tier": 3
   }
 }
