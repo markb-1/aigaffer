@@ -51,6 +51,7 @@ free-transfer bank standing at each deadline.
 """
 
 from collections import Counter
+from dataclasses import replace
 
 import pulp
 import pytest
@@ -80,15 +81,18 @@ from aigaffer.solver.multiweek import (
     squad_one_week_score,
 )
 from aigaffer.solver.optimizer import (
-    BENCH_WEIGHT,
+    BOOSTED,
+    LEGACY,
     MAX_PER_CLUB,
     MAX_TRANSFERS,
     SQUAD_QUOTAS,
     SQUAD_SIZE,
+    WINDOW,
     Week1Lock,
     _grouped,
     candidate_pool,
     optimize,
+    resolve,
 )
 from aigaffer.solver.plans import (
     SWEEP_TIME_LIMIT,
@@ -2007,7 +2011,7 @@ def test_the_free_hit_xi_is_a_legal_fifteen_drawn_from_the_pool():
     budget = sum(players[p].now_cost for p in SQUAD)
 
     result = _best_one_week_squad(
-        pool, players, by_position, by_club, week_points, budget, SOLVER
+        pool, players, by_position, by_club, week_points, budget, SOLVER, LEGACY
     )
 
     assert result is not None
@@ -2255,7 +2259,7 @@ def test_the_hoisted_prices_are_the_per_week_side_calc():
     for w, event in enumerate([5, 6, 7], start=1):
         week_points = {p: projections[p].per_gw.get(event, 0.0) for p in pool}
         expected = _best_one_week_squad(
-            pool, players, by_position, by_club, week_points, budget, SOLVER
+            pool, players, by_position, by_club, week_points, budget, SOLVER, LEGACY
         )
         assert prices[w] == expected
     assert prices[1][0] == pytest.approx(74.4, abs=1e-4)
@@ -2737,13 +2741,13 @@ def test_a_riser_held_two_weeks_still_sells_at_the_ledger_price_in_week_three():
 
 
 def test_the_default_bench_weight_prices_the_free_hit_exactly_as_before():
-    # Threading a bench weight through the sub-solve must not move the free
+    # Threading the settings through the sub-solve must not move the free
     # hit's own price. GW5 is the lopsided week of the hoist test above:
     # fifteen heroes at 6.0 are a one-week squad worth an XI of 11 x 6.0 = 66.0,
     # the armband 6.0 and four benched at a tenth (0.1 x 4 x 6.0 = 2.4), 74.4.
-    # Were the default anything but BENCH_WEIGHT (at 1.0 the bench alone would
-    # be 24.0, 96.0 in all) the figure would move, and the helper's price, the
-    # default call and the explicit BENCH_WEIGHT call would stop agreeing.
+    # Were the default anything but the suite's LEGACY (at 1.0 the bench alone
+    # would be 24.0, 96.0 in all) the figure would move, and the helper's
+    # price, the default call and the explicit LEGACY call would stop agreeing.
     players, projections = flat_with_heroes(
         [5, 6, 7], spike_event=5, base=4.0, hero_value=6.0
     )
@@ -2755,11 +2759,12 @@ def test_the_default_bench_weight_prices_the_free_hit_exactly_as_before():
 
     before = _free_hit_prices(players, projections, SQUAD, 0, [5, 6, 7], None)
     default = _best_one_week_squad(
-        pool, players, by_position, by_club, week_points, budget, SOLVER
+        pool, players, by_position, by_club, week_points, budget, SOLVER,
+        resolve(None),
     )
     explicit = _best_one_week_squad(
         pool, players, by_position, by_club, week_points, budget, SOLVER,
-        bench_weight=BENCH_WEIGHT,
+        settings=LEGACY,
     )
 
     assert default == before[1] == explicit
@@ -2810,7 +2815,7 @@ def test_bench_weight_one_buys_a_bench_worth_playing():
 
     cheap = best_one_week_squads(players, projections, SQUAD, 40, [event])[event]
     full = best_one_week_squads(
-        players, projections, SQUAD, 40, [event], bench_weight=1.0
+        players, projections, SQUAD, 40, [event], settings=BOOSTED
     )[event]
 
     assert cheap[0] == pytest.approx(63.94, abs=1e-4)
@@ -3547,4 +3552,106 @@ def test_a_relaxed_triple_captain_cannot_split_the_armband(monkeypatch):
     )
 
     assert path.week1_chip == TRIPLE_CAPTAIN
+    assert bounds == [pytest.approx(plan.objective, abs=1e-6)]
+
+
+# --------------------------------------------------------------------------
+# Bench order (WindowSettings)
+# --------------------------------------------------------------------------
+
+# The bench terms alone: Task 3 adds the free-transfer credit and transfer
+# cost to WINDOW, and these tests are about the bench, so they hold those off.
+BENCH_ONLY = replace(WINDOW, ft_values=(), ft_use_penalty=0.0)
+
+
+def test_the_bench_is_valued_in_order_under_window():
+    # The spine's bench is keeper 2 (0.5), defenders 6 and 7 (0.5 each) and
+    # forward 15 (3.9). One week under WINDOW: XI 55.0, armband 6.0, keeper
+    # 0.03·0.5, outfield 0.25·3.9 + 0.08·0.5 + 0.02·0.5. Do nothing, so no
+    # penalty, and one FT kept: no credit.
+    #   0.015 + 0.975 + 0.04 + 0.01 = 1.04, so 62.04 in all — against LEGACY's
+    #   0.1 × 5.4 = 0.54: the first sub is worth more, the rest much less.
+    players, projections = spine([10])
+
+    plan, _ = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[10],
+        decay=DECAY, settings=BENCH_ONLY,
+    )
+
+    bench = 0.03 * 0.5 + 0.25 * 3.9 + 0.08 * 0.5 + 0.02 * 0.5
+    assert plan.transfers_in == []
+    assert sorted(set(plan.squad) - set(plan.xi)) == [2, 6, 7, 15]
+    assert plan.objective == pytest.approx(61.0 + bench, abs=1e-6)
+
+
+def test_legacy_is_the_flat_bench():
+    # The spine on two weeks under LEGACY is the module docstring's 61.54 a
+    # week, 61.54 + 0.85 × 61.54 = 113.849: the flat tenth, to the point.
+    players, projections = spine([10, 11])
+
+    plan, _ = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[10, 11],
+        decay=DECAY, settings=LEGACY,
+    )
+
+    assert plan.objective == pytest.approx(113.849, abs=1e-4)
+
+
+def test_a_bench_boost_week_counts_all_fifteen_in_full_under_window():
+    # The flat board at 6.0, one week, boost held: the fifteen score 15·6 + 6
+    # armband = 96, less the 20.0 bar = 76.0; unboosted it is 66 + 6 +
+    # 0.03·6 + (0.25 + 0.08 + 0.02)·6 = 74.28, so the boost is played.
+    players, projections = flat([10], 6.0)
+
+    plan, path = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[10],
+        decay=DECAY, held_chips=whole_season(BENCH_BOOST), settings=BENCH_ONLY,
+    )
+
+    assert path.week1_chip == BENCH_BOOST
+    assert plan.objective == pytest.approx(76.0, abs=1e-6)
+
+
+def test_ordered_bench_keeps_the_free_hit_pin_exact():
+    # The free-hit board from test_free_hit_fields_a_temp_squad_that_reverts,
+    # with the bench in order: the solve must still come back (an inexact pin
+    # would be infeasible or wrong), and the free-hit week is still played.
+    #
+    # GW10's best one-week squad is the fifteen heroes at 8.0: XI 88.0, the
+    # armband 8.0, a benched keeper 0.03 × 8.0 = 0.24 and three benched
+    # outfield men (0.25 + 0.08 + 0.02) × 8.0 = 2.8 — 99.04, less the 25.0
+    # bar: 74.04. GW11 and GW12 are the flat 4.0 squad held: 44.0 + 4.0 +
+    # 0.03 × 4.0 + 0.35 × 4.0 = 49.52. So 74.04 + 0.85 × 49.52 + 0.7225 ×
+    # 49.52 = 74.04 + 42.092 + 35.7782 = 151.9102.
+    players, projections = flat_with_heroes(
+        [10, 11, 12], spike_event=10, base=4.0, hero_value=8.0
+    )
+
+    answer = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=0, events=[10, 11, 12],
+        decay=DECAY, held_chips=whole_season(FREE_HIT), settings=BENCH_ONLY,
+    )
+
+    assert answer is not None
+    plan, path = answer
+    assert path.week1_chip == FREE_HIT
+    assert plan.transfers_in == []
+    assert plan.objective == pytest.approx(151.9102, abs=1e-4)
+
+
+def test_the_ordered_bench_relaxes_to_the_integer_optimum(monkeypatch):
+    # The slot rows are a transportation polytope over an integer bench, and
+    # the weights do not increase, so the assignment needs no binaries: the
+    # LP relaxation of the spine on two weeks under the ordered bench is the
+    # integer optimum itself. 62.04 a week (see
+    # test_the_bench_is_valued_in_order_under_window), 62.04 × 1.85 = 114.774.
+    bounds = _relaxed_bounds(monkeypatch)
+    players, projections = spine([10, 11])
+
+    plan, _ = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[10, 11],
+        decay=DECAY, settings=BENCH_ONLY,
+    )
+
+    assert plan.objective == pytest.approx(114.774, abs=1e-6)
     assert bounds == [pytest.approx(plan.objective, abs=1e-6)]

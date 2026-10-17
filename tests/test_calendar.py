@@ -95,7 +95,10 @@ from aigaffer.solver.calendar import (
     horizon_end,
 )
 from aigaffer.solver.multiweek import FALLBACK_BARS
-from aigaffer.solver.optimizer import BENCH_WEIGHT
+from aigaffer.solver import optimizer
+from aigaffer.solver.optimizer import BENCH_WEIGHT, BOOSTED, bench_score
+# The live settings, renamed: this module's WINDOW is a list of gameweeks.
+from aigaffer.solver.optimizer import WINDOW as WINDOW_SETTINGS
 
 TC19 = HeldChip(TRIPLE_CAPTAIN, 1, 19)
 BB19 = HeldChip(BENCH_BOOST, 1, 19)
@@ -390,7 +393,7 @@ def test_the_bench_boost_values_the_four_worst_of_the_fifteen(board_beyond_windo
     real = calendar.best_one_week_squads
 
     def scrambled(*args, **kwargs):
-        assert kwargs["bench_weight"] == 1.0
+        assert kwargs["settings"] == BOOSTED
         return {
             w: (value, fifteen, [p for p in fifteen if p not in {9, 10, 11, 12}])
             for w, (value, fifteen, _) in real(*args, **kwargs).items()
@@ -543,3 +546,21 @@ def test_a_window_across_the_halves_saves_each_set_on_its_own(monkeypatch):
     ]
     assert asked[0][0] == {"triple_captain@19": {}}
     assert set(asked[1][0]["triple_captain@38"]) == set(range(21, 39))
+
+
+def test_the_bench_boost_gain_is_the_full_bench_less_the_ordered_bench(board_beyond_window, monkeypatch):
+    # Under the live window settings the boost's gain is what the window does
+    # not already score: the bench in full, less the bench by order. The
+    # all-squad-points fifteen and its line-up are the docstring's: bench 2
+    # (0.5, the spare keeper), 15 (3.9), 16 and 17 (3.0) in every week, 10.4
+    # in full. In order: 0.03 × 0.5 + 0.25 × 3.9 + 0.08 × 3.0 + 0.02 × 3.0 =
+    # 0.015 + 0.975 + 0.24 + 0.06 = 1.29. So 0.7 × (10.4 − 1.29) = 0.7 × 9.11
+    # = 6.377 in GW8, 9 and 10 — against LEGACY's 0.7 × 0.9 × 10.4 = 6.552.
+    monkeypatch.setattr(optimizer, "DEFAULT_SETTINGS", WINDOW_SETTINGS)
+    b = board_beyond_window
+
+    values = _values(BENCH_BOOST, [8, 9, 10], b.players, b.projections, b.xmins, b.squad, b.bank, None)
+
+    expected = PROXY_SCALE[BENCH_BOOST] * (10.4 - bench_score(WINDOW_SETTINGS, [0.5], [3.9, 3.0, 3.0]))
+    assert expected == pytest.approx(6.377, abs=1e-9)
+    assert values == {w: pytest.approx(expected, abs=1e-6) for w in (8, 9, 10)}

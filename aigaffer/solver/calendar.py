@@ -48,7 +48,7 @@ from aigaffer.solver.multiweek import (
     best_one_week_squads,
     squad_one_week,
 )
-from aigaffer.solver.optimizer import AVAILABLE, BENCH_WEIGHT
+from aigaffer.solver.optimizer import AVAILABLE, BOOSTED, GOALKEEPER, bench_score, resolve
 
 # How much less a week further out is worth: gentle, because a chip held is
 # not a chip lost while its window is open. First guess; one place.
@@ -223,13 +223,15 @@ def _values(
     if chip == BENCH_BOOST:
         priced = best_one_week_squads(
             players, projections, current_squad, bank, weeks,
-            bench_weight=1.0, selling_prices=selling_prices,
+            settings=BOOSTED, selling_prices=selling_prices,
         )
-        # At bench weight 1 the solve's own eleven is arbitrary — every squad
+        # Under BOOSTED the solve's own eleven is arbitrary — every squad
         # point counts the same — so the fifteen it bought is lined up again
-        # on the window's basis, and the bench is what that leaves. 0.9 is the
-        # window's own bench-boost gain: the bench it was already scoring at
-        # BENCH_WEIGHT is not new.
+        # on the window's basis, and the bench is what that leaves. The gain
+        # is the window's own bench-boost gain: the full bench, less what the
+        # window already scored it at by order (bench_score), which is not new.
+        # Read at call time, so it is the same settings the window plans with.
+        settings = resolve(None)
         values = {}
         for w, answer in priced.items():
             if answer is None:
@@ -238,10 +240,14 @@ def _values(
             _, _, xi = squad_one_week(players, projections, fifteen, w)
             if not xi:  # no eleven, so no bench to tell from the rest: not priced
                 continue
-            bench = set(fifteen) - set(xi)
-            values[w] = scale * (1 - BENCH_WEIGHT) * sum(
-                _projected(projections, p, w) for p in bench
+            bench = sorted(set(fifteen) - set(xi))
+            full = sum(_projected(projections, p, w) for p in bench)
+            ordered = bench_score(
+                settings,
+                [_projected(projections, p, w) for p in bench if players[p].element_type == GOALKEEPER],
+                [_projected(projections, p, w) for p in bench if players[p].element_type != GOALKEEPER],
             )
+            values[w] = scale * (full - ordered)
         return values
     priced = best_one_week_squads(
         players, projections, current_squad, bank, weeks, selling_prices=selling_prices,
