@@ -456,3 +456,27 @@ def test_an_unknown_mode_is_refused(tmp_path):
     assert "weekly" not in MODES_ORDER
     with pytest.raises(ValueError, match="weekly"):
         write_snapshot(tmp_path, 8, "weekly", snapshot())
+
+
+# --- the skipped transfers -------------------------------------------------
+
+
+def test_the_snapshot_lists_the_transfers_the_chosen_plan_skipped():
+    """Chosen = the roll (plan 0), so Cucurella (plan 1's buy) is skipped.
+
+    He is the only unowned DEF, so he is both a top-three DEF and a plan-1 buy:
+    one row. He replaces Justin, the only squad DEF: totals are 7.2 and 5.5
+    (5.502 to two decimals), so the gap is 1.7. Price 61 against bank 13 + Justin's sale 45 = 58: 61 > 58,
+    unaffordable, and 61 - 45 = 16 tenths over the sale.
+    """
+    result = snapshot(plans={0: ROLL, 1: SWAP}, chosen_id=0)
+    assert result["skipped"] == [
+        {
+            "id": 5,
+            "pos": "DEF",
+            "replaces": 4,
+            "gap": 1.7,
+            "price_diff": 16,
+            "tag": "unaffordable",
+        }
+    ]

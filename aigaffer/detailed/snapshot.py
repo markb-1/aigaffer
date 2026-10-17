@@ -34,7 +34,8 @@ from pathlib import Path
 from aigaffer.data.models import Bootstrap, Event, Fixture
 from aigaffer.model.xp import PlayerProjection, projected_events
 from aigaffer.report.render import POSITIONS
-from aigaffer.solver.optimizer import Plan
+from aigaffer.detailed.skipped import skipped_transfers
+from aigaffer.solver.optimizer import Plan, resolve
 
 # The order a gameweek's runs happen in. "The latest" snapshot is the last of
 # these that exists for the highest gameweek, and "What changed" walks them in
@@ -72,6 +73,7 @@ def build_snapshot(
     freehit: tuple[list[int], list[int]] | None,
     bank: int,
     shortlist: int,
+    decay: float = 0.85,
 ) -> dict:
     """The run, as one JSON-ready dict.
 
@@ -82,6 +84,10 @@ def build_snapshot(
     ``shortlist`` is how many of its ids the briefing printed: every id at or
     above it came from a re-solve, which is how a plan is marked ``resolved``
     with no field of its own on :class:`Plan`.
+
+    ``decay`` is the window's per-gameweek discount, the run's ``cfg.decay``
+    (the default is the configured 0.85); the skipped-transfer pass needs it to
+    price a lost free-transfer step the way the solver does.
 
     ``decision`` is the run's decision record, read for what it settled: this
     week's free transfers, the armbands, the bench in substitution order, the
@@ -143,6 +149,18 @@ def build_snapshot(
     fielded = freehit[0] if freehit is not None else plans[chosen_id].squad
     xi = list(freehit[1]) if freehit is not None else [p for p in fielded if p not in bench]
 
+    skipped = skipped_transfers(
+        players,
+        list(squad_ids),
+        {pid: _plan(plan, pid >= shortlist) for pid, plan in plans.items()},
+        chosen_id,
+        bank,
+        decision.get("free_transfers"),
+        decay,
+        len(events),
+        resolve(None),
+    )
+
     return {
         "gw": event.id,
         "mode": mode,
@@ -170,9 +188,8 @@ def build_snapshot(
         "freehit": (
             None if freehit is None else {"squad": list(freehit[0]), "xi": list(freehit[1])}
         ),
-        # The transfers the run passed over, and why each lost — filled in by
-        # the skipped-transfer pass once it exists; empty until then.
-        "skipped": [],
+        # The transfers the run passed over, and why each lost.
+        "skipped": skipped,
     }
 
 
