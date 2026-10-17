@@ -81,6 +81,13 @@ is pinned from above alone, ``z ≤ transfers[w]`` and ``z ≤ SQUAD_SIZE·wc[w]
 and needs no floor for the same reason ``ft`` itself needs none: it appears
 only on the raise-``ft`` side of the one carry row, so the solver has every
 reason to push it to the smaller of its two ceilings and none to hold it down.
+The per-transfer cost (``ft_use_penalty``, below) charges ``transfers − z``
+in a week a wildcard may be played, so it gives ``z`` a positive coefficient
+in the objective as well — one more reason to push it up and still none to
+hold it down — and the same holds for the terminal credit's row, which
+reads the same carry for the week after the window. So ``z`` is still pinned
+only from above, and is still pushed to ``min(transfers, 15·wc)``: the cost
+is nothing in a wildcarded week and the week's moves in any other.
 At ``wc = 0`` that smaller ceiling is zero and the carry is the game's
 unchanged; at ``wc = 1`` it is ``transfers[w]`` and the carry becomes
 ``ft[w]`` — exact at both binary points, which is the whole of what the
@@ -405,6 +412,15 @@ class PlannedPath:
     window weeks he was charged for. Those are the weeks the *solver* sat him,
     which can be fewer than a report's bench shows, since the report re-picks
     its eleven on xP alone; a bench-boost or free-hit week is never one of them.
+
+    ``ft_kept`` is the free transfers the plan hands the week after the window,
+    by the game's own rule replayed on the plan (a wildcard or free-hit week
+    keeps its bank and earns no +1; five is the most). ``ft_credit`` is what the
+    objective credited for them against holding one, decayed as the week after
+    the window would be, and nothing under settings with no ``ft_values``;
+    ``transfer_cost`` is the per-transfer cost it paid, for every move outside
+    a wildcard week. ``objective`` carries both, and ``xp_total`` neither:
+    they are not points anyone scores.
     """
 
     moves: list[PlannedMove]
@@ -417,6 +433,9 @@ class PlannedPath:
     bars_paid: float = 0.0
     bench_charge: float = 0.0
     benched_buys: dict[int, int] = field(default_factory=dict)
+    ft_kept: int = 0
+    ft_credit: float = 0.0
+    transfer_cost: float = 0.0
 
 
 def optimize_path(
@@ -786,6 +805,29 @@ def optimize_path(
         w: problem.add_variable(f"yfh{w}", lowBound=0) for w in chip_weeks[FREE_HIT]
     }
 
+    def carry_into(w: int):
+        """The ceiling on the free transfers entering the week after window
+        week ``w``: what was banked, less the week's moves, plus what it paid
+        for and the week's own +1 — none after a wildcard or free hit, which
+        earn no transfer for the week after them, and a wildcarded week's
+        moves handed back. ``banked`` lands on integers at every integer point,
+        because every ceiling on it is integral.
+
+        One function for both places that need it: the carry row between two
+        window weeks, and the terminal credit's ceiling on what the window
+        hands the week after its last — so the two can never disagree about
+        what a wildcard or a free hit does to the bank."""
+        carry = banked[w] - moves[w] + paid[w] + 1
+        if w == 1 and week1_free:
+            # The recorded wildcard's add-back and no +1: the carry is the
+            # bank it found, whatever it moved.
+            carry = carry + moves[1] - 1
+        elif w in z_wc:
+            carry = carry + z_wc[w] - on(WILDCARD, w)
+        if w in y_fh:
+            carry = carry - on(FREE_HIT, w)
+        return carry
+
     def bench_charge(w: int):
         """What week ``w``'s bench costs in charged signings, undecayed. In a
         week a bench boost may be played, ``z_bb`` is the bench when it is, so
@@ -890,6 +932,46 @@ def optimize_path(
             )
             for w in chip_weeks[FREE_HIT]
         )
+
+    # The free transfers the window hands the week after its last, valued as a
+    # concave staircase: ``ft_end`` is what is carried, capped at the game's
+    # five by its bound and at ``carry_into(last)`` by its row, and it is cut
+    # into unit steps each worth its own ``ft_values`` entry. No binaries: the
+    # values do not increase, so a maximiser fills the steps in order without
+    # being told to, and the staircase is exact. Under WINDOW there are five
+    # values for the five the cap allows; more could never fill. With no
+    # values (LEGACY) nothing here is built and the model is the one it was.
+    last = weeks[-1]
+    ft_steps = []
+    if settings.ft_values:
+        ft_end = problem.add_variable("ftend", lowBound=0, upBound=MAX_FREE_TRANSFERS)
+        ft_steps = [
+            problem.add_variable(f"ftstep{k}", lowBound=0, upBound=1)
+            for k in range(1, len(settings.ft_values) + 1)
+        ]
+        problem += ft_end <= carry_into(last)
+        problem += ft_end == pulp.lpSum(ft_steps)
+        # The credit against holding one (spec R14): the steps fill in order
+        # only because the values do not increase, so the first FT's value is
+        # in the steps and taken back off here as a constant — the solver's
+        # objective and the recompute's are then the same number, and net
+        # carries no constant.
+        objective += decay ** last * (
+            pulp.lpSum(value * step for value, step in zip(settings.ft_values, ft_steps))
+            - settings.ft_values[0]
+        )
+    # A transfer costs a little, so that one worth less than that waits a
+    # week. Undecayed, like a hit. Nothing in a recorded-wildcard week 1, and
+    # in a week a wildcard may be played only the moves it does not cover:
+    # ``z_wc`` is the wildcarded week's moves, so ``moves − z_wc`` is zero
+    # when the chip is played and the week's moves when it is not.
+    if settings.ft_use_penalty:
+        objective -= settings.ft_use_penalty * pulp.lpSum(
+            0 if (w == 1 and week1_free)
+            else moves[w] - z_wc[w] if w in z_wc
+            else moves[w]
+            for w in weeks
+        )
     problem += objective
 
     for w in weeks:
@@ -957,16 +1039,7 @@ def optimize_path(
             # only after a gameweek a wildcard (or free hit) may be played in:
             # FPL's rules give no new free transfer the week after either chip.
             # Otherwise the row is the pre-chip one, term for term.
-            carry = banked[w - 1] - moves[w - 1] + paid[w - 1] + 1
-            if w == 2 and week1_free:
-                # The recorded wildcard's add-back and no +1: the carry is
-                # the bank it found, whatever it moved.
-                carry = carry + moves[1] - 1
-            elif w - 1 in z_wc:
-                carry = carry + z_wc[w - 1] - on(WILDCARD, w - 1)
-            if w - 1 in y_fh:
-                carry = carry - on(FREE_HIT, w - 1)
-            problem += banked[w] <= carry
+            problem += banked[w] <= carry_into(w - 1)
 
         # At most one chip a gameweek, written only where two could clash (a
         # single chip cannot break its own binary).
@@ -1108,6 +1181,13 @@ def optimize_path(
     opening_xi: list[int] = []
     opening_hits = 0
     opening_chip = "none"
+    # The free-transfer bank as the game keeps it, a week at a time: ``ft_held``
+    # is what stands at each deadline and ``ft_path`` what each week hands
+    # the next. Replayed here rather than read off ``banked`` (see below).
+    # (Not ``held``, which is the chips in hand.)
+    ft_held = opening_bank
+    ft_path: list[int] = []
+    wildcard_weeks: set[int] = set()
 
     for w in weeks:
         event = events[w - 1]
@@ -1141,6 +1221,19 @@ def optimize_path(
         bb_on, tc_on, wc_on, fh_on = (
             chip == kind for kind in (BENCH_BOOST, TRIPLE_CAPTAIN, WILDCARD, FREE_HIT)
         )
+        if wc_on:
+            wildcard_weeks.add(w)
+
+        # The game's carry: a wildcard or free hit (or a wildcard the owner
+        # recorded for week 1) spends none of the bank and earns no +1, so the
+        # bank stands; otherwise the moves come off what was free, never below
+        # nothing, the week's +1 goes on, and five is the most kept.
+        if chip in (WILDCARD, FREE_HIT) or (w == 1 and week1_free):
+            nxt = ft_held
+        else:
+            nxt = min(MAX_FREE_TRANSFERS, max(ft_held - len(incoming), 0) + 1)
+        ft_path.append(nxt)
+        ft_held = nxt
 
         # weekly_xp is the points the gameweek actually earns, chip and all: a
         # boosted week's whole bench, a tripled week's third armband. A wildcard
@@ -1206,6 +1299,23 @@ def optimize_path(
                 )
             )
 
+    # ft_kept is the game's rule replayed on the solution's own integers — not
+    # read off ``banked``, which is pinned from above only and, with no credit
+    # to push it (LEGACY), sits wherever CBC left it.
+    ft_kept = ft_path[-1]
+    ft_credit = 0.0
+    if settings.ft_values:
+        worth = sum(settings.ft_values[:ft_kept]) - settings.ft_values[0]
+        ft_credit = decay ** last * worth
+    # The per-transfer cost as the objective paid it: every move but a
+    # wildcard's, the owner's recorded one included.
+    transfer_cost = settings.ft_use_penalty * sum(
+        len(_chosen(buy[w]))
+        for w in weeks
+        if not (w == 1 and week1_free) and w not in wildcard_weeks
+    )
+    objective += ft_credit
+    objective -= transfer_cost
     objective -= HIT_POINTS * hits + CHURN_EPSILON * bought
     # A free hit played this week fields a temporary team the plan's standing
     # squad is not: surface the fifteen and eleven it was priced on so the
@@ -1225,6 +1335,9 @@ def optimize_path(
         bars_paid=bars_spent,
         bench_charge=charge_paid,
         benched_buys=benched_buys,
+        ft_kept=ft_kept,
+        ft_credit=ft_credit,
+        transfer_cost=transfer_cost,
     )
     plan = Plan(
         squad=opening,
@@ -1238,8 +1351,12 @@ def optimize_path(
         # means everywhere else, to within the hundredth of a point a transfer
         # that no printed figure is quoted closely enough to show — and the
         # bench charge added back too, so xP is projection and only net pays
-        # for the bench.
-        xp_total=objective + HIT_POINTS * hits + charge_paid,
+        # for the bench. The same goes for the transfer cost, added back, and
+        # the free-transfer credit, taken off: neither is a point anyone
+        # scores, so xP never sees them and only net carries them.
+        xp_total=(
+            objective + HIT_POINTS * hits + charge_paid + transfer_cost - ft_credit
+        ),
         bench_charge=charge_paid,
         objective=objective,
         path=path,
