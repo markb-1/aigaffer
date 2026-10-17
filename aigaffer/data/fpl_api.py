@@ -147,3 +147,12 @@ class FplClient:
     def element_history(self, player_id: int) -> list[GwHistory]:
         """This season only, for the callers that have no use for the rest."""
         return self.element_summary(player_id)[0]
+
+    def classic_league(self, league_id: int, page: int) -> list[dict]:
+        """One page (fifty) of a classic league's standings, as ``{"entry",
+        "rank"}`` rows — the replay's way of sampling real squads by rank."""
+        data = self._get(f"/leagues-classic/{league_id}/standings/?page_standings={page}")
+        return [
+            {"entry": row["entry"], "rank": row["rank"]}
+            for row in (data.get("standings") or {}).get("results", [])
+        ]

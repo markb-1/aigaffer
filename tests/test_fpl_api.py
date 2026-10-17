@@ -253,6 +253,53 @@ def test_a_history_row_with_no_fixture_id_parses_as_zero():
     assert c.element_history(5)[0].fixture == 0
 
 
+def test_a_history_row_carries_the_price_when_the_payload_has_one():
+    # ``value`` is the player's price that gameweek in tenths: 55 is 5.5m.
+    payload = copy.deepcopy(ELEMENT_SUMMARY_JSON)
+    payload["history"][0]["value"] = 55
+    c = make_client({"/api/element-summary/5/": payload})
+    assert c.element_history(5)[0].value == 55
+
+
+def test_a_history_row_without_a_price_parses_as_none():
+    payload = copy.deepcopy(ELEMENT_SUMMARY_JSON)
+    payload["history"][0].pop("value", None)
+    c = make_client({"/api/element-summary/5/": payload})
+    assert c.element_history(5)[0].value is None
+
+
+def test_classic_league_requests_the_page_and_keeps_entry_and_rank():
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.url.path, request.url.query.decode()))
+        return httpx.Response(
+            200,
+            json={
+                "standings": {
+                    "results": [
+                        {"entry": 11, "rank": 101, "player_name": "A", "total": 9},
+                        {"entry": 12, "rank": 102, "player_name": "B", "total": 8},
+                    ]
+                }
+            },
+        )
+
+    c = FplClient(http=httpx.Client(transport=httpx.MockTransport(handler)))
+    rows = c.classic_league(314, 3)
+    assert seen == [("/api/leagues-classic/314/standings/", "page_standings=3")]
+    assert rows == [{"entry": 11, "rank": 101}, {"entry": 12, "rank": 102}]
+
+
+def test_classic_league_with_no_standings_is_an_empty_page():
+    c = FplClient(
+        http=httpx.Client(
+            transport=httpx.MockTransport(lambda r: httpx.Response(200, json={}))
+        )
+    )
+    assert c.classic_league(314, 99) == []
+
+
 def test_element_summary_returns_this_season_and_the_ones_before_it():
     # One request, both halves of it: the season so far and the seasons behind
     # it. The pipeline needs both and the API serves them together.
