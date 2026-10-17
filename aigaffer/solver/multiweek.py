@@ -157,6 +157,16 @@ next, and a path printed under "the road ahead" saying so is noise wearing the
 clothes of advice. So every buy in the window is charged
 :data:`CHURN_EPSILON`; see there for why it can never change a decision.
 
+**A signing who sits pays for it.** The bench is worth BENCH_WEIGHT, a flat
+tenth, which on its own makes a £6m backup keeper bought for one bench-boost
+week look nearly free. So a signing priced above his position's enabler
+(optimizer.ENABLER_PRICE) costs BENCH_BUY_CHARGE for every window week he sits
+— the same ``squad − xi`` the bench is scored on, so no row is added. A
+bench-boost week charges nothing, through ``z_bb``; a free-hit week charges
+nothing, through the ``y_fh`` pin, which is lifted by the most a week can be
+charged so it stays exact. A player held when the window opens is never
+charged: his bench is sunk.
+
 One approximation from the single-week model is inherited unchanged and is
 worse here than there, because it is compounded over the window: prices do
 not move. Selling prices are real where the caller has them: the squad the
@@ -171,7 +181,7 @@ back, so the window can only under-count that corner, never promise money it
 does not have.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import pulp
 
@@ -187,6 +197,7 @@ from aigaffer.data.free_transfers import MAX_FREE_TRANSFERS
 from aigaffer.data.models import Player
 from aigaffer.model.xp import PlayerProjection
 from aigaffer.solver.optimizer import (
+    BENCH_BUY_CHARGE,
     BENCH_WEIGHT,
     DEFENDER,
     FORWARD,
@@ -206,6 +217,7 @@ from aigaffer.solver.optimizer import (
     _chosen,
     _grouped,
     candidate_pool,
+    charged_buys,
 )
 
 # The single-week solver looks at forty a position. This one carries every
@@ -365,6 +377,13 @@ class PlannedPath:
     that chip's bar there. ``objective + bars_paid`` is what the window scores
     with no bars at all, which is the number a "what does the chip buy"
     question wants and the objective, by design, is not.
+
+    ``bench_charge`` is what the objective paid for charged signings on the
+    bench (:data:`~aigaffer.solver.optimizer.BENCH_BUY_CHARGE` a week each,
+    decayed), and ``benched_buys`` says who: each charged player and the
+    window weeks he was charged for. Those are the weeks the *solver* sat him,
+    which can be fewer than a report's bench shows, since the report re-picks
+    its eleven on xP alone; a bench-boost or free-hit week is never one of them.
     """
 
     moves: list[PlannedMove]
@@ -375,6 +394,8 @@ class PlannedPath:
     week1_freehit_xi: list[int] | None = None
     proven: bool = True
     bars_paid: float = 0.0
+    bench_charge: float = 0.0
+    benched_buys: dict[int, int] = field(default_factory=dict)
 
 
 def optimize_path(
@@ -508,6 +529,10 @@ def optimize_path(
         (p, w): _projected(projections, p, events[w - 1]) for p in pool for w in weeks
     }
     owned = {p: 1 if p in current else 0 for p in pool}
+    # The signings a bench costs: bought in the window and priced above an
+    # enabler (optimizer.charged_buys). Sorted, so the same board always
+    # writes the same model file.
+    charged = sorted(charged_buys(players, pool, current))
     # What a sale of each man credits the bank. The starting squad sells at the
     # ledger's prices; everyone else can only be in the squad because the
     # window bought him at now_cost, which is what his later sale pays back.
@@ -720,6 +745,28 @@ def optimize_path(
         w: problem.add_variable(f"yfh{w}", lowBound=0) for w in chip_weeks[FREE_HIT]
     }
 
+    def bench_charge(w: int):
+        """What week ``w``'s bench costs in charged signings, undecayed. In a
+        week a bench boost may be played, ``z_bb`` is the bench when it is, so
+        ``squad − xi − z_bb`` is the bench on an ordinary week and nothing on a
+        boosted one: all fifteen play, and the eleven is free to name, so a
+        bench charge there could only be dodged, never paid."""
+        if w in z_bb:
+            return BENCH_BUY_CHARGE * pulp.lpSum(
+                squad[w][p] - starting[w][p] - z_bb[w][p] for p in charged
+            )
+        return BENCH_BUY_CHARGE * pulp.lpSum(
+            squad[w][p] - starting[w][p] for p in charged
+        )
+
+    # The most one gameweek can be charged — a bench of four — lifted onto the
+    # free-hit pin, so the standing score it pins against is never below zero.
+    # Zero when nobody in the pool is charged, so that board builds the model
+    # it always did.
+    charge_ceiling = (
+        BENCH_BUY_CHARGE * (SQUAD_SIZE - XI_SIZE) if charged else 0.0
+    )
+
     objective = (
         pulp.lpSum(
             decay ** (w - 1)
@@ -736,6 +783,7 @@ def optimize_path(
         )
         - HIT_POINTS * pulp.lpSum(paid[w] for w in weeks)
         - CHURN_EPSILON * pulp.lpSum(moves[w] for w in weeks)
+        - pulp.lpSum(decay ** (w - 1) * bench_charge(w) for w in weeks)
     )
     if BENCH_BOOST in chips:
         # The 0.9 the bench was not already scoring, less the bar the boosted
@@ -773,11 +821,14 @@ def optimize_path(
         # chip adds the constant ``best_oneweek``, takes the standing score back
         # off through ``y_fh``, and pays its bar. Where ``fh[w] = 1`` the two
         # standing terms cancel and the gameweek is worth ``best_oneweek − bar``;
-        # where ``fh[w] = 0`` both new terms are zero and nothing changes.
+        # where ``fh[w] = 0`` both new terms are zero and nothing changes. The
+        # ceiling rides on both sides of the pin below and cancels at fh = 1, so
+        # the week is still worth best_oneweek − bar, its bench charge included
+        # in what y_fh takes off.
         objective += pulp.lpSum(
             decay ** (w - 1)
             * (
-                best_oneweek[w] * on(FREE_HIT, w)
+                (best_oneweek[w] + charge_ceiling) * on(FREE_HIT, w)
                 - y_fh[w]
                 - bars_paid(FREE_HIT, w)
             )
@@ -894,9 +945,9 @@ def optimize_path(
             # ordinary one. So a free-hit gameweek is a hold gameweek here.
             problem += moves[w] <= SQUAD_SIZE * (1 - fh)
             # The big-M pin on ``y_fh[w] = fh·normal_score``. Its big-M is the
-            # gameweek's own ``best_oneweek``, a true upper bound on the standing
-            # score, so at ``fh = 1`` the pair forces ``y_fh = normal_score`` and
-            # at ``fh = 0`` forces ``y_fh = 0``.
+            # gameweek's own ``best_oneweek`` plus the charge ceiling, still a
+            # true upper bound on the standing score, so at ``fh = 1`` the pair
+            # forces ``y_fh`` to the standing score and at ``fh = 0`` to zero.
             normal_score = pulp.lpSum(
                 points[p, w]
                 * (
@@ -906,9 +957,15 @@ def optimize_path(
                 )
                 for p in pool
             )
-            problem += y_fh[w] <= normal_score
-            problem += y_fh[w] <= best_oneweek[w] * fh
-            problem += y_fh[w] >= normal_score - best_oneweek[w] * (1 - fh)
+            # The standing score less its bench charge, lifted by the ceiling
+            # so that it cannot go below zero (y_fh is): at fh = 1 the pair
+            # forces y_fh to it, at fh = 0 to zero, and the objective's own
+            # + ceiling·fh cancels the lift.
+            standing = normal_score - bench_charge(w) + charge_ceiling
+            pin = best_oneweek[w] + charge_ceiling
+            problem += y_fh[w] <= standing
+            problem += y_fh[w] <= pin * fh
+            problem += y_fh[w] >= standing - pin * (1 - fh)
 
     # Each held chip is the game's once-a-set, so once across the window too
     # (a chip with a single eligible week cannot be played twice there).
@@ -975,6 +1032,9 @@ def optimize_path(
     hits = 0
     bought = 0
     bars_spent = 0.0
+    charged_set = set(charged)
+    charge_paid = 0.0
+    benched_buys: dict[int, int] = {}
     weekly_xp: dict[int, float] = {}
     path_moves: list[PlannedMove] = []
     opening: list[int] = []
@@ -1038,6 +1098,15 @@ def optimize_path(
             # made no transfers, so nothing is added to the hit or churn totals.
             week_xp = best_oneweek[w]
             week_score = best_oneweek[w] - bar(played_here, w)
+        # The bench-buy charge as the objective paid it: nothing in a boosted
+        # week (all fifteen play) or a free-hit one (the standing squad does
+        # not), and weekly_xp never sees it.
+        if not (bb_on or fh_on):
+            sat = sorted(bench & charged_set)
+            week_score -= BENCH_BUY_CHARGE * len(sat)
+            charge_paid += decay ** (w - 1) * BENCH_BUY_CHARGE * len(sat)
+            for p in sat:
+                benched_buys[p] = benched_buys.get(p, 0) + 1
 
         weekly_xp[event] = week_xp
         objective += decay ** (w - 1) * week_score
@@ -1079,6 +1148,8 @@ def optimize_path(
         week1_freehit_xi=freehit_xi,
         proven=proven,
         bars_paid=bars_spent,
+        bench_charge=charge_paid,
+        benched_buys=benched_buys,
     )
     plan = Plan(
         squad=opening,
@@ -1090,8 +1161,11 @@ def optimize_path(
         # stays the window's own number — hits, churn tiebreak and all;
         # ``xp_total`` is it with the hits added back, which is what the field
         # means everywhere else, to within the hundredth of a point a transfer
-        # that no printed figure is quoted closely enough to show.
-        xp_total=objective + HIT_POINTS * hits,
+        # that no printed figure is quoted closely enough to show — and the
+        # bench charge added back too, so xP is projection and only net pays
+        # for the bench.
+        xp_total=objective + HIT_POINTS * hits + charge_paid,
+        bench_charge=charge_paid,
         objective=objective,
         path=path,
     )
