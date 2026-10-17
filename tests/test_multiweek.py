@@ -664,7 +664,9 @@ def test_hits_reconcile_with_the_objective():
 
     taken = plan.hits + sum(move.hits for move in path.moves)
     assert taken == 3
-    assert plan.xp_total == pytest.approx(plan.objective + 4 * taken, abs=1e-4)
+    assert plan.xp_total == pytest.approx(
+        plan.objective + 4 * taken + plan.bench_charge, abs=1e-4
+    )
 
 
 # --------------------------------------------------------------------------
@@ -3296,3 +3298,190 @@ def test_an_answer_cbc_stopped_on_its_time_limit_says_it_is_unproven(monkeypatch
     plan, path = result
     assert path.proven is False
     assert plan.objective == pytest.approx(113.849, abs=1e-4)
+
+
+# --------------------------------------------------------------------------
+# The bench-buy charge
+# --------------------------------------------------------------------------
+#
+# A signing priced above his position's enabler (GK/DEF 45, MID/FWD 50) costs
+# BENCH_BUY_CHARGE = 0.5 for each window week the solver sits him — none in a
+# bench-boost week, none in a free-hit week. The spine's two-week do-nothing
+# is 61.54 x 1.85 = 113.849.
+
+
+def keeper_board(events, cost, value):
+    """The spine, plus keeper 16 at ``cost`` worth ``value`` every week."""
+    rows = [
+        (pid, position, 50, {event: points for event in events})
+        for pid, position, points in SPINE
+    ]
+    rows.append((16, GK, cost, {event: value for event in events}))
+    return _build(rows)
+
+
+def test_a_pricey_backup_keeper_is_not_bought_to_sit(monkeypatch):
+    # Keeper 16 (61, 3.0) behind 1 (5.0). Uncharged he is worth buying for
+    # keeper 2 (0.5): 0.1 x 2.5 a week on the bench, 0.25 x 1.85 = 0.4625,
+    # less the 0.01 churn tiebreak: 113.849 + 0.4525 = 114.3015. Charged, he
+    # costs 0.5 x 1.85 = 0.925 to sit, and starting him over keeper 1 costs
+    # 0.9 x 2.0 a week, so he stays where he is: the do-nothing 113.849.
+    players, projections = keeper_board([10, 11], cost=61, value=3.0)
+
+    monkeypatch.setattr(multiweek, "BENCH_BUY_CHARGE", 0.0)
+    uncharged, _ = optimize_path(
+        players, projections, SQUAD, bank=11, free_transfers=1, events=[10, 11],
+        decay=DECAY,
+    )
+    monkeypatch.undo()
+    charged, path = optimize_path(
+        players, projections, SQUAD, bank=11, free_transfers=1, events=[10, 11],
+        decay=DECAY,
+    )
+
+    assert uncharged.transfers_in == [16]
+    assert uncharged.objective == pytest.approx(114.3015, abs=1e-4)
+    assert charged.transfers_in == []
+    assert charged.objective == pytest.approx(113.849, abs=1e-4)
+    assert path.bench_charge == 0.0
+    assert path.benched_buys == {}
+
+
+def test_an_enabler_on_the_bench_is_not_charged():
+    # The same keeper at 45 is an enabler: bought, benched, uncharged —
+    # 114.3015 exactly as the uncharged solve above.
+    players, projections = keeper_board([10, 11], cost=45, value=3.0)
+
+    plan, path = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[10, 11],
+        decay=DECAY,
+    )
+
+    assert plan.transfers_in == [16]
+    assert plan.objective == pytest.approx(114.3015, abs=1e-4)
+    assert path.bench_charge == 0.0
+    assert path.benched_buys == {}
+
+
+def test_a_charged_signing_who_starts_is_not_charged():
+    # Keeper 16 at 61 worth 6.0 starts over keeper 1 (5.0), who sits — owned,
+    # so uncharged. Selling 2 (0.5): +1.0 in the XI and +0.45 on the bench a
+    # week, 1.45 x 1.85 = 2.6825, less 0.01: 116.5215.
+    players, projections = keeper_board([10, 11], cost=61, value=6.0)
+
+    plan, path = optimize_path(
+        players, projections, SQUAD, bank=11, free_transfers=1, events=[10, 11],
+        decay=DECAY,
+    )
+
+    assert plan.transfers_in == [16]
+    assert plan.objective == pytest.approx(116.5215, abs=1e-4)
+    assert path.bench_charge == 0.0
+
+
+def test_an_owned_bench_is_never_charged():
+    # The spine's keeper 2 and defenders 6 and 7 cost 50, above the 45
+    # enabler, and sit every week. They are owned, so nothing is charged.
+    players, projections = keeper_board([10, 11], cost=61, value=0.0)
+
+    plan, path = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[10, 11],
+        decay=DECAY,
+    )
+
+    assert plan.transfers_in == []
+    assert path.bench_charge == 0.0
+    assert plan.bench_charge == 0.0
+
+
+def flat_with_keeper(event, value):
+    """The flat board at 6.0 for one week, plus keeper 16 at 51 worth ``value``."""
+    rows = [
+        (pid, FLAT_POSITIONS[pid - 1], 50, {event: 6.0}) for pid in range(1, 16)
+    ]
+    rows.append((16, GK, 51, {event: value}))
+    return _build(rows)
+
+
+def test_a_forced_signing_who_sits_pays_the_charge_and_xp_stays_pure():
+    # One week, one forced move: 16 (51, 5.0) in for a 6.0 keeper, and he
+    # sits — starting him costs 0.9. XI 66.0, armband 6.0, bench 0.1 x 23.0
+    # = 2.3: 74.3, less the 0.5 charge and the 0.01 churn: 73.79. xP adds
+    # the charge back: 74.29.
+    players, projections = flat_with_keeper(10, 5.0)
+
+    plan, path = optimize_path(
+        players, projections, SQUAD, bank=1, free_transfers=1, events=[10],
+        decay=DECAY, forced_first_transfers=1,
+    )
+
+    assert plan.transfers_in == [16]
+    assert plan.objective == pytest.approx(73.79, abs=1e-4)
+    assert path.bench_charge == pytest.approx(0.5, abs=1e-6)
+    assert plan.bench_charge == pytest.approx(0.5, abs=1e-6)
+    assert path.benched_buys == {16: 1}
+    assert plan.xp_total == pytest.approx(
+        plan.objective + 4 * plan.hits + plan.bench_charge, abs=1e-6
+    )
+    assert plan.xp_total == pytest.approx(74.29, abs=1e-4)
+
+
+def test_the_bench_boost_week_is_not_charged():
+    # The same board with the bench boost held: the boost is worth
+    # 0.9 x 23.0 - 20.0 = 0.7 and is played, and all fifteen play, so 16 is
+    # charged nothing: 74.3 + 0.7 - 0.01 = 74.99. weekly_xp is the fifteen's
+    # 66 + 6 + 23 = 95.
+    players, projections = flat_with_keeper(10, 5.0)
+
+    plan, path = optimize_path(
+        players, projections, SQUAD, bank=1, free_transfers=1, events=[10],
+        decay=DECAY, forced_first_transfers=1,
+        held_chips=whole_season(BENCH_BOOST),
+    )
+
+    assert path.week1_chip == BENCH_BOOST
+    assert plan.objective == pytest.approx(74.99, abs=1e-4)
+    assert path.bench_charge == 0.0
+    assert path.benched_buys == {}
+    assert path.weekly_xp[10] == pytest.approx(95.0, abs=1e-4)
+
+
+def test_a_free_hit_week_is_not_charged():
+    # 16 (61, 3.0) is forced in in GW10 and sits: 0.5. GW11's free hit is
+    # forced by a bar of -100, and the standing squad does not play there, so
+    # GW11 charges nothing although 16 is still on its bench.
+    players, projections = keeper_board([10, 11], cost=61, value=3.0)
+    held = whole_season(FREE_HIT)
+
+    plan, path = optimize_path(
+        players, projections, SQUAD, bank=11, free_transfers=1, events=[10, 11],
+        decay=DECAY, forced_first_transfers=1, held_chips=held,
+        bars={held[0].id: {11: -100.0}},
+    )
+
+    assert plan.transfers_in == [16]
+    assert [move.chip for move in path.moves if move.event == 11] == [FREE_HIT]
+    assert path.benched_buys == {16: 1}
+    assert path.bench_charge == pytest.approx(0.5, abs=1e-6)
+
+
+def test_a_charged_bench_in_a_blank_free_hit_week_stays_feasible():
+    # A blank week (everyone 0.0) with two keepers forced in at 61: one must
+    # sit, so the standing score less the charge is -0.5. A free-hit pin that
+    # took the charge into the score it pins against would be infeasible both
+    # ways; the shifted pin is not. The free hit is not played (0 - 25.0).
+    rows = [(pid, position, 50, {11: 0.0}) for pid, position, _ in SPINE]
+    rows += [(16, GK, 61, {11: 0.0}), (17, GK, 61, {11: 0.0})]
+    players, projections = _build(rows)
+
+    answer = optimize_path(
+        players, projections, SQUAD, bank=22, free_transfers=2, events=[11],
+        decay=DECAY, forced_first_transfers=2,
+        held_chips=whole_season(FREE_HIT),
+    )
+
+    assert answer is not None
+    plan, path = answer
+    assert sorted(plan.transfers_in) == [16, 17]
+    assert path.week1_chip == "none"
+    assert path.bench_charge == pytest.approx(0.5, abs=1e-6)
