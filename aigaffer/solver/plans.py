@@ -35,7 +35,13 @@ from aigaffer.chips import HeldChip, playable_in
 from aigaffer.data.free_transfers import MAX_FREE_TRANSFERS
 from aigaffer.data.models import Player
 from aigaffer.model.xp import PlayerProjection
-from aigaffer.solver.multiweek import FREE_HIT, WILDCARD, PlannedPath, _free_hit_prices, optimize_path
+from aigaffer.solver.multiweek import (
+    FREE_HIT,
+    WILDCARD,
+    PlannedPath,
+    _free_hit_prices,
+    optimize_path,
+)
 from aigaffer.solver.optimizer import MAX_TRANSFERS, Plan, Week1Lock, optimize
 
 # The window gets a minute for the one solve a decision is worth; a sweep is

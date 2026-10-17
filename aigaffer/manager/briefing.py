@@ -182,6 +182,8 @@ WINDOW_UNITS = (
     " transfers and the hit count are this gameweek's unless the line says"
     " otherwise."
 )
+
+
 def _enabler_prices() -> str:
     """``GK/DEF over £4.5m, MID/FWD over £5.0m``, read off ENABLER_PRICE so the
     caption cannot disagree with the rule it explains."""
