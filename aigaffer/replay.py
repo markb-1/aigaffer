@@ -10,10 +10,13 @@ transfers carried week to week, and each gameweek scored on what the players
 actually did. What comes back is a paired difference per squad, candidate
 against LEGACY, and a gate that says whether a candidate ships.
 
-This module holds the pure core: a gameweek's score with the game's
-automatic substitutions, the step that carries a squad's money and free
-transfers through a week, the gate, and the summary. It makes no requests and
-runs no solver.
+The module is in two halves. The pure core is a gameweek's score with the
+game's automatic substitutions, the step that carries a squad's money and free
+transfers through a week, the gate, and the summary; it makes no requests and
+runs no solver. The driver below it samples the squads from the overall
+league, rebuilds each past deadline's board — the minutes, strengths and
+projections as they could have been made then — and plays every policy through
+the range from every start, one solve a gameweek, fanned out over processes.
 
 **This is not a true backtest, and the gate is a sanity check, not a
 measurement.** These are the stated leaks, as in :mod:`aigaffer.backtest`:
@@ -33,6 +36,12 @@ measurement.** These are the stated leaks, as in :mod:`aigaffer.backtest`:
 * **Selling prices are simplified.** A player is bought and sold at that
   gameweek's value; the game's rule that a seller keeps only half of a rise
   is not modelled, so a policy that churns risers sells a little dear.
+* **The schedule is today's, and the window sees past the range.** Each
+  deadline plans six gameweeks ahead, as the live run does, so the last
+  replayed deadline plans over fixtures five weeks beyond it. Those are all
+  known — ``client.fixtures()`` serves the whole season — but they are the
+  fixture list as it stands today: a match since moved for a cup tie sits in
+  its new week, and the policies plan as if it had always been there.
 
 And two notes on what the comparison can and cannot say:
 
@@ -48,13 +57,32 @@ And two notes on what the comparison can and cannot say:
   is the check on a policy that wins only by banking.
 """
 
-from collections import defaultdict
+import random
+from collections import Counter, defaultdict
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from math import inf, sqrt
 from statistics import mean, variance
 
-from aigaffer.data.free_transfers import MAX_FREE_TRANSFERS
-from aigaffer.solver.lineup import XI_RANGES, Lineup
+import httpx
+
+from aigaffer.backtest import _before, strengths_before
+from aigaffer.data.free_transfers import MAX_FREE_TRANSFERS, compute_free_transfers
+from aigaffer.data.models import Bootstrap, Fixture, GwHistory, Player
+from aigaffer.model.minutes import expected_minutes
+from aigaffer.model.xp import PlayerProjection, project_all, projected_events
+from aigaffer.orchestrator import history_pool
+from aigaffer.solver.lineup import XI_RANGES, Lineup, attacking_evs, pick_lineup
+from aigaffer.solver.multiweek import CANDIDATES_PER_POSITION, optimize_path
+from aigaffer.solver.optimizer import (
+    ALT,
+    HIT_POINTS,
+    LEGACY,
+    SQUAD_SIZE,
+    WINDOW,
+    WindowSettings,
+    candidate_pool,
+)
 
 # The policy every candidate is judged against: today's model.
 BASELINE = "LEGACY"
@@ -98,13 +126,20 @@ class State:
 class WeekResult:
     """One policy's gameweek for one squad: the points it scored after hits,
     the hits it took, the moves it made, and — where it is being compared —
-    the policy it made a different decision from."""
+    the policy it made a different decision from.
+
+    ``ft_end`` is the free transfers it holds after the week, which the gate's
+    end credit reads off the last one. ``unproven`` says the week's decision
+    was not proven the best: CBC stopped on its time limit with a path in
+    hand, or came back with none and the squad rolled (:func:`run_policy`)."""
 
     gw: int
     points: int
     hits: int
     moves: int
     differs_from: str | None = None
+    ft_end: int = 0
+    unproven: bool = False
 
 
 # --- scoring a gameweek -----------------------------------------------------
@@ -468,3 +503,457 @@ def render_summary(gate_result: dict, meta: dict) -> str:
         " sales are at the gameweek's value, without the half-rise rule.",
     ]
     return "\n".join(lines) + "\n"
+
+
+# --- the driver ------------------------------------------------------------------
+
+# The policies a replay plays, by the names the rows and the gate carry.
+POLICIES: dict[str, WindowSettings] = {"LEGACY": LEGACY, "WINDOW": WINDOW, "ALT": ALT}
+
+# The game's overall league, whose standings are every manager in rank order,
+# fifty to a page. The top group is drawn from the first two hundred pages
+# (ranks to 10k), the deep one from pages 2001 to 20000 (100k to 1M): far
+# enough down to be a different kind of manager, not so far as the abandoned.
+OVERALL_LEAGUE = 314
+TOP_PAGES = (1, 200)
+DEEP_PAGES = (2001, 20000)
+DEEP_GROUP = "deep"
+
+# What every deadline plans with, as the live run does: six gameweeks, decayed
+# at the configuration's 0.85. The solve's time limit is a third of the live
+# run's minute, because a replay is a few thousand solves; one that hits it
+# is counted as unproven rather than trusted.
+HORIZON = 6
+DECAY = 0.85
+TIME_LIMIT = 20
+
+
+@dataclass(frozen=True)
+class Board:
+    """One past deadline as a policy faces it, and the week as it turned out.
+
+    ``players`` is the bootstrap with each player's ``now_cost`` replaced by
+    his price that gameweek where his history gives it (``value``, which also
+    prices :func:`apply_moves`), so the solver plans at the prices it then
+    pays. ``projections`` are six gameweeks from ``gw``, made on the history
+    before it. ``actual`` is each fetched player's ``(minutes, points)`` for
+    ``gw``, summed over a double; a player absent from it played no minutes.
+
+    ``shortlist`` is the top thirty a position by this board's projections —
+    the field :func:`~aigaffer.solver.multiweek.optimize_path` cuts its
+    candidates to, less the squad it adds back — and so the only players any
+    policy can buy at this deadline. Every one of them has ``actual`` read,
+    and every later board projects them (see :func:`build_boards`).
+    """
+
+    gw: int
+    players: dict[int, Player]
+    projections: dict[int, PlayerProjection]
+    positions: dict[int, int]
+    actual: dict[int, tuple[int, int]]
+    value: dict[int, int]
+    shortlist: frozenset[int] = frozenset()
+
+
+def sample_starts(
+    client,
+    first_gw: int,
+    last_gw: int,
+    top_n: int,
+    deep_n: int,
+    seed: int,
+    own_entry: int | None,
+    counts: dict | None = None,
+) -> list[Start]:
+    """The real squads the replay starts from: ``top_n`` drawn from the top of
+    the overall league and ``deep_n`` from deep in it, plus ``own_entry`` (if
+    given) in the top group.
+
+    The draw is ``random.Random(seed)``'s, so a seed is a sample: that many
+    distinct pages from each band, and one row at random from each page
+    drawn. A page that fails or comes back empty draws nobody. A manager drawn
+    twice is replayed once.
+
+    Each start is the squad and bank from the picks for ``first_gw − 1`` —
+    what he held at the first replayed deadline — with the free transfers the
+    season's transfers and chips leave him for it, and ``chipped`` when he
+    played a chip anywhere in ``[first_gw, last_gw]``. A manager whose picks
+    are missing (the API's 404 for a week he did not play), empty, short of a
+    fifteen, or whose requests fail over HTTP is skipped.
+
+    ``counts``, when given, gathers how the draw went — ``sampled``,
+    ``skipped``, ``empty_pages``, ``duplicates`` — counts only, for the meta.
+    """
+    rng = random.Random(seed)
+    counts = counts if counts is not None else {}
+
+    def count(key: str) -> None:
+        counts[key] = counts.get(key, 0) + 1
+
+    drawn: list[tuple[str, int]] = []
+    for group, (low, high), n in (
+        (TOP_GROUP, TOP_PAGES, top_n),
+        (DEEP_GROUP, DEEP_PAGES, deep_n),
+    ):
+        for page in rng.sample(range(low, high + 1), n):
+            try:
+                rows = client.classic_league(OVERALL_LEAGUE, page)
+            except httpx.HTTPError:
+                rows = []
+            if not rows:
+                count("empty_pages")
+                continue
+            drawn.append((group, rng.choice(rows)["entry"]))
+    if own_entry is not None:
+        drawn.append((TOP_GROUP, own_entry))
+
+    starts: list[Start] = []
+    seen: set[int] = set()
+    for group, entry in drawn:
+        if entry in seen:
+            count("duplicates")
+            continue
+        seen.add(entry)
+        count("sampled")
+        try:
+            squad = client.picks(entry, first_gw - 1)
+            transfers = client.transfers(entry)
+            chips = client.chips_used(entry)
+        except httpx.HTTPError:
+            count("skipped")
+            continue
+        if len(squad.picks) != SQUAD_SIZE:
+            count("skipped")
+            continue
+        starts.append(
+            Start(
+                entry=entry,
+                group=group,
+                squad=tuple(squad.player_ids),
+                bank=squad.bank,
+                free_transfers=compute_free_transfers(transfers, chips, first_gw),
+                chipped=any(first_gw <= chip["event"] <= last_gw for chip in chips),
+            )
+        )
+    return starts
+
+
+def _fetch(client, histories: dict[int, list[GwHistory]], players: set[int]) -> None:
+    """Each of ``players``' season histories, into the cache, once a player
+    for the whole replay: every board reads the same season, cut at its own
+    gameweek."""
+    for pid in sorted(players - set(histories)):
+        histories[pid] = client.element_summary(pid)[0]
+
+
+def build_board(
+    client,
+    bootstrap: Bootstrap,
+    fixtures: list[Fixture],
+    histories: dict[int, list[GwHistory]],
+    gw: int,
+    extra: set[int],
+) -> Board:
+    """``gw``'s deadline rebuilt from the history before it, as
+    :func:`~aigaffer.backtest.backtest_gw` rebuilds one, over six gameweeks.
+
+    The pool projected is the pipeline's shortlist
+    (:func:`~aigaffer.orchestrator.history_pool`) and ``extra``: everyone a
+    start squad holds and everyone a policy could have bought before ``gw``
+    (:func:`build_boards`). A player in neither projects at nothing, which is
+    right for a man the pipeline never looks at and wrong for one a squad
+    holds — a doubtful starter the shortlist skips would be benched and sold
+    as worthless, and score as a man who never played.
+
+    The shortlist is cut from those projections the way the solver will cut
+    them, by :func:`~aigaffer.solver.optimizer.candidate_pool` with the
+    window's width, and every one of them has his history fetched too: the
+    week is scored on what the bought man did, whoever he is. The cut reads
+    only availability and the projections, never a price, so cutting it on
+    today's prices names the same players the solver's cut on the board's
+    will. A shortlisted man from outside the pool still projects at nothing
+    *here* — he is in the cut only as a tie at nothing, and that is what the
+    solver sees — but every later board projects him on his history.
+
+    ``histories`` is the replay's cache, filled in place.
+    """
+    players = {player.id: player for player in bootstrap.elements}
+    pool = set(history_pool(players, [])) | {pid for pid in extra if pid in players}
+    _fetch(client, histories, pool)
+    xmins = {
+        pid: expected_minutes(_before(histories[pid], gw), players[pid])
+        for pid in sorted(pool)
+    }
+    projections = project_all(
+        bootstrap,
+        fixtures,
+        xmins,
+        gw,
+        horizon=HORIZON,
+        decay=DECAY,
+        strengths=strengths_before(bootstrap, fixtures, gw),
+    )
+    shortlist = frozenset(
+        candidate_pool(players, projections, [], limit=CANDIDATES_PER_POSITION)
+    )
+    _fetch(client, histories, set(shortlist))
+
+    value: dict[int, int] = {}
+    actual: dict[int, tuple[int, int]] = {}
+    for pid, player in players.items():
+        week = [row for row in histories.get(pid, []) if row.round == gw]
+        priced = next((row.value for row in week if row.value is not None), None)
+        value[pid] = player.now_cost if priced is None else priced
+        if week:
+            actual[pid] = (
+                sum(row.minutes for row in week),
+                sum(row.total_points for row in week),
+            )
+    return Board(
+        gw=gw,
+        players={
+            pid: player.model_copy(update={"now_cost": value[pid]})
+            for pid, player in players.items()
+        },
+        projections=projections,
+        positions={pid: player.element_type for pid, player in players.items()},
+        actual=actual,
+        value=value,
+        shortlist=shortlist,
+    )
+
+
+def build_boards(
+    client,
+    bootstrap: Bootstrap,
+    fixtures: list[Fixture],
+    gws: list[int],
+    starts: list[Start],
+) -> list[Board]:
+    """Every replayed deadline's board, in gameweek order, before any policy
+    runs.
+
+    The extra each board projects is **cumulative**: the start squads, and
+    every earlier board's shortlist. A player is only ever in a policy's
+    squad because he started in it or was bought at some deadline, and a buy
+    can only come from that deadline's shortlist — the solver's candidates
+    are the shortlist and the squad — so this covers every squad every policy
+    can hold, without knowing what any of them did. A player bought at GW3
+    who has dropped out of GW5's thirty is still projected at GW5, rather
+    than projected at nothing and sold for it.
+    """
+    extra = {pid for start in starts for pid in start.squad}
+    histories: dict[int, list[GwHistory]] = {}
+    boards = []
+    for gw in gws:
+        board = build_board(client, bootstrap, fixtures, histories, gw, extra)
+        extra |= board.shortlist
+        boards.append(board)
+    return boards
+
+
+def run_policy(
+    start: Start,
+    boards: list[Board],
+    settings: WindowSettings,
+    time_limit: int = TIME_LIMIT,
+) -> list[WeekResult]:
+    """One policy's season from ``start``: a solve at each board's deadline,
+    its first week's moves made, and the week scored on what happened.
+
+    The solve is the live window's — the board's six gameweeks, decayed, chip
+    free (``held_chips=()``) and under ``settings`` passed outright, never the
+    module default — from the squad, bank and free transfers the policy's own
+    earlier weeks left it. No answer is a roll: the squad stands, and the week
+    is marked unproven alongside the ones CBC stopped on its time limit.
+
+    The moves go through :func:`apply_moves` at the board's prices with the
+    plan's own hits, which raises on a plan that disagrees with the bank or the
+    squad (:func:`replay` drops such a run whole). The week is scored as the
+    game would score the eleven :func:`~aigaffer.solver.lineup.pick_lineup`
+    fields on the projections, autosubs and armband included, less four a hit.
+    """
+    state = State(squad=start.squad, bank=start.bank, free_transfers=start.free_transfers)
+    weeks: list[WeekResult] = []
+    for board in boards:
+        answer = optimize_path(
+            board.players,
+            board.projections,
+            list(state.squad),
+            state.bank,
+            state.free_transfers,
+            projected_events(board.projections),
+            decay=DECAY,
+            time_limit=time_limit,
+            held_chips=(),
+            settings=settings,
+        )
+        if answer is None:
+            transfers_in, transfers_out, hits, unproven = [], [], 0, True
+        else:
+            plan, path = answer
+            transfers_in, transfers_out, hits = plan.transfers_in, plan.transfers_out, plan.hits
+            unproven = not path.proven
+        state = apply_moves(state, transfers_in, transfers_out, board.value, hits)
+
+        squad = list(state.squad)
+        gw_xp = {
+            pid: board.projections[pid].per_gw.get(board.gw, 0.0)
+            for pid in squad
+            if pid in board.projections
+        }
+        lineup = pick_lineup(
+            squad, board.positions, gw_xp, attacking_evs(board.projections, board.gw)
+        )
+        weeks.append(
+            WeekResult(
+                gw=board.gw,
+                points=autosub_points(lineup, board.positions, board.actual) - HIT_POINTS * hits,
+                hits=hits,
+                moves=len(transfers_in),
+                ft_end=state.free_transfers,
+                unproven=unproven,
+            )
+        )
+    return weeks
+
+
+# The boards a worker process plays against, handed over once at its start
+# (``_take_boards``) rather than pickled into every task.
+_BOARDS: list[Board] = []
+
+
+def _take_boards(boards: list[Board]) -> None:
+    global _BOARDS
+    _BOARDS = boards
+
+
+def _attempt(
+    start: Start, boards: list[Board], settings: WindowSettings, time_limit: int
+) -> tuple[list[WeekResult] | None, str | None]:
+    """One ``(start, policy)`` run, or the class name of what stopped it.
+
+    One run that raises — a plan :func:`apply_moves` refuses, a squad holding
+    a player the bootstrap has lost — must not cost the other few hundred, so
+    it is caught here and the run is dropped whole: half a season kept would
+    be paired as though it were one. Only the class name comes back, the
+    house rule for what an exception's text may carry.
+    """
+    try:
+        return run_policy(start, boards, settings, time_limit), None
+    except Exception as error:  # noqa: BLE001 — one run's failure is counted, not fatal
+        return None, type(error).__name__
+
+
+def _attempt_in_worker(
+    start: Start, settings: WindowSettings, time_limit: int
+) -> tuple[list[WeekResult] | None, str | None]:
+    return _attempt(start, _BOARDS, settings, time_limit)
+
+
+def _run_all(
+    tasks: list[tuple[Start, WindowSettings]],
+    boards: list[Board],
+    jobs: int,
+    time_limit: int,
+) -> list[tuple[list[WeekResult] | None, str | None]]:
+    """Every task's outcome, in task order: in this process when ``jobs`` is
+    one, otherwise over a pool of that many, each worker handed the boards
+    once. A worker lost outright is a failed run like any other."""
+    if jobs <= 1:
+        return [_attempt(start, boards, settings, time_limit) for start, settings in tasks]
+    outcomes = []
+    with ProcessPoolExecutor(
+        max_workers=jobs, initializer=_take_boards, initargs=(boards,)
+    ) as pool:
+        futures = [
+            pool.submit(_attempt_in_worker, start, settings, time_limit)
+            for start, settings in tasks
+        ]
+        for future in futures:
+            try:
+                outcomes.append(future.result())
+            except Exception as error:  # noqa: BLE001 — a lost worker is one failed run
+                outcomes.append((None, type(error).__name__))
+    return outcomes
+
+
+def replay(
+    client,
+    first_gw: int,
+    last_gw: int,
+    top_n: int,
+    deep_n: int,
+    seed: int,
+    jobs: int,
+    own_entry: int | None,
+    *,
+    policies: dict[str, WindowSettings] = POLICIES,
+    time_limit: int = TIME_LIMIT,
+) -> tuple[list[dict], dict]:
+    """Play every policy through ``first_gw..last_gw`` from every sampled
+    start, and return the rows and the run's meta.
+
+    The boards are built here, in gameweek order, before any policy runs
+    (:func:`build_boards`), then every ``(start, policy)`` pair is played as a
+    season of its own over ``jobs`` processes. A run that fails keeps no rows,
+    so the gate drops its squad as short of a whole season; the failures are
+    counted by exception class.
+
+    A row is ``{"group", "entry", "gw", "policy", "points", "hits", "moves",
+    "ft_end", "unproven"}``, one per squad, gameweek and policy — the only
+    place an entry id appears. The meta is counts and nothing else, so it can
+    be printed and pasted where the rows cannot.
+    """
+    bootstrap = client.bootstrap()
+    fixtures = client.fixtures()
+    counts: dict[str, int] = {}
+    starts = sample_starts(
+        client, first_gw, last_gw, top_n, deep_n, seed, own_entry, counts=counts
+    )
+    boards = build_boards(
+        client, bootstrap, fixtures, list(range(first_gw, last_gw + 1)), starts
+    )
+
+    tasks = [(start, name) for start in starts for name in policies]
+    outcomes = _run_all(
+        [(start, policies[name]) for start, name in tasks], boards, jobs, time_limit
+    )
+
+    rows: list[dict] = []
+    failures: Counter = Counter()
+    for (start, name), (weeks, failure) in zip(tasks, outcomes, strict=True):
+        if weeks is None:
+            failures[failure] += 1
+            continue
+        rows += [
+            {
+                "group": start.group,
+                "entry": start.entry,
+                "gw": week.gw,
+                "policy": name,
+                "points": week.points,
+                "hits": week.hits,
+                "moves": week.moves,
+                "ft_end": week.ft_end,
+                "unproven": week.unproven,
+            }
+            for week in weeks
+        ]
+
+    meta = {
+        "gameweeks": f"{first_gw}-{last_gw}",
+        "sampled": counts.get("sampled", 0),
+        "skipped": counts.get("skipped", 0),
+        "empty_pages": counts.get("empty_pages", 0),
+        "duplicates": counts.get("duplicates", 0),
+        "starts": len(starts),
+        TOP_GROUP: sum(start.group == TOP_GROUP for start in starts),
+        DEEP_GROUP: sum(start.group == DEEP_GROUP for start in starts),
+        "chipped": sum(start.chipped for start in starts),
+        "runs": len(tasks),
+        "failed": sum(failures.values()),
+        **{f"failed_{name}": n for name, n in sorted(failures.items())},
+        "unproven": sum(row["unproven"] for row in rows),
+    }
+    return rows, meta

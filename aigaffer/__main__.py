@@ -20,6 +20,14 @@ team, no store and no schedule — only a gameweek and the API.
 ``review`` looks back on a finished gameweek (:mod:`aigaffer.review`); ``auto``
 runs it on its own once a week is final.
 
+``replay`` is the other look back, and the slowest command here: it plays
+real managers' squads through each way of valuing the bench and the free
+transfers over a finished range of gameweeks (:mod:`aigaffer.replay`), and
+prints the gate that says whether a candidate ships. Like ``backtest`` it
+wants only the API — and the team id, if set, to replay this squad too. Its
+rows name other managers, so they go to the git-ignored ``state/replay/``
+and never to stdout.
+
 ``inbox`` is the VM's other timer, once a minute: it reads what the owner has
 texted the bot and answers (:mod:`aigaffer.inbox`). It wants no schedule and no
 report; it does want the team and the store, because "Transfers made" is
@@ -35,9 +43,11 @@ the Telegram leg of a run that URL has the bot token in it.
 """
 
 import argparse
+import json
 import os
 from datetime import UTC, datetime
 from functools import partial
+from pathlib import Path
 
 import httpx
 
@@ -58,6 +68,7 @@ from aigaffer.orchestrator import (
 )
 from aigaffer.peer import peer_has_run
 from aigaffer.recording import transfers_made
+from aigaffer.replay import gate, render_summary, replay
 from aigaffer.report.telegram import send_report
 from aigaffer.review import REVIEW_MODE, ReviewUnavailable, review_target, review_tick, run_review
 from aigaffer.statesync import STATE_LOCK, GitStateSync
@@ -69,11 +80,17 @@ AUTO = "auto"
 BACKTEST = "backtest"
 INBOX = "inbox"
 REVIEW = "review"
-COMMANDS = (AUTO, "early", "scout", "deadline", "reminder", BACKTEST, INBOX, REVIEW)
+REPLAY = "replay"
+COMMANDS = (AUTO, "early", "scout", "deadline", "reminder", BACKTEST, INBOX, REVIEW, REPLAY)
 
 NEEDS_MANAGER = "aigaffer: the review needs the manager (ANTHROPIC_API_KEY, AIGAFFER_MANAGER not 0)"
 SCHEDULE_STAGE = "reading the schedule"
 BACKTEST_STAGE = "the backtest"
+REPLAY_STAGE = "the replay"
+
+# Where the replay's rows go, under the state directory: git-ignored, because
+# every row names a real manager's entry.
+REPLAY_DIR = "replay"
 
 # The manager switch, and what a run says when it was thrown on and there is
 # nothing to reach the manager with. The name is Config's; it is read here too
@@ -122,6 +139,8 @@ def main(argv: list[str] | None = None) -> int:
         return _inbox(client)
     if args.command == REVIEW:
         return _review(args, client)
+    if args.command == REPLAY:
+        return _replay(args, client)
 
     cfg = Config.from_env()
     _manager_notice(cfg)
@@ -259,7 +278,86 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         type=int,
         help="the finished gameweek to backtest or review (default: the most recent)",
     )
+    parser.add_argument(
+        "--from",
+        dest="from_gw",
+        type=int,
+        default=2,
+        help="replay: the first gameweek to replay (default: 2)",
+    )
+    parser.add_argument(
+        "--to",
+        dest="to_gw",
+        type=int,
+        help="replay: the last gameweek to replay (default: the latest finished)",
+    )
+    parser.add_argument(
+        "--managers",
+        type=_managers,
+        default=(100, 50),
+        help="replay: squads to sample from the top and deep in the league, as TOP,DEEP",
+    )
+    parser.add_argument(
+        "--seed", type=int, default=1, help="replay: the sampling seed (default: 1)"
+    )
+    parser.add_argument(
+        "--jobs",
+        type=int,
+        default=min(8, os.cpu_count() or 1),
+        help="replay: solver processes to run at once",
+    )
     return parser.parse_args(argv)
+
+
+def _managers(text: str) -> tuple[int, int]:
+    """``--managers``: "TOP,DEEP", two counts."""
+    try:
+        top, deep = (int(part) for part in text.split(","))
+    except ValueError:
+        raise argparse.ArgumentTypeError("expected TOP,DEEP, e.g. 100,50") from None
+    return top, deep
+
+
+def _replay(args: argparse.Namespace, client: FplClient) -> int:
+    """``replay``: play sampled squads through every policy over a finished
+    range and print the gate.
+
+    The range must be finished, and start no earlier than GW2 — the starts are
+    the picks for the week before it. The team id, when set, is replayed in
+    the top group beside the sample. The rows are written as JSON lines to
+    ``state/replay/<timestamp>.jsonl`` and stdout gets the summary, which
+    holds counts and means and no entry id. An HTTP failure is reported by
+    its class alone, as everywhere here.
+    """
+    own = os.environ.get("FPL_TEAM_ID")
+    ticking = _OneBootstrap(client)
+    try:
+        finished = finished_gameweeks(ticking.bootstrap())
+        last = args.to_gw if args.to_gw is not None else (finished[-1] if finished else None)
+        if last is None:
+            print("aigaffer: no gameweek has finished yet")
+            return 1
+        if last not in finished:
+            print(f"aigaffer: GW{last} has not finished")
+            return 1
+        if not 2 <= args.from_gw <= last:
+            print(f"aigaffer: the replay runs from GW2 at the earliest, to GW{last}")
+            return 1
+        top, deep = args.managers
+        rows, meta = replay(
+            ticking, args.from_gw, last, top, deep, args.seed, args.jobs,
+            int(own) if own else None,
+        )
+    except httpx.HTTPError as error:
+        return _failed(None, error, event_id=None, stage=REPLAY_STAGE)
+
+    directory = Path(os.environ.get("AIGAFFER_STATE_DIR", "state")) / REPLAY_DIR
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"{datetime.now(UTC):%Y%m%dT%H%M%SZ}.jsonl"
+    path.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    print(render_summary(gate(rows), meta))
+    print(f"aigaffer: {len(rows)} rows written to {path}")
+    return 0
 
 
 def _review(args: argparse.Namespace, client: FplClient) -> int:

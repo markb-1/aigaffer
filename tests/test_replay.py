@@ -1,6 +1,9 @@
-"""Tests for the replay's pure core: a week's score, a week's step, the gate.
+"""Tests for the replay: its pure core — a week's score, a week's step, the
+gate — and the driver that samples squads, builds the boards and plays them.
 
-Nothing here touches the network or the solver. The scoring boards are one
+Nothing here touches the network. The core's tests run no solver; the
+driver's run it on the fifteen-man universe of :mod:`tests.fixtures` through
+a fake client (see "the driver" below). The scoring boards are one
 hand-built fifteen, positions by id — 1-2 keepers, 3-7 defenders, 8-12
 midfielders, 13-15 forwards — fielded 1-3-5-2:
 
@@ -31,19 +34,41 @@ The gate boards are two squads over three gameweeks (2, 3, 4), and every
 difference is worked by hand in the test that uses it.
 """
 
+import copy
+import dataclasses
+import json
+import os
 from math import sqrt
 
+import httpx
 import pytest
 
+from aigaffer import __main__ as cli
+from aigaffer import replay as rp
+from aigaffer.data.models import Bootstrap, Fixture, GwHistory, Squad
 from aigaffer.replay import (
+    Start,
     State,
     apply_moves,
     autosub_points,
+    build_board,
+    build_boards,
     gate,
     next_free_transfers,
     render_summary,
+    replay,
+    run_policy,
+    sample_starts,
 )
 from aigaffer.solver.lineup import Lineup
+from aigaffer.solver.multiweek import PlannedPath
+from aigaffer.solver.optimizer import ALT, LEGACY, WINDOW, Plan
+from tests.fixtures import (
+    PICKS_15_IDS,
+    PIPELINE_BOOTSTRAP_JSON,
+    PIPELINE_ELEMENTS_JSON,
+    PIPELINE_FIXTURES_JSON,
+)
 
 GK, DEF, MID, FWD = 1, 2, 3, 4
 
@@ -491,3 +516,389 @@ def test_the_summary_tabulates_the_cells_and_names_the_pick():
 def test_the_summary_says_when_nothing_ships():
     text = render_summary({"cells": {}, "verdict": {"WINDOW": "no"}, "pick": None}, {})
     assert "Pick: none" in text
+
+
+# --- the driver ------------------------------------------------------------------
+#
+# The driver runs on the fifteen-man universe of tests.fixtures (21 players
+# over 6 clubs), its season stretched to three finished gameweeks so GW2 and
+# GW3 can be replayed. Both sampled managers start from the fixtures' legal
+# fifteen, PICKS_15:
+#
+#   keepers   1 Alvez, 2 Byrne
+#   defenders 3 Costa, 4 Dodd (doubtful: 75%), 13 Novak, 16 Quill, 19 Tandy
+#   mids      5 Ferrer, 6 Grant (£7.5m), 11 Lozano, 14 Ozturk, 20 Voss
+#   forwards  7 Haas, 8 Ito (injured), 15 Pryce (£6.5m)
+#
+# Dodd and Ito are not available, so the pipeline's shortlist
+# (orchestrator.history_pool) never names them: only the start squads bring
+# them onto a board. Outside the fifteen are 9, 10, 12, 17 Reyes (£9.5m),
+# 18 Sarr (£6.0m) and 21.
+#
+# Every player plays 90 minutes a round for 2 points, at his bootstrap price,
+# except where HISTORIES says otherwise. The entry ids are fakes; they are only
+# ever compared against what the driver hands back.
+
+TOP_ENTRY, DEEP_ENTRY, OWN_ENTRY, LOST_ENTRY = 7_340_001, 7_340_002, 7_340_003, 7_340_009
+COST = {element["id"]: element["now_cost"] for element in PIPELINE_ELEMENTS_JSON}
+
+
+def _row(rnd, minutes=90, points=2, value="cost", pid=None):
+    row = {"round": rnd, "fixture": 10 * rnd, "minutes": minutes, "total_points": points}
+    if value == "cost":
+        row["value"] = COST[pid]
+    elif value is not None:
+        row["value"] = value
+    return row
+
+
+def _history(pid):
+    """Three rounds at 90 minutes and 2 points, priced at his bootstrap cost —
+    with the special cases each driver test leans on."""
+    if pid == 4:  # Dodd: 7 points in GW2, the week his outside-the-list score is read
+        return [_row(1, pid=4), _row(2, points=7, pid=4), _row(3, pid=4)]
+    if pid == 8:  # Ito: injured all season
+        return [_row(r, minutes=0, points=0, pid=8) for r in (1, 2, 3)]
+    if pid == 10:  # Kelly: a double in GW2, (90, 2) and (90, 6)
+        return [_row(1, pid=10), _row(2, pid=10), _row(2, points=6, pid=10), _row(3, pid=10)]
+    if pid == 17:  # Reyes: £9.0m in GW2, against today's £9.5m
+        return [_row(1, pid=17), _row(2, value=90, pid=17), _row(3, pid=17)]
+    if pid == 21:  # Wynne: a payload without the value field
+        return [_row(r, value=None, pid=21) for r in (1, 2, 3)]
+    return [_row(r, pid=pid) for r in (1, 2, 3)]
+
+
+def _bootstrap_json():
+    """The pipeline universe with GW1-3 played and GW4 next."""
+    payload = copy.deepcopy(PIPELINE_BOOTSTRAP_JSON)
+    deadlines = {1: "2025-08-15", 2: "2025-08-22", 3: "2025-08-29", 4: "2025-09-05"}
+    payload["events"] = [
+        {"id": gw, "deadline_time": f"{day}T17:30:00Z",
+         "finished": gw <= 3, "is_current": gw == 3, "is_next": gw == 4}
+        for gw, day in deadlines.items()
+    ]
+    return payload
+
+
+def _not_found():
+    request = httpx.Request("GET", "https://fantasy.premierleague.com/api/")
+    return httpx.HTTPStatusError("404", request=request, response=httpx.Response(404))
+
+
+class FakeClient:
+    """The client the driver asks, answering from the payloads above.
+
+    The overall league's top pages (1-200) all hold TOP_ENTRY and its deep
+    pages DEEP_ENTRY, so whichever page is drawn the draw is known. A
+    manager with no squad here answers his picks with a 404, as the API
+    does. Every request is recorded, so a test can say who was asked about.
+    """
+
+    def __init__(self, squads=None, transfers=None, chips=None):
+        self.squads = squads if squads is not None else {
+            TOP_ENTRY: (PICKS_15_IDS, 28),
+            DEEP_ENTRY: (PICKS_15_IDS, 5),
+        }
+        self.made = transfers or {}
+        self.chips = chips or {}
+        self.summaries = []
+        self.pages = []
+        self.picked = []
+
+    def bootstrap(self):
+        return Bootstrap.model_validate(_bootstrap_json())
+
+    def fixtures(self):
+        return [Fixture.model_validate(f) for f in PIPELINE_FIXTURES_JSON]
+
+    def element_summary(self, pid):
+        self.summaries.append(pid)
+        return [GwHistory.model_validate(row) for row in _history(pid)], []
+
+    def picks(self, entry, event):
+        self.picked.append((entry, event))
+        if entry not in self.squads:
+            raise _not_found()
+        ids, bank = self.squads[entry]
+        picks = [
+            {"element": p, "position": i + 1, "is_captain": i == 0, "is_vice_captain": i == 1}
+            for i, p in enumerate(ids)
+        ]
+        return Squad(picks=picks, bank=bank, event=event)
+
+    def transfers(self, entry):
+        return self.made.get(entry, [])
+
+    def chips_used(self, entry):
+        return self.chips.get(entry, [])
+
+    def classic_league(self, league_id, page):
+        self.pages.append((league_id, page))
+        entry, rank = (TOP_ENTRY, 40 * page) if page <= 200 else (DEEP_ENTRY, 50 * page)
+        return [{"entry": entry, "rank": rank}]
+
+
+def _setup(client=None):
+    client = client or FakeClient()
+    return client, client.bootstrap(), client.fixtures()
+
+
+def test_a_start_is_the_squad_bank_and_free_transfers_before_the_first_deadline():
+    # Replaying GW3-4, so the start is the picks for GW2. The top manager
+    # made one transfer in GW2: his first free one (earned for GW2) is spent,
+    # and GW3 earns another, so 1. The deep manager made none: 1 + 1 = 2.
+    # The deep one wildcarded in GW4, inside the range, and is flagged; the
+    # top one's bench boost was GW1, before it, and is not. The own entry is
+    # added to the top group, has no picks, and is skipped and counted.
+    client = FakeClient(
+        transfers={TOP_ENTRY: [{"event": 2}]},
+        chips={TOP_ENTRY: [{"name": "bboost", "event": 1}],
+               DEEP_ENTRY: [{"name": "wildcard", "event": 4}]},
+    )
+    counts = {}
+    starts = sample_starts(client, 3, 4, 1, 1, seed=1, own_entry=LOST_ENTRY, counts=counts)
+
+    assert starts == [
+        Start(TOP_ENTRY, "top", tuple(PICKS_15_IDS), 28, 1, False),
+        Start(DEEP_ENTRY, "deep", tuple(PICKS_15_IDS), 5, 2, True),
+    ]
+    (top_league, top_page), (deep_league, deep_page) = client.pages
+    assert top_league == deep_league == 314
+    assert 1 <= top_page <= 200
+    assert 2001 <= deep_page <= 20000
+    assert set(client.picked) == {(TOP_ENTRY, 2), (DEEP_ENTRY, 2), (LOST_ENTRY, 2)}
+    assert counts["sampled"] == 3
+    assert counts["skipped"] == 1
+
+
+def test_the_same_seed_draws_the_same_pages():
+    first, second, other = FakeClient(), FakeClient(), FakeClient()
+    sample_starts(first, 2, 3, 5, 5, seed=7, own_entry=None)
+    sample_starts(second, 2, 3, 5, 5, seed=7, own_entry=None)
+    sample_starts(other, 2, 3, 5, 5, seed=8, own_entry=None)
+    assert first.pages == second.pages
+    assert first.pages != other.pages
+
+
+def test_a_start_squad_outside_the_shortlist_is_still_scored():
+    # Dodd (4) is doubtful, so the shortlist leaves him out; a manager who
+    # holds him brings him in through ``extra``. Then his history is fetched,
+    # his GW2 is read (90 minutes, 7 points) and he is projected off his GW1
+    # (90 minutes, below three gameweeks so floored at 75 → 90, times his 75%
+    # chance: 67.5 minutes, so more than nothing). Without ``extra`` he is
+    # never asked about, and would score as a man who did not play.
+    client, bootstrap, fixtures = _setup()
+    board = build_board(client, bootstrap, fixtures, {}, 2, {4})
+    assert 4 in client.summaries
+    assert board.actual[4] == (90, 7)
+    assert board.projections[4].per_gw[2] > 0
+
+    client, bootstrap, fixtures = _setup()
+    bare = build_board(client, bootstrap, fixtures, {}, 2, set())
+    assert 4 not in client.summaries
+    assert 4 not in bare.actual
+    assert bare.projections[4].per_gw[2] == 0
+
+
+def test_a_board_prices_and_scores_the_gameweek_it_is_for():
+    # Reyes (17) was £9.0m in GW2 and is £9.5m today: the board prices him
+    # at 90, in ``value`` and in the players the solver is handed. Wynne's
+    # (21) rows carry no value, so he stands at today's 55. Kelly's (10)
+    # double is summed: (90 + 90, 2 + 6) = (180, 8).
+    client, bootstrap, fixtures = _setup()
+    histories = {}
+    board = build_board(client, bootstrap, fixtures, histories, 2, set())
+
+    assert board.gw == 2
+    assert board.value[17] == 90
+    assert board.players[17].now_cost == 90
+    assert board.value[21] == board.players[21].now_cost == 55
+    assert board.actual[10] == (180, 8)
+    assert board.positions[17] == 3
+    assert sorted(next(iter(board.projections.values())).per_gw) == [2, 3, 4, 5, 6, 7]
+    # Fetched once into the cache it was handed, never twice.
+    assert len(client.summaries) == len(set(client.summaries)) == len(histories)
+
+
+def test_a_player_bought_earlier_is_still_projected_later(monkeypatch):
+    # The extra is cumulative. With the shortlist emptied, GW2's pool is the
+    # start squad alone, so Reyes (17) — not in it — projects at nothing in
+    # GW2. But he is in GW2's top thirty (every available midfielder is, in a
+    # universe this small), so a policy could buy him there: his GW2 is read
+    # for the score, and from GW3 he is projected off his history, not sold
+    # for nothing as a man nobody fetched. His history is fetched once.
+    monkeypatch.setattr(rp, "history_pool", lambda players, held: [])
+    client, bootstrap, fixtures = _setup()
+    start = Start(TOP_ENTRY, "top", tuple(PICKS_15_IDS), 28, 1, False)
+    gw2, gw3 = build_boards(client, bootstrap, fixtures, [2, 3], [start])
+
+    assert gw2.projections[17].per_gw[2] == 0
+    assert 17 in gw2.shortlist
+    assert gw2.actual[17] == (90, 2)
+    assert gw3.projections[17].per_gw[3] > 0
+    assert client.summaries.count(17) == 1
+
+
+def _plan(transfers_in, transfers_out, hits):
+    path = PlannedPath(moves=[], objective=0.0, weekly_xp={})
+    return Plan([], [], transfers_in, transfers_out, hits, 0.0, 0.0, path), path
+
+
+def test_a_policy_carries_its_money_and_transfers_week_to_week(monkeypatch):
+    # Every player plays 90 for 2, so any legal eleven scores 22 and the
+    # armband 2 more: 24 a week, whoever is picked.
+    #
+    # GW2: Grant (6, 75) and Pryce (15, 65) out for Reyes (17, 90 that week)
+    #      and Sarr (18, 60) on one free transfer: one hit. Bank 28 + 75 + 65
+    #      − 90 − 60 = 18; FTs max(1 − 2, 0) + 1 = 1; points 24 − 4 = 20.
+    # GW3: the solver has no answer, so the squad rolls: no moves, FTs 1 + 1
+    #      = 2, points 24, and the week counts as unproven.
+    client, bootstrap, fixtures = _setup()
+    boards = build_boards(client, bootstrap, fixtures, [2, 3], [])
+    everyone = {pid: (90, 2) for pid in COST}
+    boards = [dataclasses.replace(board, actual=everyone) for board in boards]
+
+    asked = []
+
+    def solver(players, projections, squad, bank, free_transfers, events, **kwargs):
+        asked.append((sorted(squad), bank, free_transfers, events[0], kwargs))
+        return _plan([17, 18], [6, 15], 1) if events[0] == 2 else None
+
+    monkeypatch.setattr(rp, "optimize_path", solver)
+    start = Start(TOP_ENTRY, "top", tuple(PICKS_15_IDS), 28, 1, False)
+    weeks = run_policy(start, boards, WINDOW, time_limit=5)
+
+    assert [(w.gw, w.points, w.hits, w.moves, w.ft_end, w.unproven) for w in weeks] == [
+        (2, 20, 1, 2, 1, False),
+        (3, 24, 0, 0, 2, True),
+    ]
+    after = sorted(set(PICKS_15_IDS) - {6, 15} | {17, 18})
+    assert [a[:4] for a in asked] == [
+        (sorted(PICKS_15_IDS), 28, 1, 2),
+        (after, 18, 1, 3),
+    ]
+    for *_, kwargs in asked:
+        assert kwargs["settings"] is WINDOW
+        assert kwargs["held_chips"] == ()
+        assert kwargs["time_limit"] == 5
+
+
+ROW_KEYS = {"group", "entry", "gw", "policy", "points", "hits", "moves", "ft_end", "unproven"}
+
+
+def test_the_replay_scores_every_squad_under_every_policy(monkeypatch):
+    # Two managers, GW2-3, three policies, the real solver: a row for every
+    # (entry, gw, policy), each policy's free transfers carried by the game's
+    # rule from the start's one, every solve told its own policy and no chips.
+    seen = []
+    real = rp.optimize_path
+
+    def spy(*args, **kwargs):
+        seen.append((kwargs["settings"], kwargs["held_chips"]))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(rp, "optimize_path", spy)
+    rows, meta = replay(FakeClient(), 2, 3, 1, 1, seed=1, jobs=1, own_entry=None)
+
+    assert all(set(row) == ROW_KEYS for row in rows)
+    assert {(r["entry"], r["gw"], r["policy"]) for r in rows} == {
+        (entry, gw, policy)
+        for entry in (TOP_ENTRY, DEEP_ENTRY)
+        for gw in (2, 3)
+        for policy in ("LEGACY", "WINDOW", "ALT")
+    }
+    assert {(r["entry"], r["group"]) for r in rows} == {(TOP_ENTRY, "top"), (DEEP_ENTRY, "deep")}
+    for entry in (TOP_ENTRY, DEEP_ENTRY):
+        for policy in ("LEGACY", "WINDOW", "ALT"):
+            ft = 1
+            for gw in (2, 3):
+                (row,) = [r for r in rows if (r["entry"], r["gw"], r["policy"]) == (entry, gw, policy)]
+                assert row["hits"] == max(row["moves"] - ft, 0)
+                assert row["ft_end"] == next_free_transfers(ft, row["moves"])
+                ft = row["ft_end"]
+
+    assert len(seen) == 12
+    assert {id(settings) for settings, _ in seen} == {id(LEGACY), id(WINDOW), id(ALT)}
+    assert all(chips == () for _, chips in seen)
+
+    assert meta["starts"] == 2
+    assert meta["runs"] == 6
+    assert meta["failed"] == 0
+    assert meta["chipped"] == 0
+    assert meta["unproven"] == sum(r["unproven"] for r in rows)
+    summary = render_summary(gate(rows), meta)
+    assert set(gate(rows)["verdict"]) == {"WINDOW", "ALT"}
+    for entry in (TOP_ENTRY, DEEP_ENTRY):
+        assert str(entry) not in repr(meta)
+        assert str(entry) not in summary
+
+
+def test_a_run_that_raises_is_dropped_and_counted(monkeypatch):
+    # ALT's run for the deep squad hands apply_moves a plan with a hit it does
+    # not owe (one move on one free transfer), which raises ValueError. That
+    # run keeps no rows, and is counted by its class; every other run rolls
+    # and is kept. The gate then has no whole deep season for ALT and calls it
+    # incomplete — never half a season paired as if it were one.
+    def solver(players, projections, squad, bank, free_transfers, events, **kwargs):
+        if kwargs["settings"] is ALT and bank == 5:
+            return _plan([17], [6], 1)
+        return None
+
+    monkeypatch.setattr(rp, "optimize_path", solver)
+    rows, meta = replay(FakeClient(), 2, 3, 1, 1, seed=1, jobs=1, own_entry=None)
+
+    assert not [r for r in rows if r["policy"] == "ALT" and r["entry"] == DEEP_ENTRY]
+    assert len(rows) == 5 * 2
+    assert meta["failed"] == 1
+    assert meta["failed_ValueError"] == 1
+    result = gate(rows)
+    assert result["verdict"]["ALT"] == "no"
+    assert result["reason"]["ALT"] == "incomplete"
+    assert result["dropped"][("ALT", "deep")] == 1
+
+
+# --- the command line ------------------------------------------------------------
+
+
+def test_the_replay_command_reads_its_defaults():
+    args = cli._parse_args(["replay"])
+    assert (args.from_gw, args.to_gw, args.managers, args.seed) == (2, None, (100, 50), 1)
+    assert args.jobs == min(8, os.cpu_count() or 1)
+    args = cli._parse_args(["replay", "--from", "3", "--to", "5", "--managers", "10,4", "--jobs", "2"])
+    assert (args.from_gw, args.to_gw, args.managers, args.jobs) == (3, 5, (10, 4), 2)
+
+
+def test_the_cli_writes_the_rows_and_prints_the_gate(monkeypatch, capsys, tmp_path):
+    # The own entry comes from FPL_TEAM_ID and joins the top group; --to
+    # defaults to the last finished gameweek, GW3. The rows, ids and all, go to
+    # the git-ignored state/replay; stdout has the gate and no entry id.
+    client = FakeClient(squads={
+        TOP_ENTRY: (PICKS_15_IDS, 28),
+        DEEP_ENTRY: (PICKS_15_IDS, 5),
+        OWN_ENTRY: (PICKS_15_IDS, 0),
+    })
+    monkeypatch.setattr(cli, "FplClient", lambda: client)
+    monkeypatch.setattr(rp, "optimize_path", lambda *a, **k: None)
+    monkeypatch.setenv("AIGAFFER_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("FPL_TEAM_ID", str(OWN_ENTRY))
+
+    assert cli.main(["replay", "--managers", "1,1", "--jobs", "1"]) == 0
+
+    (written,) = (tmp_path / "replay").glob("*.jsonl")
+    rows = [json.loads(line) for line in written.read_text().splitlines()]
+    assert {(r["entry"], r["group"]) for r in rows} == {
+        (TOP_ENTRY, "top"), (OWN_ENTRY, "top"), (DEEP_ENTRY, "deep"),
+    }
+    assert {r["gw"] for r in rows} == {2, 3}
+    out = capsys.readouterr().out
+    assert "## Replay gate" in out
+    for entry in (TOP_ENTRY, DEEP_ENTRY, OWN_ENTRY):
+        assert str(entry) not in out
+
+
+def test_the_cli_refuses_a_gameweek_not_yet_finished(monkeypatch, capsys, tmp_path):
+    monkeypatch.setattr(cli, "FplClient", lambda: FakeClient())
+    monkeypatch.setenv("AIGAFFER_STATE_DIR", str(tmp_path))
+    assert cli.main(["replay", "--to", "4", "--jobs", "1"]) == 1
+    assert "GW4 has not finished" in capsys.readouterr().out
+    assert not (tmp_path / "replay").exists()
