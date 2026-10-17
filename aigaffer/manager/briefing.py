@@ -59,7 +59,17 @@ from aigaffer.report.render import (
     working_from,
 )
 from aigaffer.solver.lineup import ChipEvs, Lineup
-from aigaffer.solver.optimizer import AVAILABLE, Plan, projected_points
+from aigaffer.solver.optimizer import (
+    AVAILABLE,
+    BENCH_BUY_CHARGE,
+    DEFENDER,
+    ENABLER_PRICE,
+    FORWARD,
+    GOALKEEPER,
+    MIDFIELDER,
+    Plan,
+    projected_points,
+)
 
 if TYPE_CHECKING:  # the orchestrator imports the manager, so never the reverse
     from aigaffer.news_ledger import LedgerView
@@ -172,12 +182,24 @@ WINDOW_UNITS = (
     " transfers and the hit count are this gameweek's unless the line says"
     " otherwise."
 )
+def _enabler_prices() -> str:
+    """``GK/DEF over £4.5m, MID/FWD over £5.0m``, read off ENABLER_PRICE so the
+    caption cannot disagree with the rule it explains."""
+    names = {GOALKEEPER: "GK", DEFENDER: "DEF", MIDFIELDER: "MID", FORWARD: "FWD"}
+    groups: dict[int, list[str]] = {}
+    for position, price in ENABLER_PRICE.items():
+        groups.setdefault(price, []).append(names[position])
+    return ", ".join(
+        f"{'/'.join(positions)} over £{price / 10:.1f}m" for price, positions in groups.items()
+    )
+
+
 # What a bench-buy mark on a plan line is, said once above the list and only
 # when a plan on the board pays one: the solver has already taken the charge
 # out of that plan's net, and he should know that before he argues with it.
 BENCH_BUYS = (
-    "A bench buy is a signing above enabler price (GK/DEF over £4.5m, MID/FWD"
-    " over £5.0m) who sits on the bench; each week he sits costs 0.5 net,"
+    f"A bench buy is a signing above enabler price ({_enabler_prices()}) who sits"
+    f" on the bench; each week he sits costs {BENCH_BUY_CHARGE} net,"
     " bench-boost and free-hit weeks excepted, so a plan that buys a man to sit"
     " has already paid for it in its net."
 )

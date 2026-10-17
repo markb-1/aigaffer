@@ -43,8 +43,8 @@ TIERS = (1, 2, 3)
 # Searches a run may spend, stated in its briefing. Passing one is a defect
 # signal on the log, never a stop. First set to the expert's estimates of what
 # a run needs with the ledger doing its job (6/6/10); raised to 15 each on the
-# owner's word (2026-10-13) after the GW7 early scout ran out with six
-# starters' clubs unchecked.
+# owner's word (2026-10-13) after the GW7 early scout ran out with seven
+# clubs unchecked — six of the starters' news among them.
 SEARCH_BUDGET = {"early": 15, "scout": 15, "deadline": 15}
 
 # How long an entry stays fresh after it was checked, by category. A test on
