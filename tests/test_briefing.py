@@ -1277,3 +1277,31 @@ def test_the_board_explains_the_bench_charge_only_when_a_plan_pays_it():
 
     assert BENCH_BUYS in " ".join(section(paying, "Candidate plans"))
     assert BENCH_BUYS not in free
+
+
+def test_a_recorded_free_hit_week_adds_no_free_transfer_for_the_next():
+    # The owner has entered a free hit: the week after it earns none, so the
+    # money line must not promise a third transfer to a manager holding two.
+    inputs = replace(pipeline_inputs(), executed=entered(chip="free_hit"))
+    text = briefing(inputs=inputs, free_transfers=2)
+    assert "Free transfers: 2 (none added after this chip)" in text
+    assert "3 next week" not in text
+    # At the cap the cap's own wording still reads first.
+    capped = briefing(inputs=inputs, free_transfers=5)
+    assert "Free transfers: 5 (the most; a roll adds none)" in capped
+
+
+def test_a_recorded_chip_weeks_calendar_says_it_is_played_this_week():
+    from aigaffer.chips import BENCH_BOOST, HeldChip
+    from aigaffer.solver.calendar import CalendarEntry, ChipCalendar
+
+    cal = ChipCalendar(
+        entries=(CalendarEntry(HeldChip(BENCH_BOOST, 1, 19), 17, 9.0, {2: 6.0}),),
+        discount=0.97, proxy_scale={}, horizon_end=19,
+    )
+    inputs = replace(pipeline_inputs(), executed=entered(chip=BENCH_BOOST))
+    text = briefing(inputs=inputs, solve=replace(solved(), calendar=cal))
+    assert bullets(text, "Chip calendar") == [
+        "- Bench Boost (GW1–19): played this week (bar 6.0);"
+        " its best week past the window would have been GW17 (+9.0)"
+    ]

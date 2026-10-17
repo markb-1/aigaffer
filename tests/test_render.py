@@ -71,6 +71,7 @@ from aigaffer.report.render import (
     WORKING_FROM,
     played_chip,
     working_from,
+    planned_chips,
     render_chip_calendar,
     render_digest,
     render_entered_reminder,
@@ -1482,6 +1483,21 @@ def test_the_report_calendar_follows_the_plans_own_path():
     )
     assert "Bench Boost (GW1–19): planned for GW9" in text
     assert "saved for GW17" not in text
+
+
+def test_two_sets_of_a_chip_each_name_their_own_planned_week():
+    # The path boosts in GW19 (first set's window) and GW20 (second's): the
+    # section and the line must both give each set the week it can be played.
+    first = CalendarEntry(HeldChip(BENCH_BOOST, 1, 19), None, None, {6: 6.0, 19: 5.0})
+    second = CalendarEntry(HeldChip(BENCH_BOOST, 20, 38), None, None, {6: 6.0, 20: 4.0})
+    cal = ChipCalendar((first, second), 0.97, {}, 38)
+    plan = plan_with_path(
+        [PlannedMove(19, [], [], 0, chip=BENCH_BOOST), PlannedMove(20, [], [], 0, chip=BENCH_BOOST)]
+    )
+    text = render_chip_calendar(cal, 6, planned_chips(plan, "none", 6), choice=plan)
+    assert "Bench Boost (GW1–19): planned for GW19 (bar 5.0 there)" in text
+    assert "Bench Boost (GW20–38): planned for GW20 (bar 4.0 there)" in text
+    assert chip_line(cal, plan, "none", 6).startswith("Chips: BB GW19 · BB GW20")
 
 
 def test_a_fallen_back_calendar_says_it_is_unavailable():

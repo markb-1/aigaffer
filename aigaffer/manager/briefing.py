@@ -499,9 +499,14 @@ def _situation(
         elif free_transfers >= MAX_FREE_TRANSFERS:
             moves = f"{free_transfers} (the most; a roll adds none)"
         else:
+            # A chip the owner has already entered this week (a wildcard or
+            # free hit) earns no transfer for the next, so a roll adds none.
+            chip = inputs.executed.chip if inputs.executed is not None else NO_CHIP
+            after = after_roll(free_transfers, chip)
             moves = (
-                f"{free_transfers} ({after_roll(free_transfers)}"
-                " next week if this one rolls)"
+                f"{free_transfers} ({after} next week if this one rolls)"
+                if after != free_transfers
+                else f"{free_transfers} (none added after this chip)"
             )
         money = (
             f"Bank: {price(inputs.squad.bank)}"
@@ -724,7 +729,8 @@ def _chips(
     if executed is not None and executed.chip in CHIP_ORDER:
         panel += "\n\n" + CHIP_ALREADY_PLAYED.format(chip=chip_label(executed.chip))
     calendar = render_chip_calendar(
-        solve.calendar, event, planned_chips(solve.choice, played_chip(solve.choice, None), event)
+        solve.calendar, event, planned_chips(solve.choice, played_chip(solve.choice, None, executed), event),
+        solve.choice,
     )
     return [panel] if calendar is None else [panel, calendar]
 
