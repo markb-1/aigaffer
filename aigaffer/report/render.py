@@ -113,7 +113,8 @@ SINGLE_WEEK = "Single-week engine (multi-week solve unavailable this run)."
 # time in it and nothing to explain.
 WINDOW_UNITS = (
     "xP and net are the whole window, decayed and with the armband in; net is"
-    " after hits and any bench-buy charge; transfers and hits shown are this"
+    " after hits, any bench-buy charge and a small cost a transfer, plus a"
+    " credit for free transfers kept; transfers and hits shown are this"
     " week's unless the row says otherwise."
 )
 

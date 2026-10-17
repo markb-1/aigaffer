@@ -23,7 +23,9 @@ its bar on the on side alone. **gain** is the same difference with the bars
 taken back out — what the chip buys now — and **bars_diff** is the difference in
 bars paid: gain − net. Both objectives also carry the bench-buy charge each path
 pays (optimizer.BENCH_BUY_CHARGE), so net and gain both include its difference;
-weekly_gain does not, being read off weekly_xp.
+weekly_gain does not, being read off weekly_xp. Both objectives also carry each
+path's free-transfer credit and transfer cost, so net and gain include their
+difference.
 
 The free hit is decided the same way, not on the one-week rebuild, because the
 window sees what the one week cannot: the standing squad's planned moves wait a
@@ -46,7 +48,7 @@ from aigaffer.orchestrator import PreparedWeek, _held, _week1_lock
 from aigaffer.recording import MODE_NAMES, VERDICT_MODES
 from aigaffer.solver.multiweek import PlannedPath, _free_hit_prices, optimize_path
 from aigaffer.solver.lineup import Lineup, attacking_evs, pick_lineup
-from aigaffer.solver.optimizer import BENCH_WEIGHT, HIT_POINTS, Plan
+from aigaffer.solver.optimizer import HIT_POINTS, GOALKEEPER, Plan, bench_score, resolve
 from aigaffer.store import Store
 
 # How far the net must be from nothing before it is called, per chip: the FPL
@@ -323,7 +325,8 @@ def _week_xp(side: PathSide, event: int, first: int, week: PreparedWeek) -> floa
     """``side``'s points in ``event``, like for like with the other side.
 
     A free hit's week-1 figure is its one-week squad's score, which carries the
-    bench at BENCH_WEIGHT; every other week's figure is the eleven and the
+    bench at the window's bench weights (the keeper's, then the outfield men's
+    by order of points); every other week's figure is the eleven and the
     armband alone. So a free hit played this week has its bench share taken
     back out, and the two sides' week-1 numbers compare the same thing. A free
     hit the off side plays later keeps its share — the fifteen is not on the
@@ -333,11 +336,15 @@ def _week_xp(side: PathSide, event: int, first: int, week: PreparedWeek) -> floa
     if event != first or side.path.week1_chip != FREE_HIT or side.path.week1_freehit_squad is None:
         return points
     bench = set(side.path.week1_freehit_squad) - set(side.path.week1_freehit_xi or [])
-    return points - BENCH_WEIGHT * sum(
-        week.projections[pid].per_gw.get(event, 0.0)
-        for pid in bench
-        if pid in week.projections
-    )
+    keepers: list[float] = []
+    outfield: list[float] = []
+    for pid in bench:
+        if pid not in week.projections:
+            continue
+        xp = week.projections[pid].per_gw.get(event, 0.0)
+        is_keeper = week.effective.players[pid].element_type == GOALKEEPER
+        (keepers if is_keeper else outfield).append(xp)
+    return points - bench_score(resolve(None), keepers, outfield)
 
 
 def _hold_week(
