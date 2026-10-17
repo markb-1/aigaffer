@@ -97,10 +97,12 @@ ALT = WindowSettings(0.03, (0.21, 0.06, 0.002), (2.0, 2.0, 1.6, 1.3, 1.1), 0.2)
 BOOSTED = WindowSettings(1.0, (1.0, 1.0, 1.0), (), 0.0)
 # What the live run plans with. Read at call time (``resolve``), never bound
 # as a default argument, so a test can run the whole pipeline under LEGACY.
-# LEGACY until the owner switches WINDOW on: the first replay (GW2–6, 151
-# squads) found WINDOW level with LEGACY inside its noise — ahead in the top
-# 10k, a fraction behind deeper down — which the gate leaves to the owner.
-DEFAULT_SETTINGS = LEGACY
+# WINDOW, on the owner's word (2026-10-18). The first replay (GW2–6, 151
+# squads) found it level with LEGACY inside its noise — ahead in the top 10k,
+# a fraction behind deeper down — and the gate left the call to him; it fixes
+# what LEGACY cannot see (a backup keeper bought to sit, a transfer spent for
+# nothing). LEGACY is one line away.
+DEFAULT_SETTINGS = WINDOW
 
 
 def resolve(settings: "WindowSettings | None") -> WindowSettings:
