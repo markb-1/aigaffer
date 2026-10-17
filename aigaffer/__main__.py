@@ -45,6 +45,7 @@ the Telegram leg of a run that URL has the bot token in it.
 import argparse
 import json
 import os
+import sys
 from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
@@ -68,7 +69,15 @@ from aigaffer.orchestrator import (
 )
 from aigaffer.peer import peer_has_run
 from aigaffer.recording import transfers_made
-from aigaffer.replay import gate, render_summary, replay
+from aigaffer.replay import (
+    BASELINE,
+    DEEP_PAGES,
+    POLICIES,
+    TOP_PAGES,
+    gate,
+    render_summary,
+    replay,
+)
 from aigaffer.report.telegram import send_report
 from aigaffer.review import REVIEW_MODE, ReviewUnavailable, review_target, review_tick, run_review
 from aigaffer.statesync import STATE_LOCK, GitStateSync
@@ -328,8 +337,25 @@ def _replay(args: argparse.Namespace, client: FplClient) -> int:
     ``state/replay/<timestamp>.jsonl`` and stdout gets the summary, which
     holds counts and means and no entry id. An HTTP failure is reported by
     its class alone, as everywhere here.
+
+    Two mistakes in the asking are answered in a line rather than a
+    traceback. ``--managers`` draws one squad from each of that many distinct
+    pages, so it can ask for no more squads than its band has pages — 200 at
+    the top, 18000 deep — and is refused, before anything is fetched, when it
+    does. A team id that is not a number is not an entry anybody can replay:
+    the run goes ahead on the sample alone and says so on stderr, without
+    repeating what was set.
     """
-    own = os.environ.get("FPL_TEAM_ID")
+    top, deep = args.managers
+    top_most = TOP_PAGES[1] - TOP_PAGES[0] + 1
+    deep_most = DEEP_PAGES[1] - DEEP_PAGES[0] + 1
+    if not (0 <= top <= top_most and 0 <= deep <= deep_most):
+        print(
+            f"aigaffer: --managers draws one squad a page, so at most {top_most}"
+            f" from the top and {deep_most} from deep"
+        )
+        return 1
+    own = _own_entry()
     ticking = _OneBootstrap(client)
     try:
         finished = finished_gameweeks(ticking.bootstrap())
@@ -343,10 +369,8 @@ def _replay(args: argparse.Namespace, client: FplClient) -> int:
         if not 2 <= args.from_gw <= last:
             print(f"aigaffer: the replay runs from GW2 at the earliest, to GW{last}")
             return 1
-        top, deep = args.managers
         rows, meta = replay(
-            ticking, args.from_gw, last, top, deep, args.seed, args.jobs,
-            int(own) if own else None,
+            ticking, args.from_gw, last, top, deep, args.seed, args.jobs, own
         )
     except httpx.HTTPError as error:
         return _failed(None, error, event_id=None, stage=REPLAY_STAGE)
@@ -355,9 +379,29 @@ def _replay(args: argparse.Namespace, client: FplClient) -> int:
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f"{datetime.now(UTC):%Y%m%dT%H%M%SZ}.jsonl"
     path.write_text("".join(json.dumps(row) + "\n" for row in rows))
-    print(render_summary(gate(rows), meta))
+    # Every policy played is named to the gate, so one whose every run failed
+    # is judged incomplete rather than left out of the verdicts.
+    candidates = [name for name in POLICIES if name != BASELINE]
+    print(render_summary(gate(rows, candidates=candidates), meta))
     print(f"aigaffer: {len(rows)} rows written to {path}")
     return 0
+
+
+def _own_entry() -> int | None:
+    """The replay's own entry from ``FPL_TEAM_ID``: None when it is unset, and
+    None with a note on stderr when it is not a number. The note does not say
+    what the variable held — whatever it was, it is somebody's setting."""
+    text = os.environ.get("FPL_TEAM_ID")
+    if not text:
+        return None
+    try:
+        return int(text)
+    except ValueError:
+        print(
+            "aigaffer: FPL_TEAM_ID is not a number, so the replay runs without your squad",
+            file=sys.stderr,
+        )
+        return None
 
 
 def _review(args: argparse.Namespace, client: FplClient) -> int:
