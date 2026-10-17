@@ -35,7 +35,7 @@ from aigaffer.chips import HeldChip, playable_in
 from aigaffer.data.free_transfers import MAX_FREE_TRANSFERS
 from aigaffer.data.models import Player
 from aigaffer.model.xp import PlayerProjection
-from aigaffer.solver.multiweek import FREE_HIT, WILDCARD, _free_hit_prices, optimize_path
+from aigaffer.solver.multiweek import FREE_HIT, WILDCARD, PlannedPath, _free_hit_prices, optimize_path
 from aigaffer.solver.optimizer import MAX_TRANSFERS, Plan, Week1Lock, optimize
 
 # The window gets a minute for the one solve a decision is worth; a sweep is
@@ -46,7 +46,7 @@ from aigaffer.solver.optimizer import MAX_TRANSFERS, Plan, Week1Lock, optimize
 SWEEP_TIME_LIMIT = 20
 
 
-def _logged_path(forced: int | None, **kwargs) -> "tuple[Plan, PlannedPath] | None":
+def _logged_path(forced: int | None, **kwargs) -> tuple[Plan, PlannedPath] | None:
     """One window solve, with a line in the log: the opening count it was
     pinned to (or "free"), the seconds it took, and whether CBC proved it — the
     one record of whether the sweep's time limit is enough on the machine it

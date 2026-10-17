@@ -65,6 +65,7 @@ from aigaffer.manager.briefing import (
     NOT_HELD_GUARD,
     NOT_HELD_MARK,
     PLANNED_GUARD,
+    BENCH_BUYS as BRIEFING_BENCH_BUYS,
     build_briefing,
     format_plans,
     initial_plan_ids,
@@ -75,7 +76,7 @@ from aigaffer.orchestrator import PipelineInputs, SolveResult
 from aigaffer.review import LastWeek
 from aigaffer.solver.lineup import ChipEvs, Lineup
 from aigaffer.solver.multiweek import PlannedMove, PlannedPath
-from aigaffer.solver.optimizer import Plan
+from aigaffer.solver.optimizer import BENCH_BUY_CHARGE, Plan
 from tests.fixtures import BOOTSTRAP_JSON
 
 GKP, DEF, MID, FWD = 1, 2, 3, 4
@@ -1236,6 +1237,24 @@ def test_one_week_on_the_bench_is_one_wk():
     line = format_plans([(0, sitting)], PLAYERS, CLUBS, XP).splitlines()[0]
 
     assert " 1 wk benched (-0.5)" in line
+
+
+def test_two_bench_buys_are_listed_by_id_and_charged_once():
+    first, second = sorted(PLANNED[1].transfers_in)[:2]
+    sitting = _sitting(with_path(ONE, PLANNED), {second: 1, first: 3}, 1.9)
+    names = [PLAYERS[pid].web_name for pid in (first, second)]
+
+    line = format_plans([(0, sitting)], PLAYERS, CLUBS, XP).splitlines()[0]
+
+    assert f" | bench buys: {names[0]} 3 wks, {names[1]} 1 wk benched (-1.9)" in line
+
+
+def test_the_bench_buy_caption_states_the_rule_the_solver_applies():
+    # Built from the solver's constants, yet byte-identical to the wording the
+    # board has always shown.
+    assert BRIEFING_BENCH_BUYS == BENCH_BUYS
+    assert "GK/DEF over £4.5m, MID/FWD over £5.0m" in BRIEFING_BENCH_BUYS
+    assert f"costs {BENCH_BUY_CHARGE} net" in BRIEFING_BENCH_BUYS
 
 
 def test_a_plan_with_no_bench_buy_prints_what_it_printed():
