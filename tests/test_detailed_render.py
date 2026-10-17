@@ -11,6 +11,7 @@ id  name      pos  price  fixtures                     xP (GW8, GW9)
 3   Haaland   FWD  14.0   GW8 LEE(h)  GW9 LEE(h)        6.00, 3.00
 4   Justin    DEF   4.6   GW8 LEE(h)  GW9 blank         3.00, 0.00
 5   Xhaka     MID   5.0   GW8 wol(a)  GW9 LEE(h)        2.00, 4.00
+7   Cucurella DEF   6.1   GW8 wol(a)  GW9 LEE(h)        2.00, 4.00
 6   Raya      GKP   5.6   GW8 LEE(h)  GW9 LEE(h)        3.00, 3.00
 ==  ========  ===  =====  ===========================  ==============
 
@@ -40,6 +41,7 @@ PLAYERS = {
     4: row("Justin", "DEF", 46, [["LEE", "h"]], [], 3.0, 0.0),
     5: row("Xhaka", "MID", 50, [["WOL", "a"]], [["LEE", "h"]], 2.0, 4.0),
     6: row("Raya", "GKP", 56, [["LEE", "h"]], [["LEE", "h"]], 3.0, 3.0),
+    7: row("Cucurella", "DEF", 61, [["WOL", "a"]], [["LEE", "h"]], 2.0, 4.0),
 }
 
 
@@ -59,10 +61,10 @@ def snap(mode="deadline", ts="2026-10-17T10:00Z", **over):
         "xi": [1, 2, 3, 4, 6],
         "bench": [5],
         "captain": 1, "vice": 2,
-        "plans": {0: plan(0, [5], [4]), 1: plan(1, [], [], xp=18.0, net=18.0)},
+        "plans": {0: plan(0, [7], [4]), 1: plan(1, [], [], xp=18.0, net=18.0)},
         "chosen": 0,
         "decision": {
-            "rationale": "Xhaka's fixtures beat Justin's.",
+            "rationale": "Cucurella's fixtures beat Justin's.",
             "adjustments": [], "chip": "none", "chip_justification": "",
             "source": "manager",
         },
@@ -100,9 +102,9 @@ def test_a_transfer_shows_both_mens_fixtures_side_by_side_and_the_gap():
     text = render_detailed([snap()], "d")
 
     transfers = text.split("## Transfers\n")[1].split("\n## ")[0]
-    # Justin out: LEE(h) 3.00 then a blank; Xhaka in: wol(a) 2.00 then LEE(h) 4.00.
+    # Justin out: LEE(h) 3.00 then a blank; Cucurella in: wol(a) 2.00 then LEE(h) 4.00.
     # Totals 3.00 and 6.00, so the gap is +3.00.
-    assert "Justin" in transfers and "Xhaka" in transfers
+    assert "Justin" in transfers and "Cucurella" in transfers
     assert "LEE(h) 3.00" in transfers and "— 0.00" in transfers
     assert "wol(a) 2.00" in transfers and "LEE(h) 4.00" in transfers
     assert "+3.00" in transfers
@@ -122,14 +124,14 @@ def test_what_changed_names_old_and_new_and_first_look_first():
         "scout", "T2",
         captain=3,
         bench=[4],
-        plans={0: plan(0, [4], [5]), 1: plan(1, [], [])},
+        plans={0: plan(0, [4], [7]), 1: plan(1, [], [])},
         decision={**snap()["decision"], "chip": "bench_boost"},
     )
 
-    # Early planned Justin -> Xhaka; scout plans Xhaka -> Justin.
+    # Early planned Justin -> Cucurella; scout plans Cucurella -> Justin.
     lines = what_changed(early, later)
 
-    assert "Transfers: Xhaka → Justin (was: Justin → Xhaka)" in lines
+    assert "Transfers: Cucurella → Justin (was: Justin → Cucurella)" in lines
     assert "Captain: Haaland (was: Saka)" in lines
     assert "Chip: bench_boost (was: none)" in lines
     assert "Bench: Justin (was: Xhaka)" in lines
@@ -202,3 +204,83 @@ def test_a_free_hit_week_titles_the_squad_as_the_free_hit_team():
     assert "## Your squad" not in text
     # The standing squad is named; Justin is in it, and not in the free-hit team.
     assert "Standing squad: Saka, Salah, Haaland, Justin, Raya" in text
+
+
+def _reasoned():
+    return snap(reasons={
+        "transfers": [{"out": 4, "in": 7, "reason": "Cucurella has two games to Justin's one."}],
+        "captain": "Saka has the double.",
+        "chips": "Hold the bench boost for the double.",
+        "plan": "The transfer beats standing pat by two points.",
+        "skipped": [{"id": 3, "reason": "Haaland costs more than the bank allows."}],
+    })
+
+
+def _section(text, heading):
+    return text.split(f"## {heading}\n")[1].split("\n## ")[0]
+
+
+def test_the_transfer_reason_is_the_entry_matching_out_and_in():
+    text = render_detailed([_reasoned()], "d")
+
+    assert "Cucurella has two games to Justin's one." in _section(text, "Transfers")
+    # An entry for a different move does not match this one.
+    other = snap(reasons={"transfers": [{"out": 4, "in": 5, "reason": "wrong man"}]})
+    shown = _section(render_detailed([other], "d"), "Transfers")
+    assert "wrong man" not in shown
+    assert REASON_UNAVAILABLE in shown
+
+
+def test_the_captain_reason_shows_and_the_vice_has_none():
+    section = _section(render_detailed([_reasoned()], "d"), "Captain and vice")
+
+    captain = next(l for l in section.splitlines() if "Captain: Saka" in l)
+    vice = next(l for l in section.splitlines() if "Vice: Salah" in l)
+    assert "Saka has the double." in captain
+    assert "—" not in vice
+
+
+def test_the_chips_reason_shows_in_the_chips_section():
+    chip = snap(
+        reasons=_reasoned()["reasons"],
+        decision={**snap()["decision"], "chip": "bench_boost"},
+    )
+
+    assert "Hold the bench boost for the double." in _section(
+        render_detailed([chip], "d"), "Chips")
+
+
+def test_the_plan_reason_ends_the_options_weighed():
+    section = _section(render_detailed([_reasoned()], "d"), "The options weighed")
+
+    assert section.strip().splitlines()[-1] == "The transfer beats standing pat by two points."
+
+
+def test_a_skipped_row_gets_its_reason_and_a_missing_one_stays_blank():
+    text = render_detailed([_reasoned()], "d")
+    row = next(l for l in _section(text, "Transfers skipped").splitlines() if "Haaland" in l)
+    assert row.endswith("| Haaland costs more than the bank allows. |")
+
+    bare = snap(reasons={"skipped": []})
+    row = next(l for l in _section(render_detailed([bare], "d"), "Transfers skipped").splitlines()
+               if "Haaland" in l)
+    assert row.endswith("| unaffordable |  |")
+    assert REASON_UNAVAILABLE not in row
+
+
+def test_transfers_pair_by_position_not_by_sorted_id():
+    # Ids sorted: out [5, 9], in [3, 12]. Zipping would pair 5 (DEF) with
+    # 3 (MID) and 9 (MID) with 12 (DEF). By position: DEF 5 -> DEF 12 and
+    # MID 9 -> MID 3 (listed strongest outgoing first: Emm 4.00, Dee 2.00).
+    players = {
+        **PLAYERS,
+        5: row("Dee", "DEF", 50, [], [], 1.0, 1.0),
+        9: row("Emm", "MID", 60, [], [], 2.0, 2.0),
+        3: row("Emmtwo", "MID", 60, [], [], 5.0, 5.0),
+        12: row("Deetwo", "DEF", 50, [], [], 4.0, 4.0),
+    }
+    cur = snap(players=players, plans={0: plan(0, [3, 12], [5, 9])})
+
+    lines = what_changed(snap("early", "T1"), cur)
+
+    assert "Transfers: Emm → Emmtwo, Dee → Deetwo (was: Justin → Cucurella)" in lines
