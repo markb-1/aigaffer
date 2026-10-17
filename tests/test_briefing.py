@@ -76,7 +76,8 @@ from aigaffer.orchestrator import PipelineInputs, SolveResult
 from aigaffer.review import LastWeek
 from aigaffer.solver.lineup import ChipEvs, Lineup
 from aigaffer.solver.multiweek import PlannedMove, PlannedPath
-from aigaffer.solver.optimizer import BENCH_BUY_CHARGE, Plan
+from aigaffer.solver import optimizer
+from aigaffer.solver.optimizer import BENCH_BUY_CHARGE, WINDOW, Plan
 from tests.fixtures import BOOTSTRAP_JSON
 
 GKP, DEF, MID, FWD = 1, 2, 3, 4
@@ -1309,8 +1310,10 @@ def test_a_plan_with_no_credit_says_nothing_of_keeping():
     assert "keeps" not in line
 
 
-@pytest.mark.live_settings
-def test_the_ft_caption_appears_only_when_a_plan_carries_a_credit_or_a_cost():
+def test_the_ft_caption_appears_only_when_a_plan_carries_a_credit_or_a_cost(monkeypatch):
+    # Under WINDOW, the settings that carry a credit and a cost, so the pinned
+    # sentence is the one the owner reads with them on ("0.2 a transfer").
+    monkeypatch.setattr(optimizer, "DEFAULT_SETTINGS", WINDOW)
     crediting = _keeping(AHEAD, 3, 2.6)
     costing = _keeping(AHEAD, 1, 0.0, 0.4)
     plain = _keeping(AHEAD, 1, 0.0, 0.0)
