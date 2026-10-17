@@ -3377,6 +3377,7 @@ def test_a_charged_signing_who_starts_is_not_charged():
     assert plan.transfers_in == [16]
     assert plan.objective == pytest.approx(116.5215, abs=1e-4)
     assert path.bench_charge == 0.0
+    assert path.benched_buys == {}
 
 
 def test_an_owned_bench_is_never_charged():
@@ -3424,6 +3425,8 @@ def test_a_forced_signing_who_sits_pays_the_charge_and_xp_stays_pure():
         plan.objective + 4 * plan.hits + plan.bench_charge, abs=1e-6
     )
     assert plan.xp_total == pytest.approx(74.29, abs=1e-4)
+    # The XI and the armband, 66 + 6: weekly_xp never sees the charge.
+    assert path.weekly_xp[10] == pytest.approx(72.0, abs=1e-4)
 
 
 def test_the_bench_boost_week_is_not_charged():
@@ -3447,22 +3450,29 @@ def test_the_bench_boost_week_is_not_charged():
 
 
 def test_a_free_hit_week_is_not_charged():
-    # 16 (61, 3.0) is forced in in GW10 and sits: 0.5. GW11's free hit is
-    # forced by a bar of -100, and the standing squad does not play there, so
-    # GW11 charges nothing although 16 is still on its bench.
-    players, projections = keeper_board([10, 11], cost=61, value=3.0)
+    # Keepers 16 (61, 3.0) and 17 (61, 2.0) are both forced in (the GK quota is
+    # two, so both old keepers go), and in every week one of them sits. GW10
+    # charges 0.5 for 17 behind 16. GW11's free hit is forced by a bar of -100;
+    # the standing squad does not play there, so it charges nothing although a
+    # keeper is still on its bench. A recompute that charged the free-hit week
+    # would give 0.5 + 0.85 x 0.5 = 0.925 and two benched weeks, not 0.5 and one.
+    rows = [
+        (pid, position, 50, {10: points, 11: points}) for pid, position, points in SPINE
+    ]
+    rows += [(16, GK, 61, {10: 3.0, 11: 3.0}), (17, GK, 61, {10: 2.0, 11: 2.0})]
+    players, projections = _build(rows)
     held = whole_season(FREE_HIT)
 
     plan, path = optimize_path(
-        players, projections, SQUAD, bank=11, free_transfers=1, events=[10, 11],
-        decay=DECAY, forced_first_transfers=1, held_chips=held,
+        players, projections, SQUAD, bank=22, free_transfers=2, events=[10, 11],
+        decay=DECAY, forced_first_transfers=2, held_chips=held,
         bars={held[0].id: {11: -100.0}},
     )
 
-    assert plan.transfers_in == [16]
+    assert sorted(plan.transfers_in) == [16, 17]
     assert [move.chip for move in path.moves if move.event == 11] == [FREE_HIT]
-    assert path.benched_buys == {16: 1}
     assert path.bench_charge == pytest.approx(0.5, abs=1e-6)
+    assert sum(path.benched_buys.values()) == 1
 
 
 def test_a_charged_bench_in_a_blank_free_hit_week_stays_feasible():
