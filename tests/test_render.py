@@ -1446,6 +1446,44 @@ def test_the_calendar_section_names_each_chips_week_bar_and_expiry():
     assert render_chip_calendar(None, 6) is None
 
 
+def test_the_calendar_names_the_week_the_plan_plays_a_chip():
+    # Saved-for GW17 is the benchmark week past the window; the plan boosts in
+    # GW8, and a calendar that says only "saved for GW17" next to that reads as
+    # a contradiction.
+    bb = CalendarEntry(HeldChip(BENCH_BOOST, 1, 19), 17, 9.0, {6: 6.0, 8: 7.5})
+    cal = ChipCalendar((bb,), 0.97, {}, 19)
+    assert (
+        "Bench Boost (GW1–19): planned for GW8 (bar 7.5 there);"
+        " its best week past the window is GW17 (+9.0)"
+    ) in render_chip_calendar(cal, 6, planned={BENCH_BOOST: 8})
+    assert (
+        "Bench Boost (GW1–19): played this week (bar 6.0);"
+        " its best week past the window would have been GW17 (+9.0)"
+    ) in render_chip_calendar(cal, 6, planned={BENCH_BOOST: 6})
+
+
+def test_a_planned_chip_with_no_bar_for_its_week_leaves_the_bar_out():
+    bb = CalendarEntry(HeldChip(BENCH_BOOST, 1, 19), None, None, {6: 6.0})
+    text = render_chip_calendar(ChipCalendar((bb,), 0.97, {}, 19), 6, planned={BENCH_BOOST: 9})
+    assert "- Bench Boost (GW1–19): planned for GW9\n" in text + "\n"
+
+
+def test_a_planned_wildcard_says_when_then_keeps_its_bar_text():
+    text = render_chip_calendar(
+        ChipCalendar((WC,), 0.97, {}, 19), 6, planned={WILDCARD: 9}
+    )
+    assert "Wildcard (GW2–19): planned for GW9; this week's bar 35.0" in text
+
+
+def test_the_report_calendar_follows_the_plans_own_path():
+    plan = plan_with_path(moves=[PlannedMove(9, [], [], 0, chip=BENCH_BOOST)])
+    text = render_report(
+        "scout", EVENT, PLANS, plan, LINEUP, CHIPS, BOOTSTRAP, XP, calendar=CAL,
+    )
+    assert "Bench Boost (GW1–19): planned for GW9" in text
+    assert "saved for GW17" not in text
+
+
 def test_a_fallen_back_calendar_says_it_is_unavailable():
     cal = fallback_calendar((HeldChip(TRIPLE_CAPTAIN, 1, 19),), [6, 7, 8, 9, 10, 11])
     assert "calendar unavailable" in render_chip_calendar(cal, 6)
