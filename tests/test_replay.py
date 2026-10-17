@@ -122,6 +122,35 @@ def test_a_player_with_no_history_for_the_week_did_not_play():
     assert autosub_points(LINEUP, _positions(), actual) == 27
 
 
+def test_a_defender_who_would_make_six_at_the_back_is_skipped():
+    # A 1-5-3-2 eleven — 1; 3-7; 8, 9, 10; 13, 14 — with an extra defender 16
+    # first on the bench, then midfielder 11, then forward 15. Midfielder 8
+    # misses. Defender 16 (7 points) for 8 would make 6 DEF, past the five
+    # the game allows (MID at 2 would still be legal), so 16 sits; midfielder
+    # 11 (4) comes on: 5 DEF, 3 MID, 2 FWD. Ten starters at 2 = 20, plus 4,
+    # plus captain 13's second 2 = 26. Letting 16 on would make 29.
+    positions = _positions() | {16: DEF}
+    lineup = Lineup(
+        xi=[1, 3, 4, 5, 6, 7, 8, 9, 10, 13, 14], captain=13, vice=14, bench=[2, 16, 11, 15]
+    )
+    actual = {p: (90, 2) for p in range(1, 17)} | {8: (0, 0), 16: (90, 7), 11: (90, 4)}
+    assert autosub_points(lineup, positions, actual) == 26
+
+
+def test_every_starter_out_brings_on_the_whole_bench_that_fits():
+    # None of the eleven plays; the bench all do: 2 scores 3, 6 scores 4,
+    # 7 scores 5, 15 scores 6.
+    # - Keeper 2 replaces 1.
+    # - Defender 6 replaces 3, the first non-player in XI order: still 3 DEF.
+    # - Defender 7 replaces 4: still 3 DEF.
+    # - Forward 15 would replace 5, leaving 2 DEF: illegal; so he replaces 8,
+    #   the next one, leaving 3 DEF, 4 MID, 3 FWD: legal.
+    # The seven who stay on scored nothing, and neither the captain (12) nor
+    # the vice (13) played, so no armband: 3 + 4 + 5 + 6 = 18.
+    actual = {p: (0, 0) for p in LINEUP.xi} | {2: (90, 3), 6: (90, 4), 7: (90, 5), 15: (90, 6)}
+    assert autosub_points(LINEUP, _positions(), actual) == 18
+
+
 # --- a week's step ------------------------------------------------------------
 
 
@@ -163,12 +192,22 @@ def test_hits_that_do_not_match_the_moves_are_refused():
 
 def test_a_move_that_does_not_fit_the_squad_is_refused():
     state = State(squad=tuple(range(1, 16)), bank=10, free_transfers=2)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="not held"):
         apply_moves(state, [20], [30], {20: 65, 30: 50}, hits=0)  # 30 is not held
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="already held"):
         apply_moves(state, [9], [8], {8: 60, 9: 55}, hits=0)  # 9 is already held
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="1 out"):
         apply_moves(state, [20, 21], [8], {8: 60, 20: 65, 21: 40}, hits=0)  # two for one
+
+
+def test_a_move_the_bank_cannot_pay_for_is_refused():
+    # Bank 0, 8 (60) out and 20 (65) in: 0 + 60 − 65 = −5. A plan solved at
+    # other prices has overspent, and scoring it would hide the mispricing.
+    state = State(squad=tuple(range(1, 16)), bank=0, free_transfers=1)
+    with pytest.raises(ValueError, match="bank"):
+        apply_moves(state, [20], [8], {8: 60, 20: 65}, hits=0)
+    # At 60 apiece the bank ends at exactly 0, which is allowed.
+    assert apply_moves(state, [20], [8], {8: 60, 20: 60}, hits=0).bank == 0
 
 
 # --- the gate ----------------------------------------------------------------
@@ -327,6 +366,96 @@ def test_a_squad_missing_a_policy_is_left_out_of_the_pairing():
     ft_end = {"LEGACY": {1: [1, 1, 1], 2: [1, 1, 1]}, "WINDOW": {1: [1, 1, 1]}}
     result = gate(_rows("top", points, ft_end))
     assert result["cells"]["WINDOW", "top", 0.0] == {"d": pytest.approx(6.0), "se": pytest.approx(0.0)}
+    assert result["dropped"] == {("WINDOW", "top"): 1}
+
+
+def test_a_squad_missing_part_of_a_season_is_dropped_from_every_week():
+    # Squad 1 is complete: WINDOW +2 a week, and 3 FTs left against LEGACY's
+    # 1, so credit c adds 2c to gw4. Squad 2's WINDOW has gw2 and gw3 (−10
+    # each) but no gw4, so it has no end to credit and is left out of every
+    # week, not only the last. Over squad 1 alone:
+    #   c = 0:   d̄ = (2, 2, 2), d = 6, SE = 0
+    #   c = 1.5: d̄ = (2, 2, 5), d = 9; deviations from 3 are (−1, −1, 2),
+    #            squares sum to 6, var 3, SE = sqrt(3 · 3) = 3
+    #   c = 2:   d̄ = (2, 2, 6), d = 10; deviations from 10/3 are
+    #            (−4/3, −4/3, 8/3), squares sum to 96/9, var 16/3,
+    #            SE = sqrt(3 · 16/3) = 4
+    # Pairing squad 2 in the weeks it has would give gw2 a mean of
+    # (2 − 10)/2 = −4, and d at credit 0 of −4 − 4 + 2 = −6.
+    rows = _rows(
+        "top",
+        {"LEGACY": {1: [50, 50, 50], 2: [50, 50, 50]}, "WINDOW": {1: [52, 52, 52]}},
+        {"LEGACY": {1: [1, 1, 1], 2: [1, 1, 1]}, "WINDOW": {1: [1, 1, 3]}},
+    ) + [
+        {"group": "top", "entry": 2, "gw": gw, "policy": "WINDOW", "points": 40, "ft_end": 5}
+        for gw in (2, 3)
+    ]
+    result = gate(rows)
+
+    cells = result["cells"]
+    assert cells["WINDOW", "top", 0.0] == {"d": pytest.approx(6.0), "se": pytest.approx(0.0)}
+    assert cells["WINDOW", "top", 1.5] == {"d": pytest.approx(9.0), "se": pytest.approx(3.0)}
+    assert cells["WINDOW", "top", 2.0] == {"d": pytest.approx(10.0), "se": pytest.approx(4.0)}
+    assert result["dropped"] == {("WINDOW", "top"): 1}
+    assert result["verdict"] == {"WINDOW": "ship"}
+
+
+def test_a_squad_missing_a_middle_week_is_dropped_too():
+    # A hole anywhere in the season breaks it, not only at the end. Squad 1
+    # is complete, WINDOW +1 a week with FTs equal: d = 3, SE = 0. Squad 2's
+    # LEGACY has no gw3 row (WINDOW is −20 a week against it), so it is
+    # dropped from every week; pairing it in gw2 and gw4 would give
+    # d = (1 − 20)/2 + 1 + (1 − 20)/2 = −18.
+    rows = [
+        r
+        for r in _renamed(_rows("top", *_flat({1: [1, 1, 1], 2: [-20, -20, -20]})), "WINDOW")
+        if not (r["entry"] == 2 and r["gw"] == 3 and r["policy"] == "LEGACY")
+    ]
+    result = gate(rows)
+    assert result["cells"]["WINDOW", "top", 0.0] == {"d": pytest.approx(3.0), "se": pytest.approx(0.0)}
+    assert result["dropped"] == {("WINDOW", "top"): 1}
+
+
+def test_a_cell_exactly_one_se_behind_is_the_owners_call():
+    # (−2, 0, 0) a week for both squads, FTs equal: d = −2; deviations from
+    # −2/3 are (−4/3, 2/3, 2/3), squares sum to 24/9, var 4/3, SE =
+    # sqrt(3 · 4/3) = 2. So d + SE = 0, which is not below zero: "owner", not
+    # "no" — the rule for "no" is d + SE < 0.
+    result = gate(_renamed(_rows("top", *_flat({1: [-2, 0, 0], 2: [-2, 0, 0]})), "WINDOW"))
+    assert result["cells"]["WINDOW", "top", 0.0] == {"d": -2.0, "se": 2.0}
+    assert result["verdict"] == {"WINDOW": "owner"}
+
+
+def test_a_candidate_without_every_cell_never_ships():
+    # Two groups are present, so each candidate needs 3 credits × 2 groups =
+    # 6 cells. WINDOW is +1 a week in the top group and has no rows at all in
+    # the deep one: its 3 cells would all pass, but a group it was never
+    # measured in is not a group it passed. ALT has no rows anywhere, which
+    # would ship on all([]) over no cells. Both are "no", for being incomplete.
+    # Every squad a candidate has no whole season for is a drop: WINDOW loses
+    # deep squad 3; ALT loses top squads 1 and 2 and deep squad 3.
+    rows = (
+        _renamed(_rows("top", *_flat({1: [1, 1, 1], 2: [1, 1, 1]})), "WINDOW")
+        + [r for r in _rows("deep", *_flat({3: [0, 0, 0]})) if r["policy"] == "LEGACY"]
+        + [{"group": "deep", "entry": 3, "gw": 2, "policy": "ALT", "points": 90, "ft_end": 1}]
+    )
+    result = gate(rows)
+
+    assert len([k for k in result["cells"] if k[0] == "WINDOW"]) == 3
+    assert not [k for k in result["cells"] if k[0] == "ALT"]
+    assert result["verdict"] == {"ALT": "no", "WINDOW": "no"}
+    assert result["reason"] == {"ALT": "incomplete", "WINDOW": "incomplete"}
+    assert result["dropped"] == {("ALT", "deep"): 1, ("ALT", "top"): 2, ("WINDOW", "deep"): 1}
+    assert result["pick"] is None
+
+
+def test_no_top_group_means_no_pick():
+    # Only the deep group was replayed. WINDOW is +1 a week there and ships
+    # on its three cells, but the pick is read from the top group at credit
+    # 1.5, and there is none: nothing is picked, and nothing raises.
+    result = gate(_renamed(_rows("deep", *_flat({3: [1, 1, 1], 4: [1, 1, 1]})), "WINDOW"))
+    assert result["verdict"] == {"WINDOW": "ship"}
+    assert result["pick"] is None
 
 
 # --- the summary ---------------------------------------------------------------
@@ -339,7 +468,9 @@ def test_the_summary_tabulates_the_cells_and_names_the_pick():
             ("WINDOW", "top", 1.5): {"d": 3.25, "se": 0.6614},
             ("ALT", "top", 0.0): {"d": -1.0, "se": 4.3589},
         },
-        "verdict": {"WINDOW": "ship", "ALT": "owner"},
+        "verdict": {"WINDOW": "ship", "ALT": "owner", "OTHER": "no"},
+        "reason": {"OTHER": "incomplete"},
+        "dropped": {("WINDOW", "top"): 3},
         "pick": "WINDOW",
     }
     text = render_summary(gate_result, {"squads": 150, "skipped": 2})
@@ -349,6 +480,8 @@ def test_the_summary_tabulates_the_cells_and_names_the_pick():
     assert "| ALT | top | 0.0 | -1.00 | 4.36 |" in text
     assert "WINDOW: ship" in text
     assert "ALT: owner" in text
+    assert "OTHER: no (incomplete)" in text
+    assert "WINDOW, top: 3 squads dropped as incomplete" in text
     assert "Pick: WINDOW" in text
     assert "squads: 150" in text
     assert "skipped: 2" in text

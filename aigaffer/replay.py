@@ -51,7 +51,7 @@ And two notes on what the comparison can and cannot say:
 from collections import defaultdict
 from dataclasses import dataclass
 from math import inf, sqrt
-from statistics import mean, stdev
+from statistics import mean, variance
 
 from aigaffer.data.free_transfers import MAX_FREE_TRANSFERS
 from aigaffer.solver.lineup import XI_RANGES, Lineup
@@ -215,7 +215,9 @@ def apply_moves(
     here because a plan that disagreed with the bank it was solved against
     would be scored at the wrong price, and silently. So is a move that does
     not fit the squad — selling a man not held, buying one already held, or
-    an unequal swap — which can only be a bug upstream.
+    an unequal swap — which can only be a bug upstream. And so is a bank left
+    below nothing: the plan was solved at prices other than the ones it is
+    paying, and it has bought what it could not afford.
     """
     held = set(state.squad)
     if len(transfers_in) != len(transfers_out):
@@ -238,6 +240,8 @@ def apply_moves(
         + sum(value[p] for p in transfers_out)
         - sum(value[p] for p in transfers_in)
     )
+    if bank < 0:
+        raise ValueError(f"the moves leave the bank at {bank}")
     return State(
         squad=squad,
         bank=bank,
@@ -251,48 +255,76 @@ def apply_moves(
 def _cell(
     baseline: dict[tuple[int, int], dict],
     candidate: dict[tuple[int, int], dict],
+    entries: list[int],
+    gws: list[int],
     credit: float,
 ) -> dict[str, float]:
     """One cell of the gate: a candidate against the baseline in one group at
     one end credit.
 
-    Both arguments map ``(entry, gw)`` to that squad's row. A squad is paired
-    only where both policies have a row for it, so a squad one policy lost is
-    left out of every week rather than paired against nothing.
+    Both mappings take ``(entry, gw)`` to that squad's row. ``entries`` are
+    the squads with a whole season under both policies — a row for every one
+    of ``gws``, the replay's range — and only they are paired, in every week
+    alike (see :func:`_whole_seasons`).
 
-    ``d̄_g`` is the mean over squads of the candidate's points less the
+    ``d̄_g`` is the mean over those squads of the candidate's points less the
     baseline's in gameweek g. In the last gameweek each squad's difference also
     carries ``credit`` times the difference in the free transfers left over,
     which is the end credit: points a policy banked as transfers rather than
     spent. Then ``d = Σ_g d̄_g``, the mean paired season difference, and
     ``SE = sqrt(G) · stdev(d̄_g)`` with the sample stdev over the G gameweek
     means — the SE of a sum of G gameweek shocks, each estimated from the
-    spread between them. With fewer than two gameweeks there is no spread to
-    measure, so the SE is infinite: such a cell can never fail the gate, and
-    never ship on it unless its d is ≥ 0 outright.
+    spread between them. It is computed as ``sqrt(G · variance)``, which is
+    the same number and exact where the variance is. With fewer than two
+    gameweeks there is no spread to measure, so the SE is infinite: such a cell
+    can never fail the gate, and never ship on it unless its d is ≥ 0 outright.
     """
-    paired = sorted(set(baseline) & set(candidate))
-    gws = sorted({gw for _, gw in paired})
     last = gws[-1]
     weekly = []
     for gw in gws:
         diffs = []
-        for key in (k for k in paired if k[1] == gw):
-            diff = candidate[key]["points"] - baseline[key]["points"]
+        for entry in entries:
+            diff = candidate[entry, gw]["points"] - baseline[entry, gw]["points"]
             if gw == last:
-                diff += credit * (candidate[key]["ft_end"] - baseline[key]["ft_end"])
+                diff += credit * (candidate[entry, gw]["ft_end"] - baseline[entry, gw]["ft_end"])
             diffs.append(diff)
         weekly.append(mean(diffs))
-    se = sqrt(len(weekly)) * stdev(weekly) if len(weekly) > 1 else inf
+    se = sqrt(len(weekly) * variance(weekly)) if len(weekly) > 1 else inf
     return {"d": sum(weekly), "se": se}
+
+
+def _whole_seasons(
+    baseline: dict[tuple[int, int], dict],
+    candidate: dict[tuple[int, int], dict],
+    gws: list[int],
+) -> tuple[list[int], int]:
+    """The squads in one group with a row for every gameweek in ``gws`` under
+    both policies, and how many of the group's squads fall short.
+
+    The pairing is of whole seasons, never part of one. A squad paired only in
+    the weeks it has would make each ``d̄_g`` a mean over a different set of
+    squads, so the sum would no longer be any squad's season; and a squad
+    missing the last gameweek would lose its end credit without a word. Such a
+    squad is dropped from every week instead, and counted, so the summary can
+    say how much of the sample the cell stands on.
+    """
+    seen = {entry for entry, _ in baseline} | {entry for entry, _ in candidate}
+    whole = sorted(
+        entry
+        for entry in seen
+        if all((entry, gw) in baseline and (entry, gw) in candidate for gw in gws)
+    )
+    return whole, len(seen) - len(whole)
 
 
 def _verdict(cells: list[dict[str, float]]) -> str:
     """A candidate's verdict over its cells: "no" if any cell falls more than
-    an SE below zero, "ship" if every cell is ≥ 0, and otherwise the owner's
-    call — some cell is behind, but within an SE of level. The gate asks "not
-    worse", not "better": six gameweeks cannot separate a point or two a week,
-    and the prior the candidates were built on carries the rest."""
+    an SE below zero (exactly one SE behind is not below), "ship" if every
+    cell is ≥ 0, and otherwise the owner's call — some cell is behind, but
+    within an SE of level. The gate asks "not worse", not "better": six
+    gameweeks cannot separate a point or two a week, and the prior the
+    candidates were built on carries the rest. A candidate short of a cell
+    never reaches here (see :func:`gate`)."""
     if any(c["d"] + c["se"] < 0 for c in cells):
         return "no"
     if all(c["d"] >= 0 for c in cells):
@@ -307,13 +339,27 @@ def gate(rows: list[dict], credits=(0.0, 1.5, 2.0)) -> dict:
     ``group``, ``entry``, ``gw``, ``policy``, ``points`` (after hits) and
     ``ft_end`` (the free transfers held after that gameweek). Every policy
     other than LEGACY is a candidate, and each is scored in one cell per group
-    and end credit (see :func:`_cell`).
+    and end credit (see :func:`_cell`), over the squads with a whole season
+    under both — the season being every gameweek any row has.
 
-    Returns ``{"cells": {(candidate, group, credit): {"d", "se"}}, "verdict":
-    {candidate: "ship" | "owner" | "no"}, "pick": candidate | None}``. If more
-    than one candidate ships, the pick is the one with the larger d in the top
-    group at a credit of 1.5 (the first in name order on an exact tie); if
-    none ships, nothing is picked and the table is the owner's to read.
+    Returns::
+
+        {"cells": {(candidate, group, credit): {"d", "se"}},
+         "verdict": {candidate: "ship" | "owner" | "no"},
+         "reason": {candidate: "incomplete"},   # only for those it applies to
+         "dropped": {(candidate, group): squads short of a whole season},
+         "pick": candidate | None}
+
+    A candidate needs a cell for every credit in every group the rows hold. One
+    short of that — a group with no whole season under it, or no rows at all —
+    is "no", for being incomplete: a group it was never measured in is not a
+    group it passed, and it must never ship on ``all([])``.
+
+    If more than one candidate ships, the pick is the one with the larger d in
+    the top group at a credit of 1.5 (the first in name order on an exact
+    tie). A shipped candidate with no such cell — no top group was replayed,
+    or 1.5 is not among the credits — cannot be picked; if none ships, or none
+    can be picked, nothing is, and the table is the owner's to read.
     """
     by_policy: dict[str, dict[str, dict[tuple[int, int], dict]]] = defaultdict(
         lambda: defaultdict(dict)
@@ -321,30 +367,51 @@ def gate(rows: list[dict], credits=(0.0, 1.5, 2.0)) -> dict:
     for row in rows:
         by_policy[row["policy"]][row["group"]][row["entry"], row["gw"]] = row
 
+    gws = sorted({row["gw"] for row in rows})
+    groups = sorted({row["group"] for row in rows})
     baseline = by_policy.get(BASELINE, {})
     candidates = sorted(p for p in by_policy if p != BASELINE)
-    groups = sorted(baseline)
 
     cells = {}
+    dropped = {}
     for candidate in candidates:
         for group in groups:
-            if not set(baseline[group]) & set(by_policy[candidate].get(group, {})):
+            ours = baseline.get(group, {})
+            theirs = by_policy[candidate].get(group, {})
+            whole, short = _whole_seasons(ours, theirs, gws)
+            if short:
+                dropped[candidate, group] = short
+            if not whole:
                 continue
             for credit in credits:
-                cells[candidate, group, credit] = _cell(
-                    baseline[group], by_policy[candidate][group], credit
-                )
+                cells[candidate, group, credit] = _cell(ours, theirs, whole, gws, credit)
 
-    verdict = {
-        candidate: _verdict([cell for key, cell in cells.items() if key[0] == candidate])
-        for candidate in candidates
+    needed = len(credits) * len(groups)
+    verdict, reason = {}, {}
+    for candidate in candidates:
+        mine = [cell for key, cell in cells.items() if key[0] == candidate]
+        if len(mine) < needed or not mine:
+            verdict[candidate], reason[candidate] = "no", "incomplete"
+        else:
+            verdict[candidate] = _verdict(mine)
+
+    pickable = [
+        c
+        for c in candidates
+        if verdict[c] == "ship" and (c, TOP_GROUP, TIE_BREAK_CREDIT) in cells
+    ]
+    pick = (
+        max(pickable, key=lambda c: cells[c, TOP_GROUP, TIE_BREAK_CREDIT]["d"])
+        if pickable
+        else None
+    )
+    return {
+        "cells": cells,
+        "verdict": verdict,
+        "reason": reason,
+        "dropped": dropped,
+        "pick": pick,
     }
-    shipped = [c for c in candidates if verdict[c] == "ship"]
-    if len(shipped) > 1:
-        pick = max(shipped, key=lambda c: cells[c, TOP_GROUP, TIE_BREAK_CREDIT]["d"])
-    else:
-        pick = shipped[0] if shipped else None
-    return {"cells": cells, "verdict": verdict, "pick": pick}
 
 
 # --- the summary -----------------------------------------------------------------
@@ -371,7 +438,18 @@ def render_summary(gate_result: dict, meta: dict) -> str:
             f"| {candidate} | {group} | {credit:.1f} | {cell['d']:+.2f} | {cell['se']:.2f} |"
         )
     lines += ["", "**Verdicts**", ""]
-    lines += [f"- {candidate}: {v}" for candidate, v in gate_result["verdict"].items()]
+    reason = gate_result.get("reason", {})
+    lines += [
+        f"- {candidate}: {v}" + (f" ({reason[candidate]})" if candidate in reason else "")
+        for candidate, v in gate_result["verdict"].items()
+    ]
+    dropped = gate_result.get("dropped", {})
+    if dropped:
+        lines += ["", "**Squads short of a whole season** (left out of every week)", ""]
+        lines += [
+            f"- {candidate}, {group}: {n} squads dropped as incomplete"
+            for (candidate, group), n in dropped.items()
+        ]
     lines += ["", f"**Pick: {gate_result['pick'] or 'none'}**"]
     if meta:
         lines += ["", "**Run**", ""]
