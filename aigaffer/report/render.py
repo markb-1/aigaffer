@@ -310,7 +310,9 @@ def render_report(
     chip = played_chip(choice, gaffer, executed)
     free_hit = _free_hitting(choice, chip, executed)
     entered = executed is not None and executed.chip == chip != NO_CHIP
-    chip_section = render_chip_calendar(calendar, event.id)
+    chip_section = render_chip_calendar(
+        calendar, event.id, planned_chips(choice, chip, event.id)
+    )
 
     sections = [
         _header(mode, event),
@@ -1774,12 +1776,22 @@ CALENDAR_UNAVAILABLE = (
 )
 
 
-def render_chip_calendar(calendar: "ChipCalendar | None", event: int) -> str | None:
+def render_chip_calendar(
+    calendar: "ChipCalendar | None",
+    event: int,
+    planned: dict[str, int] | None = None,
+) -> str | None:
     """The chip calendar as a section: each chip's window, the week it is saved
     for and what it is worth there, and the bar it must clear this gameweek.
     Shared by the gaffer's briefing and the owner's report, so the two read
     the same chips the same way. None when no chip is held, or none is playable
-    within the window (an entryless calendar has nothing to say)."""
+    within the window (an entryless calendar has nothing to say).
+
+    ``planned`` is the week the plan under discussion plays each chip kind (see
+    :func:`planned_chips`). "Saved for GW14" is the calendar's benchmark week
+    beyond the window, and beside a plan that boosts in GW8 it reads as a
+    contradiction, so a chip the plan plays says the week the plan plays it and
+    keeps the benchmark as what it is. None leaves the text as it always was."""
     if calendar is None or not calendar.entries:
         return None
     lines = ["## Chip calendar", ""]
@@ -1789,12 +1801,31 @@ def render_chip_calendar(calendar: "ChipCalendar | None", event: int) -> str | N
         chip = entry.held
         name = f"{chip_label(chip.chip)} (GW{chip.start_event}–{chip.stop_event})"
         bar = entry.bars.get(event)
+        when = (planned or {}).get(chip.chip)
+        if when is not None and not chip.allows(when):
+            when = None
         if chip.chip == WILDCARD:
             text = (
                 f"this week's bar {bar:.1f}, falling to 0 as GW{chip.stop_event} nears"
                 if bar is not None
                 else f"playable from GW{chip.start_event}"
             )
+            if when is not None:
+                text = ("played this week" if when == event else f"planned for GW{when}") + (
+                    f"; {text}" if bar is not None else ""
+                )
+        elif when is not None:
+            if when == event:
+                text = f"played this week (bar {bar:.1f})" if bar is not None else "played this week"
+                past = "its best week past the window would have been"
+            else:
+                there = entry.bars.get(when)
+                text = f"planned for GW{when}" + (
+                    f" (bar {there:.1f} there)" if there is not None else ""
+                )
+                past = "its best week past the window is"
+            if entry.saved_for is not None:
+                text += f"; {past} GW{entry.saved_for} ({entry.value:+.1f})"
         elif entry.saved_for is not None:
             text = f"saved for GW{entry.saved_for}, worth {entry.value:+.1f} there"
             if bar is not None:
@@ -1821,6 +1852,20 @@ _ABBREVIATIONS = {TRIPLE_CAPTAIN: "TC", BENCH_BOOST: "BB", FREE_HIT: "FH", WILDC
 _LINE_ORDER = (TRIPLE_CAPTAIN, BENCH_BOOST, FREE_HIT, WILDCARD)
 
 
+def planned_chips(choice: Plan, chip: str, event: int) -> dict[str, int]:
+    """The gameweek the week's plan plays each chip kind in: ``chip`` (the
+    week's own, the gaffer's if he decided) in ``event``, then the first week
+    the chosen plan's path plays each other kind. Shared by the chip line and
+    the calendar section, so the two never name different weeks."""
+    weeks: dict[str, int] = {}
+    if chip != NO_CHIP:
+        weeks[chip] = event
+    for move in choice.path.moves if choice.path is not None else []:
+        if move.chip != NO_CHIP and move.chip not in weeks:
+            weeks[move.chip] = move.event
+    return weeks
+
+
 def chip_line(calendar: "ChipCalendar | None", choice: Plan, chip: str, event: int) -> str | None:
     """The chip calendar in one line a phone shows whole.
 
@@ -1834,11 +1879,8 @@ def chip_line(calendar: "ChipCalendar | None", choice: Plan, chip: str, event: i
         return None
     if calendar.fell_back:
         return "Chips: calendar unavailable"
-    planned = {
-        move.event: move.chip
-        for move in (choice.path.moves if choice.path is not None else [])
-        if move.chip != NO_CHIP
-    }
+    weeks = planned_chips(choice, chip, event)
+    path = choice.path.moves if choice.path is not None else []
     entries = sorted(
         calendar.entries,
         key=lambda entry: (entry.held.stop_event, _LINE_ORDER.index(entry.held.chip)),
@@ -1846,9 +1888,14 @@ def chip_line(calendar: "ChipCalendar | None", choice: Plan, chip: str, event: i
     parts = []
     for entry in entries:
         held = entry.held
-        later = [gw for gw, kind in planned.items() if kind == held.chip and held.allows(gw)]
+        week = weeks.get(held.chip)
+        # A second set can hold the same kind in a window that does not reach
+        # the planned week: then the first week of the path it does allow.
+        later = [m.event for m in path if m.chip == held.chip and held.allows(m.event)]
         if held.chip == chip and held.allows(event):
             when = "now"
+        elif week is not None and held.allows(week):
+            when = f"GW{week}"
         elif later:
             when = f"GW{min(later)}"
         elif entry.saved_for is not None and held.chip != WILDCARD:

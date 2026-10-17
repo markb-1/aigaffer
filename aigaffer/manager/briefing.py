@@ -55,6 +55,8 @@ from aigaffer.report.render import (
     horizon_of,
     plural,
     price,
+    played_chip,
+    planned_chips,
     render_chip_calendar,
     wildcard_ev,
     working_from,
@@ -721,7 +723,9 @@ def _chips(
     executed = inputs.executed
     if executed is not None and executed.chip in CHIP_ORDER:
         panel += "\n\n" + CHIP_ALREADY_PLAYED.format(chip=chip_label(executed.chip))
-    calendar = render_chip_calendar(solve.calendar, event)
+    calendar = render_chip_calendar(
+        solve.calendar, event, planned_chips(solve.choice, played_chip(solve.choice, None), event)
+    )
     return [panel] if calendar is None else [panel, calendar]
 
 
