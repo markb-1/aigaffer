@@ -110,8 +110,9 @@ SINGLE_WEEK = "Single-week engine (multi-week solve unavailable this run)."
 # when the board came off the window — a single-week row has one stretch of
 # time in it and nothing to explain.
 WINDOW_UNITS = (
-    "xP and net are the whole window, decayed and with the armband in;"
-    " transfers and hits shown are this week's unless the row says otherwise."
+    "xP and net are the whole window, decayed and with the armband in; net is"
+    " after hits and any bench-buy charge; transfers and hits shown are this"
+    " week's unless the row says otherwise."
 )
 
 # What the chip-EV panel says once the solver actually plans one this week: the

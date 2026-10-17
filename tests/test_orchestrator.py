@@ -519,6 +519,8 @@ def test_the_decision_says_what_was_decided(scout_run):
         "wildcard",
     }
     assert isinstance(decision["objective"], float)
+    assert isinstance(decision["bench_charge"], float)
+    assert decision["bench_charge"] >= 0.0
 
 
 def test_the_chip_switch_off_is_phase_2_5_to_the_byte(tmp_path):

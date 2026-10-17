@@ -669,6 +669,9 @@ def run_pipeline(
         "formation": formation(lineup, effective.players),
         "xp_total": choice.xp_total,
         "objective": choice.objective,
+        # What the window charged for signings left on the bench, already out
+        # of the objective — kept for the backtest that will tune it.
+        "bench_charge": choice.bench_charge,
         # The chip this week actually plays: the manager's if he decided, the
         # solver's own week-1 chip otherwise, "none" on the great many weeks
         # that play none. Recorded here so the diary reads the same as the phone.

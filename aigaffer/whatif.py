@@ -21,7 +21,9 @@ bars price only weeks beyond the window, so a wildcard the off-path plays in GW8
 anyway is compared timing against timing, and one it keeps past the window pays
 its bar on the on side alone. **gain** is the same difference with the bars
 taken back out — what the chip buys now — and **bars_diff** is the difference in
-bars paid: gain − net.
+bars paid: gain − net. Both objectives also carry the bench-buy charge each path
+pays (optimizer.BENCH_BUY_CHARGE), so net and gain both include its difference;
+weekly_gain does not, being read off weekly_xp.
 
 The free hit is decided the same way, not on the one-week rebuild, because the
 window sees what the one week cannot: the standing squad's planned moves wait a

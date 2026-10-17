@@ -172,6 +172,15 @@ WINDOW_UNITS = (
     " transfers and the hit count are this gameweek's unless the line says"
     " otherwise."
 )
+# What a bench-buy mark on a plan line is, said once above the list and only
+# when a plan on the board pays one: the solver has already taken the charge
+# out of that plan's net, and he should know that before he argues with it.
+BENCH_BUYS = (
+    "A bench buy is a signing above enabler price (GK/DEF over £4.5m, MID/FWD"
+    " over £5.0m) who sits on the bench; each week he sits costs 0.5 net,"
+    " bench-boost and free-hit weeks excepted, so a plan that buys a man to sit"
+    " has already paid for it in its net."
+)
 # What a path on a plan line is, said once above the list. He is choosing
 # between openings on the strength of where they lead, so he has to know that
 # the leading is the argument and the opening is the decision — and that asking
@@ -403,6 +412,7 @@ def format_plans(
             f" | {hits_taken(plan)}"
             f" | {plan.objective:.1f} net"
             f" | {against}"
+            f"{_bench_buys(plan, board)}"
             f"{_path(plan, board)}"
             f"{PICK_MARKER if plan_id == recommended else ''}"
         )
@@ -644,6 +654,8 @@ def _candidates(plans: list[tuple[int, Plan]], board: _Board, pick: int | None) 
     ]
     if any(carries_a_path(plan) for _, plan in plans):
         lines += ["", WINDOW_UNITS, "", PATH_GUARD]
+    if any(plan.bench_charge > 0 for _, plan in plans):
+        lines += ["", BENCH_BUYS]
     lines += [
         "",
         format_plans(plans, board.players, board.clubs, board.projections, pick),
@@ -870,6 +882,22 @@ def _path(plan: Plan, board: _Board) -> str:
     if plan.path is None or not plan.path.moves:
         return ""
     return " | path: " + ", ".join(_planned(move, board) for move in plan.path.moves)
+
+
+def _bench_buys(plan: Plan, board: _Board) -> str:
+    """`` | bench buys: Raya 5 wks benched (-2.3)``, or nothing.
+
+    The signings this plan's window sits, the weeks it sits them, and what
+    that cost its net — said on the line, because a plan that buys a man for
+    the bench is the plan a manager should look at twice.
+    """
+    if plan.path is None or not plan.path.benched_buys:
+        return ""
+    sat = ", ".join(
+        f"{_safe(board.players[pid].web_name)} {plural(weeks, 'wk')}"
+        for pid, weeks in sorted(plan.path.benched_buys.items())
+    )
+    return f" | bench buys: {sat} benched (-{plan.bench_charge:.1f})"
 
 
 def _planned(move: "PlannedMove", board: _Board) -> str:

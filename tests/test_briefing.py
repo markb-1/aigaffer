@@ -1202,3 +1202,54 @@ def test_without_a_last_week_the_briefing_is_unchanged():
     assert build_briefing(pipeline_inputs(), solved(), XP, 1, today=TODAY, last_week=None) == briefing()
     empty = LastWeek(gw=1, lessons=())
     assert build_briefing(pipeline_inputs(), solved(), XP, 1, today=TODAY, last_week=empty) == briefing()
+
+
+# --- the bench-buy mark ------------------------------------------------------
+
+BENCH_BUYS = (
+    "A bench buy is a signing above enabler price (GK/DEF over £4.5m, MID/FWD"
+    " over £5.0m) who sits on the bench; each week he sits costs 0.5 net,"
+    " bench-boost and free-hit weeks excepted, so a plan that buys a man to sit"
+    " has already paid for it in its net."
+)
+
+
+def _sitting(plan, benched, charge):
+    path = replace(plan.path, benched_buys=benched, bench_charge=charge)
+    return replace(plan, path=path, bench_charge=charge)
+
+
+def test_a_plan_that_pays_for_a_bench_buy_says_who_and_how_much():
+    bought = PLANNED[0].transfers_in[0]
+    sitting = _sitting(with_path(ONE, PLANNED), {bought: 5}, 2.34)
+    name = PLAYERS[bought].web_name
+
+    line = format_plans([(0, sitting)], PLAYERS, CLUBS, XP).splitlines()[0]
+
+    assert f" | bench buys: {name} 5 wks benched (-2.3)" in line
+
+
+def test_one_week_on_the_bench_is_one_wk():
+    bought = PLANNED[0].transfers_in[0]
+    sitting = _sitting(with_path(ONE, PLANNED), {bought: 1}, 0.5)
+
+    line = format_plans([(0, sitting)], PLAYERS, CLUBS, XP).splitlines()[0]
+
+    assert " 1 wk benched (-0.5)" in line
+
+
+def test_a_plan_with_no_bench_buy_prints_what_it_printed():
+    line = format_plans([(0, AHEAD)], PLAYERS, CLUBS, XP).splitlines()[0]
+
+    assert "bench buys" not in line
+
+
+def test_the_board_explains_the_bench_charge_only_when_a_plan_pays_it():
+    bought = PLANNED[0].transfers_in[0]
+    sitting = _sitting(AHEAD, {bought: 2}, 0.9)
+
+    paying = briefing(solve=solved(plans=[sitting, TWO, ROLL], choice=sitting))
+    free = briefing(solve=solved(plans=[AHEAD, TWO, ROLL], choice=AHEAD))
+
+    assert BENCH_BUYS in " ".join(section(paying, "Candidate plans"))
+    assert BENCH_BUYS not in free

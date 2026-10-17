@@ -226,8 +226,9 @@ AHEAD = with_path(ONE, [FIRST, SECOND])
 ADVISORY = "Advisory — re-planned every run; only this week's moves are ever made."
 SINGLE_WEEK = "Single-week engine (multi-week solve unavailable this run)."
 WINDOW_UNITS = (
-    "xP and net are the whole window, decayed and with the armband in;"
-    " transfers and hits shown are this week's unless the row says otherwise."
+    "xP and net are the whole window, decayed and with the armband in; net is"
+    " after hits and any bench-buy charge; transfers and hits shown are this"
+    " week's unless the row says otherwise."
 )
 
 
