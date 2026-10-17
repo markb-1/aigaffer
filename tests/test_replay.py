@@ -526,7 +526,7 @@ def test_the_summary_tabulates_the_cells_and_names_the_pick():
     assert "Pick: WINDOW" in text
     assert "squads: 150" in text
     assert "skipped: 2" in text
-    assert "six clusters make the SE rough" in text
+    assert "gameweeks make the SE rough" in text
 
 
 def test_the_summary_says_when_nothing_ships():

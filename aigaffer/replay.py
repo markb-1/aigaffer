@@ -475,10 +475,18 @@ def gate(
         "reason": reason,
         "dropped": dropped,
         "pick": pick,
+        "gameweeks": len(gws),
     }
 
 
 # --- the summary -----------------------------------------------------------------
+
+
+def _clusters(gate_result: dict) -> str:
+    """How many gameweek clusters the SE stands on, in words for the caveat:
+    "5 gameweeks", or "a handful of gameweeks" for a result that does not say."""
+    count = gate_result.get("gameweeks")
+    return f"{count} gameweeks" if count else "a handful of gameweeks"
 
 
 def render_summary(gate_result: dict, meta: dict) -> str:
@@ -522,7 +530,8 @@ def render_summary(gate_result: dict, meta: dict) -> str:
         "",
         "**Read with care**",
         "",
-        "- The SE is clustered by gameweek, and six clusters make the SE rough.",
+        f"- The SE is clustered by gameweek, and {_clusters(gate_result)} make"
+        " the SE rough.",
         "- Policies diverge from the real managers after week 1: the comparison"
         " is paired on start states, not on what the managers did.",
         "- The end credit at 0, 1.5 and 2 a leftover free transfer is the check"
