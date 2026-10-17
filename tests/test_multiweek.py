@@ -3518,6 +3518,26 @@ def _relaxed_bounds(monkeypatch) -> list[float]:
     return bounds
 
 
+def _solver_objectives(monkeypatch) -> list[float]:
+    """Every window solve's own objective value, read off the model after CBC
+    returns. The recompute adds the plan's number back up from its squads; this
+    is the number the solver chose by, and the two are meant to agree term for
+    term — hits, churn, bench charge, credit and cost — so a test that pins
+    both catches a model that charges or credits what the recompute does not,
+    even where the two would make the same decision."""
+    values: list[float] = []
+    real = pulp.LpProblem.solve
+
+    def solve(self, solver=None, **kwargs):
+        status = real(self, solver, **kwargs)
+        if self.name == "aigaffer_transfer_path":
+            values.append(pulp.value(self.objective))
+        return status
+
+    monkeypatch.setattr(pulp.LpProblem, "solve", solve)
+    return values
+
+
 def test_a_relaxed_bench_boost_cannot_boost_the_whole_squad(monkeypatch):
     # Three flat weeks at 6.0 a man, nothing to buy. The integer optimum
     # boosts one week: 0.9 x 24.0 - 20.0 = 1.6 over the do-nothing, in GW10.
@@ -3669,14 +3689,15 @@ def test_the_ordered_bench_relaxes_to_the_integer_optimum(monkeypatch):
 # outside a wildcard week costs 0.2, undecayed, like a hit.
 
 
-def test_rolling_keeps_a_credit_and_the_cost_spares_a_marginal_move(monkeypatch):
+def test_rolling_banks_the_free_transfers_and_credits_them(monkeypatch):
     # The spine plus a twin of midfielder 8 (5.6): under LEGACY a swap is worth
     # nothing and the churn tiebreak keeps the squad. Under WINDOW doing
     # nothing banks free transfers as the game does — 1 held in GW10, nothing
     # moved, so 2 in GW11; nothing moved again, so 3 entering GW12 — and the
     # three are credited (2.0 + 1.6) · 0.85² = 3.6 · 0.7225 = 2.601. The swap
     # would cost 0.2 and a free transfer's worth of credit for no points, so
-    # the plan rolls.
+    # the plan rolls (as LEGACY's tiebreak would have it too: the decision the
+    # cost changes is test_a_marginal_swap_taken_under_legacy_waits_under_window).
     #   The spine's week under WINDOW is 62.04 (XI 55.0, armband 6.0, bench
     #   1.04: test_the_bench_is_valued_in_order_under_window), two weeks
     #   62.04 · 1.85 = 114.774, and the objective adds the credit: 117.375.
@@ -3758,7 +3779,7 @@ def test_a_transfer_costs_point_two_and_is_made_when_it_earns_more():
     assert plan.xp_total == pytest.approx(138.904, abs=1e-6)
 
 
-def test_a_wildcard_week_pays_no_transfer_cost():
+def test_a_wildcard_week_pays_no_transfer_cost(monkeypatch):
     # The board of test_a_wildcard_week_spends_no_free_transfers_and_no_hits
     # under WINDOW: the wildcard takes all seven arrivals in GW10, and none of
     # the seven costs the 0.2 (1.4 in all) a transfer otherwise does. The bank
@@ -3769,6 +3790,9 @@ def test_a_wildcard_week_pays_no_transfer_cost():
     #   0.015 and outfield 13, 6, 7 at 0.25 · 4.1 + 0.08 · 0.5 + 0.02 · 0.5 =
     #   1.075: 178.99 a week, · 2.5725 = 460.451775. Less the 35.0 fallback
     #   bar and seven buys' 0.07 tiebreak, plus the credit: 427.592625.
+    #   The solver's own objective is that same number: a model that charged
+    #   the 0.2 on the wildcard's seven would stand 1.4 below it.
+    solved = _solver_objectives(monkeypatch)
     players, projections = seven_arrivals([10, 11, 12])
 
     plan, path = optimize_path(
@@ -3783,6 +3807,7 @@ def test_a_wildcard_week_pays_no_transfer_cost():
     assert path.ft_kept == 3
     assert path.ft_credit == pytest.approx(3.6 * DECAY ** 3, abs=1e-6)
     assert plan.objective == pytest.approx(427.592625, abs=1e-6)
+    assert solved == [pytest.approx(plan.objective, abs=1e-6)]
 
 
 def test_a_move_after_the_wildcard_week_still_pays():
@@ -3821,7 +3846,7 @@ def test_a_move_after_the_wildcard_week_still_pays():
     assert plan.objective == pytest.approx(489.300025, abs=1e-6)
 
 
-def test_a_recorded_wildcard_week_pays_no_transfer_cost():
+def test_a_recorded_wildcard_week_pays_no_transfer_cost(monkeypatch):
     # The board of test_a_recorded_wildcard_week_is_free_and_uncapped under
     # WINDOW: the recorded wildcard brings all six arrivals in GW5 and none
     # of them costs the 0.2. The week keeps its bank (1) and earns no +1, so 1
@@ -3831,6 +3856,9 @@ def test_a_recorded_wildcard_week_pays_no_transfer_cost():
     #   4.0 + 0.08 · 0.5 + 0.02 · 0.5 = 1.05: 163.065 a week, · 1.85 =
     #   301.67025. No bar on a recorded chip, six buys' 0.06, plus the
     #   credit: 303.05525.
+    #   The solver's own objective is that same number: a model that charged
+    #   the recorded week's six would stand 1.2 below it.
+    solved = _solver_objectives(monkeypatch)
     players, projections = six_arrivals([5, 6], opening=20.0)
 
     plan, path = optimize_path(
@@ -3844,9 +3872,10 @@ def test_a_recorded_wildcard_week_pays_no_transfer_cost():
     assert path.ft_kept == 2
     assert path.ft_credit == pytest.approx(2.0 * DECAY ** 2, abs=1e-6)
     assert plan.objective == pytest.approx(303.05525, abs=1e-6)
+    assert solved == [pytest.approx(plan.objective, abs=1e-6)]
 
 
-def test_no_free_transfer_is_added_after_a_free_hit_in_the_credit():
+def test_no_free_transfer_is_added_after_a_free_hit_in_the_credit(monkeypatch):
     # The free-hit board with the spike in the window's last week, GW12. One
     # held: 2 in GW11, 3 in GW12, and the free hit earns no +1, so 3 — not 4
     # — enter GW13: 3.6 · 0.614125 = 2.21085, where 4 would be 4.9 ·
@@ -3856,6 +3885,10 @@ def test_no_free_transfer_is_added_after_a_free_hit_in_the_credit():
     #   test_ordered_bench_keeps_the_free_hit_pin_exact) less the 25.0 bar,
     #   74.04. 49.52 + 0.85 · 49.52 + 0.7225 · 74.04 = 49.52 + 42.092 +
     #   53.4939 = 145.1059, plus the credit: 147.31675.
+    #   The solver's own objective is that same number: a model that kept the
+    #   free hit's +1 in the terminal row would credit 4 and stand (4.9 − 3.6)
+    #   · 0.614125 = 0.7983625 above it.
+    solved = _solver_objectives(monkeypatch)
     players, projections = flat_with_heroes(
         [10, 11, 12], spike_event=12, base=4.0, hero_value=8.0
     )
@@ -3871,6 +3904,7 @@ def test_no_free_transfer_is_added_after_a_free_hit_in_the_credit():
     assert path.ft_kept == 3
     assert path.ft_credit == pytest.approx(3.6 * DECAY ** 3, abs=1e-6)
     assert plan.objective == pytest.approx(147.31675, abs=1e-6)
+    assert solved == [pytest.approx(plan.objective, abs=1e-6)]
 
 
 def test_legacy_builds_no_credit_and_no_cost():
@@ -3906,3 +3940,32 @@ def test_the_transfer_credit_relaxes_to_the_integer_optimum(monkeypatch):
 
     assert plan.objective == pytest.approx(140.149, abs=1e-6)
     assert bounds == [pytest.approx(plan.objective, abs=1e-6)]
+
+
+def test_a_marginal_swap_taken_under_legacy_waits_under_window():
+    # The spine with 16 at 5.7, a tenth a week better than 8 (5.6), two weeks.
+    # The swap in GW10 earns 0.1 + 0.85 · 0.1 = 0.185 (in GW11 only 0.085).
+    #   LEGACY: a rolled transfer is worth nothing, so the swap is made in
+    #   GW10 for the 0.01 tiebreak: 113.849 + 0.185 − 0.01 = 114.024.
+    #   WINDOW: the 0.2 cost alone outweighs the 0.185, and the swap also
+    #   spends a transfer the window would carry — 1 → 1 → 2 kept, credited
+    #   2.0 · 0.7225 = 1.445, against 1 → 2 → 3 rolled, credited 2.601. The
+    #   swap would net 0.185 − 0.2 − 0.01 − 1.156 = −1.181, so the plan
+    #   rolls: the spine's 114.774 plus 2.601 = 117.375.
+    players, projections = spine([10, 11], spare=5.7)
+
+    legacy, _ = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[10, 11],
+        decay=DECAY, settings=LEGACY,
+    )
+    window, path = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[10, 11],
+        decay=DECAY, settings=WINDOW,
+    )
+
+    assert legacy.transfers_in == [16] and legacy.transfers_out == [8]
+    assert legacy.objective == pytest.approx(114.024, abs=1e-6)
+    assert window.transfers_in == []
+    assert path.moves == []
+    assert path.ft_kept == 3
+    assert window.objective == pytest.approx(117.375, abs=1e-6)
