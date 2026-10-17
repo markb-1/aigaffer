@@ -135,6 +135,32 @@ def _history(snapshots: list[dict]) -> list[str]:
     return out[:-1]
 
 
+def _pairs(snapshot: dict) -> list[tuple[int, int]]:
+    """The chosen plan's transfers as ``(out, in)`` pairs.
+
+    The plan keeps its ``out`` and ``in`` as sorted id lists, not matched
+    pairs, so zipping them would pair strangers. FPL transfers are like for
+    like by position, so each ``out`` is paired with an ``in`` of the same
+    position, within a position strongest window total (``t``) first on both
+    sides. Anything that cannot be paired (a free-hit style odd lot) is left
+    out rather than invented.
+    """
+    plan = snapshot["plans"][snapshot["chosen"]]
+    players = snapshot["players"]
+
+    def by_position(ids):
+        groups: dict[str, list[int]] = {}
+        for pid in sorted(ids, key=lambda p: (-players[p]["t"], p) if p in players else (0, p)):
+            groups.setdefault(players[pid]["p"] if pid in players else "?", []).append(pid)
+        return groups
+
+    gone, came = by_position(plan["out"]), by_position(plan["in"])
+    pairs = []
+    for pos in gone:
+        pairs.extend(zip(gone[pos], came.get(pos, []), strict=False))
+    return pairs
+
+
 def _moves(snapshot: dict) -> tuple[list[int], list[int]]:
     plan = snapshot["plans"][snapshot["chosen"]]
     return sorted(plan["out"]), sorted(plan["in"])
@@ -144,10 +170,7 @@ def _moves_text(snapshot: dict) -> str:
     plan = snapshot["plans"][snapshot["chosen"]]
     if not plan["in"]:
         return "none"
-    return ", ".join(
-        f"{_name(snapshot, out)} → {_name(snapshot, ins)}"
-        for out, ins in zip(plan["out"], plan["in"], strict=False)
-    )
+    return ", ".join(f"{_name(snapshot, out)} → {_name(snapshot, ins)}" for out, ins in _pairs(snapshot))
 
 
 def _chip(snapshot: dict) -> str:
@@ -182,15 +205,18 @@ def _transfers(cur: dict) -> list[str]:
         "| | Player | Price | " + " | ".join(f"GW{gw}" for gw in events) + " | Window |",
         "|---|---|---|" + "---|" * len(events) + "---|",
     ]
-    reasons = _reasons(cur).get("transfers") or {}
-    for gone, came in zip(plan["out"], plan["in"], strict=False):
+    reasons = {
+        (item.get("out"), item.get("in")): item.get("reason")
+        for item in _reasons(cur).get("transfers") or []
+    }
+    for gone, came in _pairs(cur):
         out.append(_player_row(cur, gone, "Out"))
         out.append(_player_row(cur, came, "In"))
         gap = cur["players"][came]["t"] - cur["players"][gone]["t"]
         out.append("")
         out.append(
             f"{_name(cur, came)} over {_name(cur, gone)}: {gap:+.2f} over the window. "
-            + (reasons.get(str(came)) or reasons.get(came) or _fallback(cur))
+            + (reasons.get((gone, came)) or _fallback(cur))
         )
         out.append("")
     return out[:-1]
@@ -229,13 +255,15 @@ def _armbands(cur: dict) -> list[str]:
         key=lambda p: (-totals[p], p),
     )[:RIVALS]
     out = []
-    for label, pid, key in (("Captain", captain, "captain"), ("Vice", vice, "vice")):
+    # The writer gives one reason for the armbands, about the captain; the vice
+    # is shown without one.
+    for label, pid, key in (("Captain", captain, "captain"), ("Vice", vice, None)):
         if pid is None:
             continue
-        out.append(
-            f"- **{label}: {_name(cur, pid)}** ({totals.get(pid, _window(cur, pid)):.2f})"
-            f" — {reasons.get(key) or _fallback(cur)}"
-        )
+        line = f"- **{label}: {_name(cur, pid)}** ({totals.get(pid, _window(cur, pid)):.2f})"
+        if key:
+            line += f" — {reasons.get(key) or _fallback(cur)}"
+        out.append(line)
     if rivals:
         out.append("- Rivals: " + ", ".join(f"{_name(cur, p)} ({totals[p]:.2f})" for p in rivals))
     return out or ["No armbands recorded."]
@@ -245,11 +273,15 @@ def _skipped(cur: dict) -> list[str]:
     rows = cur.get("skipped") or []
     if not rows:
         return ["Nothing to report."]
-    out = ["| Player | Instead of | Gap | Price | Why not |", "|---|---|---|---|---|"]
+    notes = {
+        item.get("id"): item.get("reason") for item in _reasons(cur).get("skipped") or []
+    }
+    out = ["| Player | Instead of | Gap | Price | Why not | Note |", "|---|---|---|---|---|---|"]
     for item in rows:
         out.append(
             f"| {_name(cur, item['id'])} | {_name(cur, item['replaces'])}"
-            f" | {item['gap']:+.2f} | {item['price_diff'] / 10:+.1f}m | {item['tag']} |"
+            f" | {item['gap']:+.2f} | {item['price_diff'] / 10:+.1f}m | {item['tag']}"
+            f" | {notes.get(item['id']) or ''} |"
         )
     return out
 
@@ -266,7 +298,7 @@ def _options(cur: dict) -> list[str]:
             f"| {pid} | {_names(cur, plan['in'])} | {_names(cur, plan['out'])}"
             f" | {plan['hits']} | {plan['xp']:.2f} | {plan['net']:.2f} | {', '.join(marks)} |"
         )
-    return out
+    return [*out, "", _reasons(cur).get("plan") or _fallback(cur)]
 
 
 def _chips(cur: dict) -> list[str]:
@@ -274,7 +306,7 @@ def _chips(cur: dict) -> list[str]:
     chip = _chip(cur)
     out = [f"Chip played: {chip}."]
     if chip != "none":
-        out.append(decision.get("chip_justification") or _reasons(cur).get("chip") or _fallback(cur))
+        out.append(_reasons(cur).get("chips") or decision.get("chip_justification") or _fallback(cur))
     out += ["", "Expected value by chip:"]
     out += [f"- {name}: {value:.2f}" for name, value in cur["chip_evs"].items()]
     if cur.get("calendar"):
