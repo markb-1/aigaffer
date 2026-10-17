@@ -19,3 +19,6 @@ state/news/.*.tmp
 
 # A review append interrupted mid-way (append_review renames it into place).
 /.GW*.md.tmp
+
+# The replay's per-decision rows name other managers' entries; local only.
+/state/replay/

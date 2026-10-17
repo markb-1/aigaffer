@@ -278,12 +278,15 @@ class GwHistory(BaseModel):
     the same ``round`` and different fixtures, and one of them can be played
     while the other has not kicked off. It defaults to 0 — no fixture — so that
     a payload without it is judged on its round instead of silently kept.
+
+    ``value`` is his price that gameweek, in tenths, when the payload carries it.
     """
 
     round: int
     minutes: int
     total_points: int
     fixture: int = 0
+    value: int | None = None
 
 
 class PastSeason(BaseModel):
