@@ -483,6 +483,22 @@ def test_no_top_group_means_no_pick():
     assert result["pick"] is None
 
 
+def test_a_named_candidate_with_no_rows_is_judged_incomplete():
+    # Every ALT run failed, so the rows have none of it; WINDOW is +1 a week
+    # for both top squads (d = 3, SE = 0) and ships. Told the candidates, the
+    # gate still judges ALT: no cells, so "no" for being incomplete, and both
+    # top squads dropped as short of a whole season under it. Left to find
+    # the candidates in the rows, it never hears of ALT, and a policy that
+    # failed every run would vanish from the summary rather than fail.
+    rows = _renamed(_rows("top", *_flat({1: [1, 1, 1], 2: [1, 1, 1]})), "WINDOW")
+    result = gate(rows, candidates=["WINDOW", "ALT"])
+    assert result["verdict"] == {"ALT": "no", "WINDOW": "ship"}
+    assert result["reason"] == {"ALT": "incomplete"}
+    assert result["dropped"] == {("ALT", "top"): 2}
+    assert result["pick"] == "WINDOW"
+    assert gate(rows)["verdict"] == {"WINDOW": "ship"}
+
+
 # --- the summary ---------------------------------------------------------------
 
 
@@ -530,10 +546,10 @@ def test_the_summary_says_when_nothing_ships():
 #   mids      5 Ferrer, 6 Grant (£7.5m), 11 Lozano, 14 Ozturk, 20 Voss
 #   forwards  7 Haas, 8 Ito (injured), 15 Pryce (£6.5m)
 #
-# Dodd and Ito are not available, so the pipeline's shortlist
-# (orchestrator.history_pool) never names them: only the start squads bring
-# them onto a board. Outside the fifteen are 9, 10, 12, 17 Reyes (£9.5m),
-# 18 Sarr (£6.0m) and 21.
+# Dodd's and Ito's flags are today's, and a past board reads nobody's flags
+# (see the injured-today test below), so on a board they are as available as
+# anyone and only their histories tell them apart. Outside the fifteen are 9,
+# 10, 12, 17 Reyes (£9.5m), 18 Sarr (£6.0m) and 21.
 #
 # Every player plays 90 minutes a round for 2 points, at his bootstrap price,
 # except where HISTORIES says otherwise. The entry ids are fakes; they are only
@@ -680,13 +696,18 @@ def test_the_same_seed_draws_the_same_pages():
     assert first.pages != other.pages
 
 
-def test_a_start_squad_outside_the_shortlist_is_still_scored():
-    # Dodd (4) is doubtful, so the shortlist leaves him out; a manager who
-    # holds him brings him in through ``extra``. Then his history is fetched,
-    # his GW2 is read (90 minutes, 7 points) and he is projected off his GW1
-    # (90 minutes, below three gameweeks so floored at 75 → 90, times his 75%
-    # chance: 67.5 minutes, so more than nothing). Without ``extra`` he is
-    # never asked about, and would score as a man who did not play.
+def test_a_start_squad_outside_the_shortlist_is_still_scored(monkeypatch):
+    # In a universe of 21 every player is inside both thirty-a-position cuts,
+    # so the cuts are emptied here — the pipeline's shortlist and the solver's
+    # alike — to stand for a squad player the real six hundred leave out. Dodd
+    # (4) is then outside the shortlist, and a manager who holds him brings
+    # him in through ``extra``. His history is fetched, his GW2 is read (90
+    # minutes, 7 points) and he is projected off his GW1 (90 minutes, below
+    # three gameweeks so floored at 75 → 90; his doubtful flag is today's and
+    # is not read, so 90 minutes and more than nothing). Without ``extra`` he
+    # is never asked about, and would score as a man who did not play.
+    monkeypatch.setattr(rp, "history_pool", lambda players, held: [])
+    monkeypatch.setattr(rp, "CANDIDATES_PER_POSITION", 0)
     client, bootstrap, fixtures = _setup()
     board = build_board(client, bootstrap, fixtures, {}, 2, {4})
     assert 4 in client.summaries
@@ -718,6 +739,91 @@ def test_a_board_prices_and_scores_the_gameweek_it_is_for():
     assert sorted(next(iter(board.projections.values())).per_gw) == [2, 3, 4, 5, 6, 7]
     # Fetched once into the cache it was handed, never twice.
     assert len(client.summaries) == len(set(client.summaries)) == len(histories)
+
+
+class HurtToday(FakeClient):
+    """Haas (7) flagged injured today — status "i" and a 0% chance — while his
+    history is the default, 90 minutes for 2 points every round he played."""
+
+    def bootstrap(self):
+        payload = _bootstrap_json()
+        for element in payload["elements"]:
+            if element["id"] == 7:
+                element |= {"status": "i", "chance_of_playing_next_round": 0}
+        return Bootstrap.model_validate(payload)
+
+
+def test_a_player_hurt_today_is_judged_at_a_past_deadline_on_his_history(monkeypatch):
+    # Haas (7) is in the start squad and was fit at GW2. His history before it
+    # is one round of 90 minutes: under three gameweeks, so floored at the 75
+    # of a man who has started → 90 minutes, times an availability of 1. Read
+    # today's flag instead and the availability is 0% → 0 minutes, and every
+    # policy sells him at the first deadline (WINDOW sells him for Sarr, 18).
+    #
+    # The board as it stood is the board of a healthy Haas: the same GW2
+    # projection, and on the solver's side a player it may hold and buy (the
+    # solver's own cut reads ``status``). With him fit, nothing on the board
+    # is worth his place, so no policy sells him.
+    minutes = []
+    real_project = rp.project_all
+
+    def spy_project(bootstrap, fixtures, xmins, *args, **kwargs):
+        minutes.append(xmins)
+        return real_project(bootstrap, fixtures, xmins, *args, **kwargs)
+
+    monkeypatch.setattr(rp, "project_all", spy_project)
+    start = Start(TOP_ENTRY, "top", tuple(PICKS_15_IDS), 28, 1, False)
+    client, bootstrap, fixtures = _setup(HurtToday())
+    (hurt,) = build_boards(client, bootstrap, fixtures, [2], [start])
+    assert minutes[-1][7] == pytest.approx(90.0)
+    client, bootstrap, fixtures = _setup()
+    (healthy,) = build_boards(client, bootstrap, fixtures, [2], [start])
+    assert hurt.projections[7] == healthy.projections[7]
+    assert hurt.players[7].status == "a"
+    assert hurt.players[7].chance_of_playing_next_round is None
+
+    sold = []
+    real_solve = rp.optimize_path
+
+    def spy_solve(*args, **kwargs):
+        answer = real_solve(*args, **kwargs)
+        sold.append(answer[0].transfers_out if answer else [])
+        return answer
+
+    monkeypatch.setattr(rp, "optimize_path", spy_solve)
+    for settings in (LEGACY, WINDOW, ALT):
+        run_policy(start, [hurt], settings, time_limit=20)
+    assert len(sold) == 3
+    assert all(7 not in out for out in sold)
+
+
+class Blanks(FakeClient):
+    """Two players with no row for GW3: Meier (12, £5.5m today) priced at
+    £5.0m in GW1 and £5.2m in GW2, and Jarvis (9, £5.0m today) with no row
+    before GW3 at all."""
+
+    def element_summary(self, pid):
+        if pid == 12:
+            self.summaries.append(pid)
+            rows = [_row(1, value=50), _row(2, value=52)]
+            return [GwHistory.model_validate(row) for row in rows], []
+        if pid == 9:
+            self.summaries.append(pid)
+            return [], []
+        return super().element_summary(pid)
+
+
+def test_a_blank_week_is_priced_at_the_last_price_before_it():
+    # Meier blanked in GW3, so he has no row for it. He is priced at his most
+    # recent earlier row, GW2's 52 — not GW1's 50, and not today's 55, which
+    # has seen every week since. Jarvis has no earlier row at all, so today's
+    # 50 is all there is. Neither played, so neither has an ``actual``.
+    client, bootstrap, fixtures = _setup(Blanks())
+    board = build_board(client, bootstrap, fixtures, {}, 3, set())
+    assert board.value[12] == board.players[12].now_cost == 52
+    assert board.value[9] == board.players[9].now_cost == 50
+    assert 12 not in board.actual
+    assert 9 not in board.actual
 
 
 def test_a_player_bought_earlier_is_still_projected_later(monkeypatch):
@@ -752,7 +858,8 @@ def test_a_policy_carries_its_money_and_transfers_week_to_week(monkeypatch):
     #      and Sarr (18, 60) on one free transfer: one hit. Bank 28 + 75 + 65
     #      − 90 − 60 = 18; FTs max(1 − 2, 0) + 1 = 1; points 24 − 4 = 20.
     # GW3: the solver has no answer, so the squad rolls: no moves, FTs 1 + 1
-    #      = 2, points 24, and the week counts as unproven.
+    #      = 2, points 24, and the week counts as no answer — not as unproven,
+    #      which is a solve that came back without proving itself.
     client, bootstrap, fixtures = _setup()
     boards = build_boards(client, bootstrap, fixtures, [2, 3], [])
     everyone = {pid: (90, 2) for pid in COST}
@@ -768,9 +875,11 @@ def test_a_policy_carries_its_money_and_transfers_week_to_week(monkeypatch):
     start = Start(TOP_ENTRY, "top", tuple(PICKS_15_IDS), 28, 1, False)
     weeks = run_policy(start, boards, WINDOW, time_limit=5)
 
-    assert [(w.gw, w.points, w.hits, w.moves, w.ft_end, w.unproven) for w in weeks] == [
-        (2, 20, 1, 2, 1, False),
-        (3, 24, 0, 0, 2, True),
+    assert [
+        (w.gw, w.points, w.hits, w.moves, w.ft_end, w.unproven, w.no_answer) for w in weeks
+    ] == [
+        (2, 20, 1, 2, 1, False, False),
+        (3, 24, 0, 0, 2, False, True),
     ]
     after = sorted(set(PICKS_15_IDS) - {6, 15} | {17, 18})
     assert [a[:4] for a in asked] == [
@@ -783,7 +892,9 @@ def test_a_policy_carries_its_money_and_transfers_week_to_week(monkeypatch):
         assert kwargs["time_limit"] == 5
 
 
-ROW_KEYS = {"group", "entry", "gw", "policy", "points", "hits", "moves", "ft_end", "unproven"}
+ROW_KEYS = {
+    "group", "entry", "gw", "policy", "points", "hits", "moves", "ft_end", "unproven", "no_answer",
+}
 
 
 def test_the_replay_scores_every_squad_under_every_policy(monkeypatch):
@@ -826,6 +937,7 @@ def test_the_replay_scores_every_squad_under_every_policy(monkeypatch):
     assert meta["failed"] == 0
     assert meta["chipped"] == 0
     assert meta["unproven"] == sum(r["unproven"] for r in rows)
+    assert meta["no_answer"] == sum(r["no_answer"] for r in rows)
     summary = render_summary(gate(rows), meta)
     assert set(gate(rows)["verdict"]) == {"WINDOW", "ALT"}
     for entry in (TOP_ENTRY, DEEP_ENTRY):
@@ -855,6 +967,24 @@ def test_a_run_that_raises_is_dropped_and_counted(monkeypatch):
     assert result["verdict"]["ALT"] == "no"
     assert result["reason"]["ALT"] == "incomplete"
     assert result["dropped"][("ALT", "deep")] == 1
+
+
+def test_a_pool_of_workers_plays_the_same_seasons_as_one_process():
+    # GW2 alone, the two managers, the real solver: two squads × three
+    # policies = 6 runs of one week each, so 6 rows. Over two worker
+    # processes — each handed the boards once, at its start — every run comes
+    # back with the row one process gives it, in whatever order they finish.
+    # A worker that could not run at all would come back as six failures and
+    # no rows, not as a silent match.
+    one, one_meta = replay(FakeClient(), 2, 2, 1, 1, seed=1, jobs=1, own_entry=None)
+    two, two_meta = replay(FakeClient(), 2, 2, 1, 1, seed=1, jobs=2, own_entry=None)
+
+    def key(row):
+        return row["entry"], row["gw"], row["policy"]
+
+    assert len(one) == 6
+    assert sorted(two, key=key) == sorted(one, key=key)
+    assert one_meta["failed"] == two_meta["failed"] == 0
 
 
 # --- the command line ------------------------------------------------------------
@@ -902,3 +1032,61 @@ def test_the_cli_refuses_a_gameweek_not_yet_finished(monkeypatch, capsys, tmp_pa
     assert cli.main(["replay", "--to", "4", "--jobs", "1"]) == 1
     assert "GW4 has not finished" in capsys.readouterr().out
     assert not (tmp_path / "replay").exists()
+
+
+def test_the_cli_judges_a_policy_whose_every_run_failed(monkeypatch, capsys, tmp_path):
+    # Every ALT run is handed a plan with a hit it does not owe (one move on
+    # the start's one free transfer), so every ALT run raises and keeps no
+    # rows. The other policies roll every week. ALT is still in the summary,
+    # as "no" for being incomplete, rather than missing from it. Rolling is
+    # no answer, never unproven: two squads × two gameweeks × the two policies
+    # that ran = 8 weeks with no answer, and none unproven.
+    def solver(players, projections, squad, bank, free_transfers, events, **kwargs):
+        return _plan([17], [6], 1) if kwargs["settings"] is ALT else None
+
+    monkeypatch.setattr(cli, "FplClient", lambda: FakeClient())
+    monkeypatch.setattr(rp, "optimize_path", solver)
+    monkeypatch.setenv("AIGAFFER_STATE_DIR", str(tmp_path))
+    monkeypatch.delenv("FPL_TEAM_ID", raising=False)
+
+    assert cli.main(["replay", "--managers", "1,1", "--jobs", "1"]) == 0
+    out = capsys.readouterr().out
+    assert "ALT: no (incomplete)" in out
+    assert "- no_answer: 8" in out
+    assert "- unproven: 0" in out
+
+
+@pytest.mark.parametrize("managers", ["201,1", "1,18001"])
+def test_the_cli_refuses_more_squads_than_the_pages_hold(monkeypatch, capsys, tmp_path, managers):
+    # One squad is drawn from each page drawn, and no page twice: the top band
+    # is pages 1-200, so 200 squads at most, and the deep one pages 2001-20000,
+    # so 20000 − 2001 + 1 = 18000. One more than either is a one-line refusal
+    # and status 1, before anything is fetched — not a traceback from the draw.
+    client = FakeClient()
+    monkeypatch.setattr(cli, "FplClient", lambda: client)
+    monkeypatch.setenv("AIGAFFER_STATE_DIR", str(tmp_path))
+    assert cli.main(["replay", "--managers", managers, "--jobs", "1"]) == 1
+    (line,) = capsys.readouterr().out.splitlines()
+    assert line.startswith("aigaffer: ")
+    assert "200" in line and "18000" in line
+    assert not client.pages
+    assert not (tmp_path / "replay").exists()
+
+
+def test_the_cli_ignores_a_team_id_that_is_not_a_number(monkeypatch, capsys, tmp_path):
+    # FPL_TEAM_ID is somebody's typo, not an entry: the replay runs on the
+    # sample alone, says so in one line on stderr, and the line does not
+    # repeat what was set.
+    monkeypatch.setattr(cli, "FplClient", lambda: FakeClient())
+    monkeypatch.setattr(rp, "optimize_path", lambda *a, **k: None)
+    monkeypatch.setenv("AIGAFFER_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("FPL_TEAM_ID", "seven-three-four")
+
+    assert cli.main(["replay", "--managers", "1,1", "--jobs", "1"]) == 0
+    (written,) = (tmp_path / "replay").glob("*.jsonl")
+    rows = [json.loads(line) for line in written.read_text().splitlines()]
+    assert {r["entry"] for r in rows} == {TOP_ENTRY, DEEP_ENTRY}
+    (note,) = capsys.readouterr().err.splitlines()
+    assert note.startswith("aigaffer: ")
+    assert "FPL_TEAM_ID" in note
+    assert "seven-three-four" not in note

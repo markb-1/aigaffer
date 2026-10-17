@@ -23,12 +23,24 @@ measurement.** These are the stated leaks, as in :mod:`aigaffer.backtest`:
 
 * **The rates and prices.** The per-90 rates and the prices come from the
   bootstrap as it stands today, which has seen every gameweek being replayed,
-  except where a player's history gives that gameweek's own value. The
-  projections the policies plan against know a little of how the range went,
-  and they know it for every policy alike.
-* **The shortlist is today's survivors.** The players a policy may buy are the
-  ones available today, so nobody since injured or gone is ever on offer, and
-  nobody is ever bought the week before he broke down.
+  except where a player's history gives that gameweek's own value (or, in a
+  week he blanked, the last value before it). The projections the policies
+  plan against know a little of how the range went, and they know it for
+  every policy alike.
+* **The shortlist is today's bootstrap.** The players a policy may buy are the
+  ones in the game today. Their availability flags are not read — they are
+  today's, and a board takes every player as available, his minutes before
+  the deadline saying the rest (see :func:`build_board`) — but the pipeline's
+  first cut still ranks by today's season points, and a player who joined
+  after a deadline is on offer at it, projected on the fallback minutes of
+  a man with no history.
+* **The minutes fallback counts today's starts.** Under three gameweeks of
+  history, :func:`~aigaffer.model.minutes.expected_minutes` floors a player at
+  a starter's 75 minutes if he has started this season and a substitute's 20
+  if not, and ``starts`` is the season's count as it stands today. So early in
+  the range a man who first started later is floored as a starter before he
+  was one. The replay hands in no last-season prior, so this floor is the
+  only one.
 * **Chips are off.** Every policy plays the range chip-free, so the replay
   measures the bench and free-transfer terms and nothing of chip timing. A
   manager who played a chip in the range is still replayed chip-free from his
@@ -131,7 +143,10 @@ class WeekResult:
     ``ft_end`` is the free transfers it holds after the week, which the gate's
     end credit reads off the last one. ``unproven`` says the week's decision
     was not proven the best: CBC stopped on its time limit with a path in
-    hand, or came back with none and the squad rolled (:func:`run_policy`)."""
+    hand. ``no_answer`` says it came back with none and the squad rolled
+    (:func:`run_policy`). The two are kept apart because they are different
+    doubts: an unproven week made a decision that may be short of the best,
+    a week with no answer made none at all."""
 
     gw: int
     points: int
@@ -140,6 +155,7 @@ class WeekResult:
     differs_from: str | None = None
     ft_end: int = 0
     unproven: bool = False
+    no_answer: bool = False
 
 
 # --- scoring a gameweek -----------------------------------------------------
@@ -367,7 +383,11 @@ def _verdict(cells: list[dict[str, float]]) -> str:
     return "owner"
 
 
-def gate(rows: list[dict], credits=(0.0, 1.5, 2.0)) -> dict:
+def gate(
+    rows: list[dict],
+    credits=(0.0, 1.5, 2.0),
+    candidates: list[str] | None = None,
+) -> dict:
     """Judge every candidate policy in ``rows`` against LEGACY.
 
     ``rows`` are the replay's per-squad, per-gameweek rows, each with at least
@@ -390,6 +410,13 @@ def gate(rows: list[dict], credits=(0.0, 1.5, 2.0)) -> dict:
     is "no", for being incomplete: a group it was never measured in is not a
     group it passed, and it must never ship on ``all([])``.
 
+    ``candidates`` names the policies that were played, LEGACY aside, and is
+    what the replay passes. The rows alone cannot say: a policy whose every
+    run failed has none, and found only in the rows it would vanish from the
+    verdicts rather than fail. Named, it is judged like any candidate short
+    of its cells — "no", incomplete. Without it the candidates are the ones
+    the rows hold.
+
     If more than one candidate ships, the pick is the one with the larger d in
     the top group at a credit of 1.5 (the first in name order on an exact
     tie). A shipped candidate with no such cell — no top group was replayed,
@@ -405,7 +432,7 @@ def gate(rows: list[dict], credits=(0.0, 1.5, 2.0)) -> dict:
     gws = sorted({row["gw"] for row in rows})
     groups = sorted({row["group"] for row in rows})
     baseline = by_policy.get(BASELINE, {})
-    candidates = sorted(p for p in by_policy if p != BASELINE)
+    candidates = sorted((set(by_policy) | set(candidates or ())) - {BASELINE})
 
     cells = {}
     dropped = {}
@@ -499,7 +526,8 @@ def render_summary(gate_result: dict, meta: dict) -> str:
         "- The end credit at 0, 1.5 and 2 a leftover free transfer is the check"
         " on a policy that wins only by banking.",
         "- Rates and prices are today's except where history gives the"
-        " gameweek's value; the shortlist is today's survivors; chips are off;"
+        " gameweek's value; the shortlist is today's bootstrap, its injury"
+        " flags unread; chips are off;"
         " sales are at the gameweek's value, without the half-rise rule.",
     ]
     return "\n".join(lines) + "\n"
@@ -533,11 +561,14 @@ class Board:
     """One past deadline as a policy faces it, and the week as it turned out.
 
     ``players`` is the bootstrap with each player's ``now_cost`` replaced by
-    his price that gameweek where his history gives it (``value``, which also
-    prices :func:`apply_moves`), so the solver plans at the prices it then
-    pays. ``projections`` are six gameweeks from ``gw``, made on the history
-    before it. ``actual`` is each fetched player's ``(minutes, points)`` for
-    ``gw``, summed over a double; a player absent from it played no minutes.
+    his price that gameweek where his history gives it, or his last price
+    before it in a week he blanked (``value``, which also prices
+    :func:`apply_moves`), so the solver plans at the prices it then pays; and
+    with every player's availability neutral, because the flags are today's
+    (see :func:`build_board`). ``projections`` are six gameweeks from
+    ``gw``, made on the history before it. ``actual`` is each fetched
+    player's ``(minutes, points)`` for ``gw``, summed over a double; a player
+    absent from it played no minutes.
 
     ``shortlist`` is the top thirty a position by this board's projections —
     the field :func:`~aigaffer.solver.multiweek.optimize_path` cuts its
@@ -662,22 +693,42 @@ def build_board(
     start squad holds and everyone a policy could have bought before ``gw``
     (:func:`build_boards`). A player in neither projects at nothing, which is
     right for a man the pipeline never looks at and wrong for one a squad
-    holds — a doubtful starter the shortlist skips would be benched and sold
-    as worthless, and score as a man who never played.
+    holds — a squad player outside the shortlist's cut by season points
+    would be benched and sold as worthless, and score as a man who never
+    played.
 
     The shortlist is cut from those projections the way the solver will cut
     them, by :func:`~aigaffer.solver.optimizer.candidate_pool` with the
     window's width, and every one of them has his history fetched too: the
     week is scored on what the bought man did, whoever he is. The cut reads
-    only availability and the projections, never a price, so cutting it on
-    today's prices names the same players the solver's cut on the board's
-    will. A shortlisted man from outside the pool still projects at nothing
-    *here* — he is in the cut only as a tie at nothing, and that is what the
-    solver sees — but every later board projects him on his history.
+    only availability (neutral, below) and the projections, never a price,
+    so cutting it on today's prices names the same players the solver's cut
+    on the board's will. A shortlisted man from outside the pool still
+    projects at nothing *here* — he is in the cut only as a tie at nothing,
+    and that is what the solver sees — but every later board projects him on
+    his history.
+
+    Every player on the board is **neutral on availability**: status "a" and
+    no published chance. The flags in the bootstrap are today's, and
+    :func:`~aigaffer.model.minutes.availability` would read them as the
+    chance he featured at every past deadline — so a player injured today
+    projected at nothing in every week of the range, and every policy sold
+    him at the first deadline, however fit he was then. The history before
+    ``gw`` is what the board knows, and his minutes in it already carry an
+    injury he had then. The same neutral copies are the ones every cut reads
+    (``history_pool``, :func:`~aigaffer.solver.optimizer.candidate_pool`, and
+    the solver's own cut through ``players``), because each of them filters
+    on ``status`` and would otherwise keep today's injured off a past
+    shortlist.
 
     ``histories`` is the replay's cache, filled in place.
     """
-    players = {player.id: player for player in bootstrap.elements}
+    players = {
+        player.id: player.model_copy(
+            update={"status": "a", "chance_of_playing_next_round": None}
+        )
+        for player in bootstrap.elements
+    }
     pool = set(history_pool(players, [])) | {pid for pid in extra if pid in players}
     _fetch(client, histories, pool)
     xmins = {
@@ -701,8 +752,17 @@ def build_board(
     value: dict[int, int] = {}
     actual: dict[int, tuple[int, int]] = {}
     for pid, player in players.items():
-        week = [row for row in histories.get(pid, []) if row.round == gw]
+        history = histories.get(pid, [])
+        week = [row for row in history if row.round == gw]
         priced = next((row.value for row in week if row.value is not None), None)
+        if priced is None:
+            # A blank week has no row to price him by. His price then is the
+            # last one a row gave before it — prices move a tenth at a time,
+            # so the week before is a tenth or two out at most, where today's
+            # has seen every week of the season since.
+            earlier = [row for row in history if row.round < gw and row.value is not None]
+            if earlier:
+                priced = max(earlier, key=lambda row: row.round).value
         value[pid] = player.now_cost if priced is None else priced
         if week:
             actual[pid] = (
@@ -765,7 +825,8 @@ def run_policy(
     free (``held_chips=()``) and under ``settings`` passed outright, never the
     module default — from the squad, bank and free transfers the policy's own
     earlier weeks left it. No answer is a roll: the squad stands, and the week
-    is marked unproven alongside the ones CBC stopped on its time limit.
+    is marked as having no answer — not as unproven, which is a solve CBC
+    stopped on its time limit with a path in hand.
 
     The moves go through :func:`apply_moves` at the board's prices with the
     plan's own hits, which raises on a plan that disagrees with the bank or the
@@ -788,8 +849,9 @@ def run_policy(
             held_chips=(),
             settings=settings,
         )
+        no_answer = answer is None
         if answer is None:
-            transfers_in, transfers_out, hits, unproven = [], [], 0, True
+            transfers_in, transfers_out, hits, unproven = [], [], 0, False
         else:
             plan, path = answer
             transfers_in, transfers_out, hits = plan.transfers_in, plan.transfers_out, plan.hits
@@ -813,6 +875,7 @@ def run_policy(
                 moves=len(transfers_in),
                 ft_end=state.free_transfers,
                 unproven=unproven,
+                no_answer=no_answer,
             )
         )
     return weeks
@@ -901,9 +964,10 @@ def replay(
     counted by exception class.
 
     A row is ``{"group", "entry", "gw", "policy", "points", "hits", "moves",
-    "ft_end", "unproven"}``, one per squad, gameweek and policy — the only
-    place an entry id appears. The meta is counts and nothing else, so it can
-    be printed and pasted where the rows cannot.
+    "ft_end", "unproven", "no_answer"}``, one per squad, gameweek and policy —
+    the only place an entry id appears. The meta is counts and nothing else,
+    so it can be printed and pasted where the rows cannot; it counts the
+    unproven weeks and the weeks with no answer apart.
     """
     bootstrap = client.bootstrap()
     fixtures = client.fixtures()
@@ -937,6 +1001,7 @@ def replay(
                 "moves": week.moves,
                 "ft_end": week.ft_end,
                 "unproven": week.unproven,
+                "no_answer": week.no_answer,
             }
             for week in weeks
         ]
@@ -955,5 +1020,6 @@ def replay(
         "failed": sum(failures.values()),
         **{f"failed_{name}": n for name, n in sorted(failures.items())},
         "unproven": sum(row["unproven"] for row in rows),
+        "no_answer": sum(row["no_answer"] for row in rows),
     }
     return rows, meta
