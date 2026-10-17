@@ -28,12 +28,14 @@ measurement.** These are the stated leaks, as in :mod:`aigaffer.backtest`:
   plan against know a little of how the range went, and they know it for
   every policy alike.
 * **The shortlist is today's bootstrap.** The players a policy may buy are the
-  ones in the game today. Their availability flags are not read — they are
-  today's, and a board takes every player as available, his minutes before
-  the deadline saying the rest (see :func:`build_board`) — but the pipeline's
-  first cut still ranks by today's season points, and a player who joined
-  after a deadline is on offer at it, projected on the fallback minutes of
-  a man with no history.
+  ones in the game today, so long as their history shows them registered by
+  the deadline: a player who joined later is not on offer before his first
+  row (see :func:`build_board`). Their availability flags are not read — they
+  are today's, and a board takes every registered player as available, his
+  minutes before the deadline saying the rest — so a man unavailable or
+  gone today ("u", "n") is on offer at a past deadline his history shows him
+  registered for, which is where he was. The pipeline's first cut still
+  ranks by today's season points.
 * **The minutes fallback counts today's starts.** Under three gameweeks of
   history, :func:`~aigaffer.model.minutes.expected_minutes` floors a player at
   a starter's 75 minutes if he has started this season and a substitute's 20
@@ -564,9 +566,10 @@ class Board:
     his price that gameweek where his history gives it, or his last price
     before it in a week he blanked (``value``, which also prices
     :func:`apply_moves`), so the solver plans at the prices it then pays; and
-    with every player's availability neutral, because the flags are today's
-    (see :func:`build_board`). ``projections`` are six gameweeks from
-    ``gw``, made on the history before it. ``actual`` is each fetched
+    with every player's availability neutral, because the flags are today's,
+    save a player not yet registered at ``gw``, who is marked unavailable so
+    that no cut offers him (see :func:`build_board`). ``projections`` are six
+    gameweeks from ``gw``, made on the history before it. ``actual`` is each fetched
     player's ``(minutes, points)`` for ``gw``, summed over a double; a player
     absent from it played no minutes.
 
@@ -699,17 +702,31 @@ def build_board(
 
     The shortlist is cut from those projections the way the solver will cut
     them, by :func:`~aigaffer.solver.optimizer.candidate_pool` with the
-    window's width, and every one of them has his history fetched too: the
-    week is scored on what the bought man did, whoever he is. The cut reads
-    only availability (neutral, below) and the projections, never a price,
-    so cutting it on today's prices names the same players the solver's cut
-    on the board's will. A shortlisted man from outside the pool still
-    projects at nothing *here* — he is in the cut only as a tie at nothing,
-    and that is what the solver sees — but every later board projects him on
-    his history.
+    window's width, over the board's own players. The cut reads only
+    availability (below) and the projections, never a price, so cutting it
+    on today's prices names the same players the solver's cut on the board's
+    will. Every man in it has his history fetched already — being offered at
+    all takes a history (below) — so the week is scored on what the bought
+    man did, whoever he is.
 
-    Every player on the board is **neutral on availability**: status "a" and
-    no published chance. The flags in the bootstrap are today's, and
+    **A player is offered only once he has joined the league.** Today's
+    bootstrap holds everyone registered by today, and element-summary's
+    history has rows only from the gameweek a player was registered. So a man
+    may be bought at ``gw`` only if his history has a row for ``gw`` or
+    before, or he is in ``extra`` — held from the start, or offered at an
+    earlier deadline and so registered by then. Anyone else — a January
+    signing at an August deadline, or a man whose history was never fetched
+    and so shows nothing — is marked unavailable (status "u") in the board's
+    players, which every cut reads, the solver's included. Without that, a
+    signing with no history before the deadline projects on the starts
+    fallback, a starter's 75 minutes, and is bought at a deadline he could
+    not have been bought at. He stays on the board to be priced and valued,
+    and a squad that holds him is never stopped from holding him:
+    ``candidate_pool`` keeps a man held whatever his status. Only buying him
+    is barred.
+
+    Every player the board offers is otherwise **neutral on availability**:
+    status "a" and no published chance. The flags in the bootstrap are today's, and
     :func:`~aigaffer.model.minutes.availability` would read them as the
     chance he featured at every past deadline — so a player injured today
     projected at nothing in every week of the range, and every policy sold
@@ -744,10 +761,21 @@ def build_board(
         decay=DECAY,
         strengths=strengths_before(bootstrap, fixtures, gw),
     )
+    # Who may be bought here: a man registered by ``gw`` on his own history,
+    # or one ``extra`` already put on a board. Everyone else is unavailable
+    # to every cut, but kept, to be priced and to stay held where he is held.
+    offered = {pid for pid in extra if pid in players} | {
+        pid
+        for pid, rows in histories.items()
+        if pid in players and any(row.round <= gw for row in rows)
+    }
+    market = {
+        pid: player if pid in offered else player.model_copy(update={"status": "u"})
+        for pid, player in players.items()
+    }
     shortlist = frozenset(
-        candidate_pool(players, projections, [], limit=CANDIDATES_PER_POSITION)
+        candidate_pool(market, projections, [], limit=CANDIDATES_PER_POSITION)
     )
-    _fetch(client, histories, set(shortlist))
 
     value: dict[int, int] = {}
     actual: dict[int, tuple[int, int]] = {}
@@ -773,7 +801,7 @@ def build_board(
         gw=gw,
         players={
             pid: player.model_copy(update={"now_cost": value[pid]})
-            for pid, player in players.items()
+            for pid, player in market.items()
         },
         projections=projections,
         positions={pid: player.element_type for pid, player in players.items()},

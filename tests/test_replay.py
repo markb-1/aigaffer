@@ -62,7 +62,7 @@ from aigaffer.replay import (
 )
 from aigaffer.solver.lineup import Lineup
 from aigaffer.solver.multiweek import PlannedPath
-from aigaffer.solver.optimizer import ALT, LEGACY, WINDOW, Plan
+from aigaffer.solver.optimizer import ALT, LEGACY, WINDOW, Plan, candidate_pool
 from tests.fixtures import (
     PICKS_15_IDS,
     PIPELINE_BOOTSTRAP_JSON,
@@ -826,19 +826,62 @@ def test_a_blank_week_is_priced_at_the_last_price_before_it():
     assert 9 not in board.actual
 
 
+class LateJoiner(FakeClient):
+    """Reyes (17) registered for GW3: his history starts there, a row at 90
+    minutes for 2 points, as the API serves a player added in the season."""
+
+    def element_summary(self, pid):
+        if pid == 17:
+            self.summaries.append(pid)
+            return [GwHistory.model_validate(_row(3, pid=17))], []
+        return super().element_summary(pid)
+
+
+def test_a_player_is_offered_only_once_he_has_joined_the_league():
+    # Reyes has no row before GW3, so at the GW2 deadline he was not in the
+    # game. Today's bootstrap has him all the same, and with no history before
+    # GW2 he would project on the starts fallback — 75 minutes, since he has
+    # started today — so without a guard he is a good buy at a deadline he
+    # could not have been bought at. At GW2 he is in neither the shortlist nor
+    # the solver's own cut (``candidate_pool`` over the board's players, as
+    # ``optimize_path`` makes it); at GW3, the week his first row is for, he
+    # is in both. He is still priced and valued at GW2 like anyone — at
+    # today's 95, having no earlier row — because only buying him is barred.
+    client, bootstrap, fixtures = _setup(LateJoiner())
+    gw2, gw3 = build_boards(client, bootstrap, fixtures, [2, 3], [])
+    squad = list(PICKS_15_IDS)
+
+    assert 17 not in gw2.shortlist
+    assert 17 not in candidate_pool(gw2.players, gw2.projections, squad)
+    assert gw2.value[17] == gw2.players[17].now_cost == 95
+    assert 17 in gw3.shortlist
+    assert 17 in candidate_pool(gw3.players, gw3.projections, squad)
+
+    # A squad that holds him is another matter: the start squad brings him
+    # onto the GW2 board, he is in the solver's cut as a man held, and he is
+    # projected — the rule bars a purchase, never a player already owned.
+    client, bootstrap, fixtures = _setup(LateJoiner())
+    held = [pid for pid in squad if pid != 6] + [17]
+    start = Start(TOP_ENTRY, "top", tuple(held), 28, 1, False)
+    (board,) = build_boards(client, bootstrap, fixtures, [2], [start])
+    assert 17 in candidate_pool(board.players, board.projections, held)
+    assert board.projections[17].per_gw[2] > 0
+
+
 def test_a_player_bought_earlier_is_still_projected_later(monkeypatch):
-    # The extra is cumulative. With the shortlist emptied, GW2's pool is the
-    # start squad alone, so Reyes (17) — not in it — projects at nothing in
-    # GW2. But he is in GW2's top thirty (every available midfielder is, in a
-    # universe this small), so a policy could buy him there: his GW2 is read
-    # for the score, and from GW3 he is projected off his history, not sold
-    # for nothing as a man nobody fetched. His history is fetched once.
-    monkeypatch.setattr(rp, "history_pool", lambda players, held: [])
+    # The extra is cumulative. The pipeline's shortlist names Reyes (17) at
+    # GW2 and nobody at GW3, and the start squad does not hold him. At GW2 he
+    # is fetched, registered (rows from GW1) and in the top thirty, so a policy
+    # could buy him there, and his GW2 is read for the score. At GW3 only the
+    # cumulative extra brings him onto the board: he is projected off his
+    # history, not sold for nothing as a man nobody fetched. His history is
+    # fetched once.
+    named = iter([[17]])
+    monkeypatch.setattr(rp, "history_pool", lambda players, held: next(named, []))
     client, bootstrap, fixtures = _setup()
     start = Start(TOP_ENTRY, "top", tuple(PICKS_15_IDS), 28, 1, False)
     gw2, gw3 = build_boards(client, bootstrap, fixtures, [2, 3], [start])
 
-    assert gw2.projections[17].per_gw[2] == 0
     assert 17 in gw2.shortlist
     assert gw2.actual[17] == (90, 2)
     assert gw3.projections[17].per_gw[3] > 0
