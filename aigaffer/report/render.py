@@ -39,6 +39,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from aigaffer.chips import BENCH_BOOST, FREE_HIT, TRIPLE_CAPTAIN, WILDCARD
+from aigaffer.data.free_transfers import MAX_FREE_TRANSFERS, after_roll
 from aigaffer.data.models import Bootstrap, Event, Player, Standing
 from aigaffer.model.xp import PlayerProjection
 from aigaffer.solver.lineup import ChipEvs, Lineup
@@ -1118,7 +1119,7 @@ def _do_this(
         )
         return "\n".join(lines)
 
-    lines += _moves(choice, players, clubs, free_transfers, selling_prices)
+    lines += _moves(choice, players, clubs, free_transfers, selling_prices, chip=chip)
     if chip != NO_CHIP:
         lines.append(chip_line_text)
     lines.append(
@@ -1206,13 +1207,17 @@ def _moves(
     clubs: dict[int, str],
     free_transfers: int | None,
     selling_prices: dict[int, int] | None = None,
+    *,
+    chip: str = NO_CHIP,
 ) -> list[str]:
     """The transfers a swap to a line, or the one line that makes none.
 
     Sell then buy, the way the app takes a transfer, so a line is a move he can
-    make without holding two of them in his head. A week that rolls says how
-    many free transfers it is banking, because that count is the whole of the
-    non-move and is the one number he checks it against; a run that was handed
+    make without holding two of them in his head. A week that rolls says
+    how many free transfers he has now and how many next week holds (see
+    :func:`~aigaffer.data.free_transfers.after_roll`), because "bank 2" was read
+    as the count after the roll and the next week's number is the one he checks
+    it against; a run that was handed
     no count drops it rather than inventing one. The SELL tag carries the
     ledger's selling price when it differs from the listed one — see
     :func:`_sale_tag`.
@@ -1220,7 +1225,19 @@ def _moves(
     if not choice.transfers_in and not choice.transfers_out:
         if free_transfers is None:
             return ["No transfers — roll."]
-        return [f"No transfers — roll (bank {plural(free_transfers, 'free transfer')})."]
+        after = after_roll(free_transfers, chip)
+        if after == free_transfers:
+            return [
+                f"No transfers — roll ({plural(free_transfers, 'free transfer')};"
+                " rolling adds none — the most you can hold)."
+                if free_transfers >= MAX_FREE_TRANSFERS
+                else f"No transfers — roll ({plural(free_transfers, 'free transfer')};"
+                " none added after this chip)."
+            ]
+        return [
+            f"No transfers — roll ({plural(free_transfers, 'free transfer')} now,"
+            f" {after} next week)."
+        ]
     return [
         f"SELL {_sale_tag(out, players, clubs, selling_prices)}"
         f" → BUY {_named(bought, players, clubs)}"

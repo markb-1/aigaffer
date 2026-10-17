@@ -21,6 +21,19 @@ MAX_FREE_TRANSFERS = 5
 FREE_TRANSFER_CHIPS = (CHIP_API_NAMES[WILDCARD], CHIP_API_NAMES[FREE_HIT])
 
 
+def after_roll(free_transfers: int, chip: str = "none") -> int:
+    """The free transfers next gameweek holds if this one makes none: one more,
+    up to MAX_FREE_TRANSFERS — none more after a wildcard or free hit, which
+    earn no transfer for the week after them (see compute_free_transfers).
+
+    ``chip`` is the week's chip in the bot's own vocabulary (``wildcard``,
+    ``free_hit``), as the report and the plan carry it, not the API's names that
+    FREE_TRANSFER_CHIPS holds for the replayed history."""
+    if chip in (WILDCARD, FREE_HIT):
+        return free_transfers
+    return min(MAX_FREE_TRANSFERS, free_transfers + 1)
+
+
 def compute_free_transfers(
     transfers: list[dict], chips: list[dict], next_event: int
 ) -> int:

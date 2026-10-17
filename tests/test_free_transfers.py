@@ -1,4 +1,5 @@
-from aigaffer.data.free_transfers import compute_free_transfers
+from aigaffer.chips import FREE_HIT, WILDCARD
+from aigaffer.data.free_transfers import after_roll, compute_free_transfers
 
 
 def t(event):
@@ -90,3 +91,13 @@ def test_a_chip_recorded_at_gw1_does_not_take_gw2s_first_free_transfer():
     # take it away: 1 for GW2.
     chips = [{"name": "wildcard", "event": 1}]
     assert compute_free_transfers([], chips, next_event=2) == 1
+
+
+def test_a_roll_earns_one_more_up_to_the_cap():
+    assert after_roll(1) == 2
+    assert after_roll(5) == 5
+
+
+def test_a_wildcard_or_free_hit_week_earns_none_for_the_week_after():
+    assert after_roll(2, WILDCARD) == 2
+    assert after_roll(2, FREE_HIT) == 2
