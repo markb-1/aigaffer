@@ -44,15 +44,23 @@ import pytest
 
 from aigaffer.data.models import Player
 from aigaffer.model.xp import PlayerProjection
+from aigaffer.solver import optimizer
 from aigaffer.solver.optimizer import (
+    ALT,
     BENCH_BUY_CHARGE,
+    BOOSTED,
     ENABLER_PRICE,
+    LEGACY,
     MAX_HITS,
+    WINDOW,
     Plan,
     Week1Lock,
+    WindowSettings,
+    bench_score,
     candidate_pool,
     charged_buys,
     optimize,
+    resolve,
 )
 
 GK, DEF, MID, FWD = 1, 2, 3, 4
@@ -580,3 +588,34 @@ def test_a_plan_carries_no_bench_charge_unless_told():
                 xp_total=0.0, objective=0.0)
 
     assert plan.bench_charge == 0.0
+
+
+def test_the_settings_are_the_specs():
+    assert LEGACY == WindowSettings(0.1, (0.1, 0.1, 0.1), (), 0.0)
+    assert WINDOW == WindowSettings(0.03, (0.25, 0.08, 0.02), (2.0, 2.0, 1.6, 1.3, 1.1), 0.2)
+    assert ALT == WindowSettings(0.03, (0.21, 0.06, 0.002), (2.0, 2.0, 1.6, 1.3, 1.1), 0.2)
+    assert BOOSTED == WindowSettings(1.0, (1.0, 1.0, 1.0), (), 0.0)
+
+
+def test_the_suite_runs_under_legacy_by_default():
+    assert optimizer.DEFAULT_SETTINGS is LEGACY
+    assert resolve(None) is LEGACY
+    assert resolve(WINDOW) is WINDOW
+
+
+@pytest.mark.live_settings
+def test_live_runs_use_one_of_the_named_settings():
+    # The replay (Task 8) picks which; whichever it is, it is a named policy.
+    assert optimizer.DEFAULT_SETTINGS in (LEGACY, WINDOW, ALT)
+
+
+def test_a_bench_scores_its_keeper_and_its_outfield_in_order():
+    # Outfield 1.0, 5.0, 3.0 sort to 5, 3, 1: 0.25*5 + 0.08*3 + 0.02*1 = 1.51,
+    # plus the keeper 0.03*4.0 = 0.12: 1.63.
+    assert bench_score(WINDOW, [4.0], [1.0, 5.0, 3.0]) == pytest.approx(1.63)
+    # LEGACY is the flat tenth: 0.1*(4 + 1 + 5 + 3) = 1.3.
+    assert bench_score(LEGACY, [4.0], [1.0, 5.0, 3.0]) == pytest.approx(1.3)
+    # A bench of more than three outfield men weights the rest at the last weight.
+    assert bench_score(WINDOW, [], [4.0, 3.0, 2.0, 1.0]) == pytest.approx(
+        0.25 * 4 + 0.08 * 3 + 0.02 * 2 + 0.02 * 1
+    )

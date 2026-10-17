@@ -116,8 +116,15 @@ def _memoised(func):
 
     @wraps(func)
     def cached(*args, **kwargs):
+        # The settings in force are part of the input: the solver reads them at
+        # call time, so a cached answer must never cross from one to another.
+        from aigaffer.solver import optimizer
+
         try:
-            blob = pickle.dumps((args, sorted(kwargs.items())), protocol=pickle.HIGHEST_PROTOCOL)
+            blob = pickle.dumps(
+                (args, sorted(kwargs.items()), optimizer.DEFAULT_SETTINGS),
+                protocol=pickle.HIGHEST_PROTOCOL,
+            )
         except Exception:
             return func(*args, **kwargs)
         key = hashlib.sha256(name.encode() + b"\0" + blob).hexdigest()
@@ -142,6 +149,23 @@ def pytest_configure(config):
         "markers",
         "no_solver_cache: solve for real even in a module on the solver-cache allow-list",
     )
+    config.addinivalue_line(
+        "markers",
+        "live_settings: run under the live WINDOW settings instead of the suite's LEGACY",
+    )
+
+
+@pytest.fixture(autouse=True)
+def legacy_window_settings(request, monkeypatch):
+    """Run the suite under LEGACY: every hand-computed number in it was worked
+    out on the flat-bench model, and LEGACY is that model to the byte. A test
+    that is about the live settings passes them explicitly or carries
+    ``@pytest.mark.live_settings``."""
+    if request.node.get_closest_marker("live_settings"):
+        return
+    from aigaffer.solver import optimizer
+
+    monkeypatch.setattr(optimizer, "DEFAULT_SETTINGS", optimizer.LEGACY)
 
 
 @pytest.fixture(autouse=True)

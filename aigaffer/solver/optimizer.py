@@ -66,6 +66,55 @@ MAX_TRANSFERS = 3
 # earn back. Two hits is a considered gamble; three is a manager tilting.
 MAX_HITS = 2
 
+
+@dataclass(frozen=True)
+class WindowSettings:
+    """How the multi-week window values what the single-week solver cannot see:
+    the bench by order, the free transfers a plan carries past its last week,
+    and a small cost a transfer. ``bench_order`` is the outfield bench, first
+    sub to third, and must not increase; ``ft_values`` is the marginal value of
+    the 1st..5th free transfer carried past the window, must not increase, and
+    is measured against holding one (the first value is subtracted back out);
+    ``()`` builds no credit at all. See LEGACY, which is the model as it was."""
+
+    bench_gk: float
+    bench_order: tuple[float, float, float]
+    ft_values: tuple[float, ...]
+    ft_use_penalty: float
+
+
+# The model before bench order and transfer value: every bench man at the
+# flat tenth, no credit, no cost. Kept as a policy the replay measures against,
+# and as the setting the hand-computed tests were worked out under.
+LEGACY = WindowSettings(BENCH_WEIGHT, (BENCH_WEIGHT,) * 3, (), 0.0)
+# The FPL expert's set (2026-10-17): a backup keeper almost never plays; the
+# first sub often does; the third rarely. Free transfers are worth less the
+# more are banked, and a transfer costs a little so a marginal one waits.
+WINDOW = WindowSettings(0.03, (0.25, 0.08, 0.02), (2.0, 2.0, 1.6, 1.3, 1.1), 0.2)
+# The open-source solver's defaults, which the replay weighs against WINDOW.
+ALT = WindowSettings(0.03, (0.21, 0.06, 0.002), (2.0, 2.0, 1.6, 1.3, 1.1), 0.2)
+# Every squad point counts: how the chip calendar prices a bench boost.
+BOOSTED = WindowSettings(1.0, (1.0, 1.0, 1.0), (), 0.0)
+# What the live run plans with. Read at call time (``resolve``), never bound
+# as a default argument, so a test can run the whole pipeline under LEGACY.
+DEFAULT_SETTINGS = WINDOW
+
+
+def resolve(settings: "WindowSettings | None") -> WindowSettings:
+    """``settings``, or the module's DEFAULT_SETTINGS as it stands right now."""
+    return settings if settings is not None else DEFAULT_SETTINGS
+
+
+def bench_score(settings: WindowSettings, keepers: list[float], outfield: list[float]) -> float:
+    """What a bench scores under ``settings``: each benched keeper at
+    ``bench_gk``, the outfield bench in order of points at ``bench_order`` --
+    the order a maximising solver puts them in on its own. A bench of more than
+    three outfield men (a malformed squad) weights the rest at the last weight."""
+    ordered = sorted(outfield, reverse=True)
+    last = settings.bench_order[-1]
+    weights = list(settings.bench_order) + [last] * max(0, len(ordered) - len(settings.bench_order))
+    return settings.bench_gk * sum(keepers) + sum(w * x for w, x in zip(weights, ordered))
+
 # A signing who sits on the bench is money doing nothing. Each window
 # gameweek a charged signing sits costs this much of the multi-week
 # objective (aigaffer.solver.multiweek) — none in a bench-boost week, where
