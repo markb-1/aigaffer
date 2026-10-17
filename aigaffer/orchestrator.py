@@ -672,6 +672,11 @@ def run_pipeline(
         # What the window charged for signings left on the bench, already out
         # of the objective — kept for the backtest that will tune it.
         "bench_charge": choice.bench_charge,
+        # The window's free-transfer credit and transfer cost, both already in
+        # the objective — kept beside the bench charge for the replay to tune.
+        "ft_kept": choice.path.ft_kept if choice.path is not None else None,
+        "ft_credit": choice.path.ft_credit if choice.path is not None else 0.0,
+        "transfer_cost": choice.path.transfer_cost if choice.path is not None else 0.0,
         # The chip this week actually plays: the manager's if he decided, the
         # solver's own week-1 chip otherwise, "none" on the great many weeks
         # that play none. Recorded here so the diary reads the same as the phone.

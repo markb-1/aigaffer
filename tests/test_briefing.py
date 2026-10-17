@@ -1279,6 +1279,49 @@ def test_the_board_explains_the_bench_charge_only_when_a_plan_pays_it():
     assert BENCH_BUYS not in free
 
 
+# --- the keeps-mark -----------------------------------------------------------
+
+FT_CREDIT = (
+    "Net also credits the free transfers a plan carries past the window beyond"
+    " the one every plan keeps (worth less the more are banked), and charges"
+    " 0.2 a transfer, so a move that buys little waits."
+)
+
+
+def _keeping(plan, kept, credit, cost=0.0):
+    path = replace(plan.path, ft_kept=kept, ft_credit=credit, transfer_cost=cost)
+    return replace(plan, path=path)
+
+
+def test_a_plan_that_keeps_free_transfers_says_how_many_and_what_they_add():
+    keeping = _keeping(with_path(ONE, PLANNED), 3, 2.6)
+
+    line = format_plans([(0, keeping)], PLAYERS, CLUBS, XP).splitlines()[0]
+
+    assert " | keeps 3 FTs (+2.6)" in line
+
+
+def test_a_plan_with_no_credit_says_nothing_of_keeping():
+    plain = _keeping(with_path(ONE, PLANNED), 1, 0.0)
+
+    line = format_plans([(0, plain)], PLAYERS, CLUBS, XP).splitlines()[0]
+
+    assert "keeps" not in line
+
+
+@pytest.mark.live_settings
+def test_the_ft_caption_appears_only_when_a_plan_carries_a_credit_or_a_cost():
+    crediting = _keeping(AHEAD, 3, 2.6)
+    costing = _keeping(AHEAD, 1, 0.0, 0.4)
+    plain = _keeping(AHEAD, 1, 0.0, 0.0)
+
+    for shown in (crediting, costing):
+        text = briefing(solve=solved(plans=[shown, TWO, ROLL], choice=shown))
+        assert FT_CREDIT in " ".join(section(text, "Candidate plans"))
+    text = briefing(solve=solved(plans=[plain, TWO, ROLL], choice=plain))
+    assert FT_CREDIT not in text
+
+
 def test_a_recorded_free_hit_week_adds_no_free_transfer_for_the_next():
     # The owner has entered a free hit: the week after it earns none, so the
     # money line must not promise a third transfer to a manager holding two.

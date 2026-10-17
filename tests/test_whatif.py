@@ -24,6 +24,7 @@ from aigaffer.report.whatif import render_numbers
 from aigaffer.solver.lineup import Lineup
 from aigaffer.solver.calendar import CalendarEntry, ChipCalendar
 from aigaffer.solver.multiweek import PlannedMove, PlannedPath
+from aigaffer.solver import optimizer
 from aigaffer.solver.optimizer import Plan
 from aigaffer.store import DB_NAME, Store
 from aigaffer.whatif_log import numbers_entry
@@ -358,6 +359,37 @@ def test_the_free_hit_week_drops_its_bench_share_and_sums_to_the_net(monkeypatch
     assert terms.keeping == pytest.approx(12.0)      # bars_diff
     assert terms.one_week + terms.knock_on - terms.keeping == pytest.approx(result.net)
     assert (result.band, result.lean) == (MARGINAL, HOLD)
+
+
+def test_the_free_hit_week_strips_the_bench_by_order_under_the_live_settings(
+    monkeypatch, held, no_fh_prices
+):
+    # Under WINDOW the free-hit bench is not a flat 0.1 a point: the keeper
+    # counts 0.03 and the outfield men 0.25 / 0.08 / 0.02 by order of points.
+    # Bench 32 (keeper, 3.0), 33 (10.0), 34 (6.0), 35 (2.0):
+    #   0.03*3 + 0.25*10 + 0.08*6 + 0.02*2 = 0.09 + 2.5 + 0.48 + 0.04 = 3.11.
+    # The path's week-1 figure 70 less 3.11 is 66.89, against the off-path's
+    # 60: one_week +6.89. The flat strip (0.1 * 21 = 2.1) would say 67.9 - 60.
+    monkeypatch.setattr(optimizer, "DEFAULT_SETTINGS", optimizer.WINDOW)
+    held(FH1)
+    fh_squad = list(range(21, 36))
+    fh_xi = list(range(21, 32))
+    projections = _projections({32: {6: 3.0}, 33: {6: 10.0}, 34: {6: 6.0}, 35: {6: 2.0}})
+    week = _week(projections=projections)
+    week.effective.players[32] = SimpleNamespace(element_type=1)
+    for pid in (33, 34, 35):
+        week.effective.players[pid] = SimpleNamespace(element_type=3)
+    on = _side(
+        95.0, week1=FREE_HIT,
+        weekly={6: 70.0, 7: 50.0, 8: 50.0, 9: 50.0, 10: 50.0, 11: 50.0},
+        fh_squad=fh_squad, fh_xi=fh_xi,
+    )
+    off = _side(97.0, weekly={6: 60.0, 7: 51.0, 8: 51.0, 9: 50.0, 10: 50.0, 11: 50.0})
+    monkeypatch.setattr(whatif, "optimize_path", FakeSolver(on, off))
+
+    result = simulate(week, config(chips=True), FREE_HIT)
+
+    assert result.weekly_gain[6] == pytest.approx(6.89)
 
 
 def test_hold_names_the_week_the_off_path_plays_it(monkeypatch, held):

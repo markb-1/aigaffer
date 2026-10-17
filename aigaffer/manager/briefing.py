@@ -72,6 +72,7 @@ from aigaffer.solver.optimizer import (
     MIDFIELDER,
     Plan,
     projected_points,
+    resolve,
 )
 
 if TYPE_CHECKING:  # the orchestrator imports the manager, so never the reverse
@@ -207,6 +208,13 @@ BENCH_BUYS = (
     f" on the bench; each week he sits costs {BENCH_BUY_CHARGE} net,"
     " bench-boost and free-hit weeks excepted, so a plan that buys a man to sit"
     " has already paid for it in its net."
+)
+# What the keeps-mark on a plan line is, said once above the list, and only
+# when some plan on the board carries a credit or pays a cost.
+FT_CREDIT = (
+    "Net also credits the free transfers a plan carries past the window beyond"
+    " the one every plan keeps (worth less the more are banked), and charges"
+    " {penalty} a transfer, so a move that buys little waits."
 )
 # What a path on a plan line is, said once above the list. He is choosing
 # between openings on the strength of where they lead, so he has to know that
@@ -440,6 +448,7 @@ def format_plans(
             f" | {plan.objective:.1f} net"
             f" | {against}"
             f"{_bench_buys(plan, board)}"
+            f"{_ft_kept(plan)}"
             f"{_path(plan, board)}"
             f"{PICK_MARKER if plan_id == recommended else ''}"
         )
@@ -696,6 +705,8 @@ def _candidates(plans: list[tuple[int, Plan]], board: _Board, pick: int | None) 
         lines += ["", WINDOW_UNITS, "", PATH_GUARD]
     if any(plan.bench_charge > 0 for _, plan in plans):
         lines += ["", BENCH_BUYS]
+    if any(p.path is not None and (p.path.ft_credit > 0 or p.path.transfer_cost > 0) for _, p in plans):
+        lines += ["", FT_CREDIT.format(penalty=resolve(None).ft_use_penalty)]
     lines += [
         "",
         format_plans(plans, board.players, board.clubs, board.projections, pick),
@@ -941,6 +952,18 @@ def _bench_buys(plan: Plan, board: _Board) -> str:
         for pid, weeks in sorted(plan.path.benched_buys.items())
     )
     return f" | bench buys: {sat} benched (-{plan.bench_charge:.1f})"
+
+
+def _ft_kept(plan: Plan) -> str:
+    """`` | keeps 3 FTs (+2.6)``, or nothing.
+
+    The free transfers this plan carries past the window and the credit that
+    put in its net — on the line, because a plan that banks transfers is
+    leaving moves undone on purpose and he should see that it did.
+    """
+    if plan.path is None or plan.path.ft_credit <= 0:
+        return ""
+    return f" | keeps {plan.path.ft_kept} FTs (+{plan.path.ft_credit:.1f})"
 
 
 def _planned(move: "PlannedMove", board: _Board) -> str:
