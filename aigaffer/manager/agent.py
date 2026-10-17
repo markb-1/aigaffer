@@ -182,6 +182,13 @@ class ManagerDecision:
     ``record`` is every ``adjust_players`` call he made, in order, applied or
     not, with the news fields the three-key halves above leave out. The news
     ledger's write reads it; the decision record and the report never do.
+
+    ``registry`` is every plan he could have finalized, under the id he saw it
+    by: the briefing's shortlist and every re-solve after it, as it stood when
+    he decided. The detailed report lists them as the options weighed, and
+    an id at or above the shortlist's length is a re-solve's. On a fallback it
+    is the shortlist alone — the week is the solver's, chosen from the plans
+    the briefing printed, and a re-solve's plans are not what it rests on.
     """
 
     plan: Plan
@@ -200,6 +207,7 @@ class ManagerDecision:
     # the news fields (news-ledger spec §6). The ledger's write reads it;
     # the decision record and the report never do.
     record: list[dict] = field(default_factory=list)
+    registry: dict[int, Plan] = field(default_factory=dict)
 
 
 def run_manager(
@@ -291,6 +299,10 @@ def _abandoned(
         adjustments=[],
         searches=conversation.searches if conversation is not None else 0,
         source=f"{FALLBACK}: {reason}",
+        # The shortlist, minted afresh rather than read off the conversation:
+        # there may never have been one, and a re-solve's plans are not what
+        # this week was chosen from.
+        registry=dict(initial_plan_ids(solve0)),
     )
 
 
@@ -683,6 +695,8 @@ class _Conversation:
             # briefing's if he did not. The lineup above was picked from them
             # and the report is written on them.
             projections=self.projections,
+            # A copy: the ids he chose among, frozen at the moment he chose.
+            registry=dict(self.registry),
         )
 
     def _split(self) -> tuple[list[dict], list[dict]]:

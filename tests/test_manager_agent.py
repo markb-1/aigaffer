@@ -799,6 +799,33 @@ def test_a_fallback_carries_no_projections_of_its_own():
     assert decision.projections is None
 
 
+def test_the_decision_carries_the_plan_registry():
+    # The detailed report lists every plan he weighed under the id he saw it
+    # by, so the registry leaves the loop with the decision. The briefing
+    # minted 0 (SWAP) and 1 (ROLL); the re-solve went on counting from
+    # len(registry) == 2, so FRESH is 2 and FRESH_HIT is 3.
+    _, decision = converse(
+        [
+            reply(use("resolve", {})),
+            reply(use("finalize_decision", finalize(plan_id=3))),
+        ]
+    )
+
+    assert decision.registry == {0: SWAP, 1: ROLL, 2: FRESH, 3: FRESH_HIT}
+    assert decision.registry[3] is decision.plan
+
+
+def test_a_fallback_carries_the_solvers_shortlist_as_its_registry():
+    # The fallback is the solver's own week, chosen from the shortlist the
+    # briefing printed — so that is the registry, even after a re-solve that
+    # added plans 2 and 3: neither of those is what the week is built on.
+    _, decision = converse([reply(use("resolve", {})), rate_limited()])
+
+    assert decision.source.startswith("solver-fallback")
+    assert decision.registry == {0: SWAP, 1: ROLL}
+    assert decision.registry[0] is decision.plan
+
+
 def test_without_a_resolve_the_lineup_stands_on_the_briefings_projections():
     # The same plan, on the same two sets of projections: Egan plays on the
     # briefing's, Fenn on the ones no resolve ever asked for.
