@@ -103,7 +103,7 @@ the branch-and-bound wanders.
 
 The price is a per-gameweek constant, ``best_oneweek[w]`` — the value of the
 best legal one-week fifteen the pool holds within the manager's budget, scored
-for that gameweek with the armband and the tenth-weighted bench exactly as the
+for that gameweek with the armband and the bench by order exactly as the
 objective scores the standing squad, computed by :func:`_best_one_week_squad` in
 its own small program before this one is built — for each gameweek a held free
 hit may be played in, and for no other, since nothing reads it there. The
@@ -157,15 +157,34 @@ next, and a path printed under "the road ahead" saying so is noise wearing the
 clothes of advice. So every buy in the window is charged
 :data:`CHURN_EPSILON`; see there for why it can never change a decision.
 
-**A signing who sits pays for it.** The bench is worth BENCH_WEIGHT, a flat
-tenth, which on its own makes a £6m backup keeper bought for one bench-boost
-week look nearly free. So a signing priced above his position's enabler
-(optimizer.ENABLER_PRICE) costs BENCH_BUY_CHARGE for every window week he sits
-— the same ``squad − xi`` the bench is scored on, so no row is added. A
-bench-boost week charges nothing, through ``z_bb``; a free-hit week charges
-nothing, through the ``y_fh`` pin, which is lifted by the most a week can be
-charged so it stays exact. A player held when the window opens is never
-charged: his bench is sunk.
+**The bench is valued by order, as floor plus bonus.** A bench man scores
+only when someone ahead of him fails to play, and the first sub is far likelier
+to come on than the third, so the window's settings
+(:class:`~aigaffer.solver.optimizer.WindowSettings`) weight a benched keeper
+on his own and the outfield three by order, ``w1 ≥ w2 ≥ w3``. Order is what a
+linear program cannot see directly — which bench man is "first" depends on
+the eleven — so :func:`_bench_term` writes it as a floor and a bonus: every
+benched outfield man earns ``w3``, and two slot variables a week, each an
+assignment of one unit to one benched man, earn the first and second their
+excess over it. The slots need no binaries. Over an integer bench their rows
+are a transportation polytope, whose vertices are integral, and because the
+weights do not increase the maximiser fills the first slot with the best of
+the bench and the second with the next; the LP relaxation of the bench term
+is the ordered bench itself. Under equal weights there is no excess and no
+slot is built, so :data:`~aigaffer.solver.optimizer.LEGACY` — a flat tenth
+for every man — is the flat bench this window always had, to the
+coefficient. A boosted week scores its bench in full through the boost term
+instead, and the slots there have nothing to fill.
+
+**A signing who sits pays for it.** Even by order the bench is worth a small
+fraction of its points, which on its own makes a £6m backup keeper bought for
+one bench-boost week look nearly free. So a signing priced above his
+position's enabler (optimizer.ENABLER_PRICE) costs BENCH_BUY_CHARGE for every
+window week he sits — the same ``squad − xi`` the bench is scored on, so no
+row is added. A bench-boost week charges nothing, through ``z_bb``; a
+free-hit week charges nothing, through the ``y_fh`` pin, which is lifted by
+the most a week can be charged so it stays exact. A player held when the
+window opens is never charged: his bench is sunk.
 
 One approximation from the single-week model is inherited unchanged and is
 worse here than there, because it is compounded over the window: prices do
@@ -198,7 +217,6 @@ from aigaffer.data.models import Player
 from aigaffer.model.xp import PlayerProjection
 from aigaffer.solver.optimizer import (
     BENCH_BUY_CHARGE,
-    BENCH_WEIGHT,
     DEFENDER,
     FORWARD,
     GOALKEEPER,
@@ -214,10 +232,13 @@ from aigaffer.solver.optimizer import (
     XI_SIZE,
     Plan,
     Week1Lock,
+    WindowSettings,
     _chosen,
     _grouped,
+    bench_score,
     candidate_pool,
     charged_buys,
+    resolve,
 )
 
 # The single-week solver looks at forty a position. This one carries every
@@ -245,8 +266,8 @@ _UNBOUNDED = 10**9
 CHURN_EPSILON = 0.01
 
 # The two chips this solver plans. A bench boost turns the whole fifteen loose
-# for one week — the four benched men score in full rather than at
-# ``BENCH_WEIGHT`` — and a triple captain adds one more armband multiple to the
+# for one week — the four benched men score in full rather than by bench
+# order — and a triple captain adds one more armband multiple to the
 # week it is played. Both are free to play, so the only brakes on either are
 # that the game hands out one of each a set — a set to play by GW19 and a fresh
 # one from GW20, each held chip played at most once inside its own window — and
@@ -414,6 +435,7 @@ def optimize_path(
     bars: dict[str, dict[int, float]] | None = None,
     lock: Week1Lock | None = None,
     pin_chip: tuple[str, bool] | None = None,
+    settings: WindowSettings | None = None,
 ) -> tuple[Plan, PlannedPath] | None:
     """The best sequence of squads over ``events``, or None.
 
@@ -477,6 +499,13 @@ def optimize_path(
     held but not playable in week 1 — is None, the same "no answer" an
     infeasible board gets. None, the default, adds nothing to the model.
 
+    ``settings`` is how the window values what one week cannot see — the bench
+    by order (:class:`~aigaffer.solver.optimizer.WindowSettings`). None, the
+    default, reads :data:`~aigaffer.solver.optimizer.DEFAULT_SETTINGS` at call
+    time; :data:`~aigaffer.solver.optimizer.LEGACY` is the flat-tenth bench
+    the window had before. The free-hit prices this solve computes for itself
+    are priced under the same settings, which the free-hit pin needs.
+
     ``forced_first_transfers`` pins the opening gameweek's moves; left alone,
     the opening gameweek moves at most ``max(MAX_TRANSFERS, ft)`` times, which
     is the single-week solver's ceiling and is here for the same reason it is
@@ -518,6 +547,7 @@ def optimize_path(
     """
     if not events:
         return None
+    settings = resolve(settings)
 
     opening_bank = min(max(free_transfers, 0), MAX_FREE_TRANSFERS)
     pool = candidate_pool(
@@ -546,6 +576,10 @@ def optimize_path(
 
     by_position = _grouped(pool, lambda p: players[p].element_type)
     by_club = _grouped(pool, lambda p: players[p].team)
+    # The bench's two kinds, sorted so the same board writes the same model:
+    # a benched keeper is weighted on his own, the outfield bench by order.
+    keepers = sorted(by_position[GOALKEEPER])
+    outfield = sorted(p for p in pool if players[p].element_type != GOALKEEPER)
 
     # The chips this window may play: the held ones of a kind this solver plans
     # that at least one window week may play, each with the window weeks inside
@@ -601,9 +635,12 @@ def optimize_path(
         # standalone solve computes it from the very same inputs. Either way None
         # is a free-hit week the budget cannot field, which is no window at all.
         if freehit_prices is None:
+            # Priced under the window's own settings: the pin below needs
+            # best_oneweek ≥ the standing score, and only a sub-solve that
+            # values the bench as this window does can promise it.
             freehit_prices = _free_hit_prices(
                 players, projections, current_squad, bank, events, time_limit,
-                selling_prices=selling_prices, held_chips=held,
+                selling_prices=selling_prices, held_chips=held, settings=settings,
             )
         if freehit_prices is None:
             return None
@@ -771,17 +808,30 @@ def optimize_path(
         BENCH_BUY_CHARGE * (SQUAD_SIZE - XI_SIZE) if charged else 0.0
     )
 
+    # Each week's bench, valued by order (``_bench_term``). The indicator is
+    # ``squad − xi``, less ``z_bb`` where a boost may be played, so a boosted
+    # week's bench is nothing here and is scored in full by the boost term
+    # below instead; the slot rows there are zero on both sides.
+    bench_value = {}
+    for w in weeks:
+        indicator = {
+            p: squad[w][p] - starting[w][p] - (z_bb[w][p] if w in z_bb else 0)
+            for p in pool
+        }
+        bench_value[w] = _bench_term(
+            problem, f"w{w}", settings, keepers, outfield,
+            {p: points[p, w] for p in pool}, indicator,
+            on(BENCH_BOOST, w) if w in z_bb else None,
+        )
+
     objective = (
         pulp.lpSum(
             decay ** (w - 1)
-            * pulp.lpSum(
-                points[p, w]
-                * (
-                    starting[w][p]
-                    + captain[w][p]
-                    + BENCH_WEIGHT * (squad[w][p] - starting[w][p])
+            * (
+                pulp.lpSum(
+                    points[p, w] * (starting[w][p] + captain[w][p]) for p in pool
                 )
-                for p in pool
+                + bench_value[w]
             )
             for w in weeks
         )
@@ -790,13 +840,15 @@ def optimize_path(
         - pulp.lpSum(decay ** (w - 1) * bench_charge(w) for w in weeks)
     )
     if BENCH_BOOST in chips:
-        # The 0.9 the bench was not already scoring, less the bar the boosted
-        # week has to clear before the chip is worth playing at all.
+        # The boosted bench at full points — the bench term above took it out
+        # of the ordered bench through ``z_bb`` — less the bar the boosted week
+        # has to clear before the chip is worth playing at all. Under LEGACY
+        # 0.1·Σ points·(diff − z) + 1·Σ points·z is today's 0.1·Σ points·diff
+        # + 0.9·Σ points·z, coefficient for coefficient (diff 0.1, z 0.9).
         objective += pulp.lpSum(
             decay ** (w - 1)
             * (
-                (1 - BENCH_WEIGHT)
-                * pulp.lpSum(points[p, w] * z_bb[w][p] for p in pool)
+                pulp.lpSum(points[p, w] * z_bb[w][p] for p in pool)
                 - bars_paid(BENCH_BOOST, w)
             )
             for w in chip_weeks[BENCH_BOOST]
@@ -963,14 +1015,14 @@ def optimize_path(
             # gameweek's own ``best_oneweek`` plus the charge ceiling, still a
             # true upper bound on the standing score, so at ``fh = 1`` the pair
             # forces ``y_fh`` to the standing score and at ``fh = 0`` to zero.
-            normal_score = pulp.lpSum(
-                points[p, w]
-                * (
-                    starting[w][p]
-                    + captain[w][p]
-                    + BENCH_WEIGHT * (squad[w][p] - starting[w][p])
+            # The standing score is the objective's own for the week — the
+            # ordered bench included, its slots and all — so the pin takes
+            # off exactly what the objective counted.
+            normal_score = (
+                pulp.lpSum(
+                    points[p, w] * (starting[w][p] + captain[w][p]) for p in pool
                 )
-                for p in pool
+                + bench_value[w]
             )
             # The standing score less its bench charge, lifted by the ceiling
             # so that it cannot go below zero (y_fh is): at fh = 1 the pair
@@ -1096,11 +1148,19 @@ def optimize_path(
         # all. The objective carries the same, less the bar the played chip
         # cleared that week — the number the plan was chosen by, exactly as it
         # prices the churn below.
+        # The bench as the objective scored it: in full in a boosted week, by
+        # order otherwise (bench_score puts the outfield three in the order a
+        # maximising solver fills the slots, so the two agree to the point).
         week_xp = started + armband
-        week_score = started + armband + BENCH_WEIGHT * benched
         if bb_on:
             week_xp += benched
-            week_score += (1 - BENCH_WEIGHT) * benched - bar(played_here, w)
+            week_score = started + armband + benched - bar(played_here, w)
+        else:
+            week_score = started + armband + bench_score(
+                settings,
+                [points[p, w] for p in bench if players[p].element_type == GOALKEEPER],
+                [points[p, w] for p in bench if players[p].element_type != GOALKEEPER],
+            )
         if tc_on:
             week_xp += armband
             week_score += armband - bar(played_here, w)
@@ -1201,6 +1261,35 @@ def _projected(
     return projection.per_gw.get(event, 0.0) if projection else 0.0
 
 
+def _bench_term(problem, tag, settings, keepers, outfield, points, bench, boost=None):
+    """The bench's value as an affine expression — floor plus bonus (spec R2).
+
+    ``bench[p]`` is p's bench indicator (``squad − xi``, less ``z_bb`` in a week
+    a bench boost may be played); ``boost`` is that week's boost binary, or
+    None. Every benched outfield man earns the last weight ``w3``; the first
+    and second slots earn their excess over it, through slot variables an
+    assignment fills with the best two of the bench — exact without binaries,
+    because for an integer bench the rows are a transportation polytope and the
+    weights do not increase. Under equal weights (LEGACY, BOOSTED) there is no
+    excess, so no slot is built and the term is the flat bench it always was.
+    In a boosted week both sides of every slot row are zero: the bench is
+    scored in full by the boost term instead."""
+    w1, w2, w3 = settings.bench_order
+    value = settings.bench_gk * pulp.lpSum(points[p] * bench[p] for p in keepers)
+    value += w3 * pulp.lpSum(points[p] * bench[p] for p in outfield)
+    bonuses = [(k, w - w3) for k, w in ((1, w1), (2, w2)) if w - w3 > 0]
+    if not bonuses:
+        return value
+    slots = {k: problem.add_variable_dicts(f"{tag}slot{k}", outfield, lowBound=0, upBound=1) for k, _ in bonuses}
+    filled = 1 - boost if boost is not None else 1
+    for k, bonus in bonuses:
+        problem += pulp.lpSum(slots[k].values()) == filled
+        value += bonus * pulp.lpSum(points[p] * slots[k][p] for p in outfield)
+    for p in outfield:
+        problem += pulp.lpSum(slots[k][p] for k in slots) <= bench[p]
+    return value
+
+
 def _one_week_market(
     players: dict[int, Player],
     projections: dict[int, PlayerProjection],
@@ -1239,6 +1328,7 @@ def _free_hit_prices(
     time_limit: int | None,
     selling_prices: dict[int, int] | None = None,
     held_chips: tuple[HeldChip, ...] | None = None,
+    settings: WindowSettings | None = None,
 ) -> dict[int, tuple[float, list[int], list[int]]] | None:
     """Each window gameweek's free-hit price — value, fifteen and eleven — for
     the gameweeks a held free hit may be played in.
@@ -1266,10 +1356,16 @@ def _free_hit_prices(
     the prices a sweep hoists are identical to the ones each solve would have
     computed.
 
+    ``settings`` values the bench (None reads the default at call time) and
+    must be the settings of the window that consumes the prices: the free-hit
+    pin is exact only while ``best_oneweek`` is at least the standing squad's
+    score, and that holds only when both value the bench alike.
+
     None when any priced gameweek's best one-week squad cannot be fielded
     inside the budget — the same infeasibility :func:`optimize_path` returns
     None on.
     """
+    settings = resolve(settings)
     pool, by_position, by_club, budget = _one_week_market(
         players, projections, current_squad, bank, selling_prices
     )
@@ -1288,7 +1384,8 @@ def _free_hit_prices(
     for w in weeks:
         week_points = {p: _projected(projections, p, events[w - 1]) for p in pool}
         priced = _best_one_week_squad(
-            pool, players, by_position, by_club, week_points, budget, solver
+            pool, players, by_position, by_club, week_points, budget, solver,
+            settings,
         )
         if priced is None:
             return None
@@ -1303,7 +1400,7 @@ def best_one_week_squads(
     bank: int,
     events: list[int],
     *,
-    bench_weight: float = BENCH_WEIGHT,
+    settings: WindowSettings | None = None,
     selling_prices: dict[int, int] | None = None,
     time_limit: int | None = None,
 ) -> dict[int, tuple[float, list[int], list[int]] | None]:
@@ -1317,7 +1414,12 @@ def best_one_week_squads(
     index; and a week the budget cannot field is None rather than the end of
     the answer, since one unpriceable week is a week the calendar skips, not a
     calendar it cannot draw.
+
+    ``settings`` values the bench: None reads the default at call time, which
+    is the free hit's basis; :data:`~aigaffer.solver.optimizer.BOOSTED`
+    counts every squad point alike, which is how a bench boost is priced.
     """
+    settings = resolve(settings)
     pool, by_position, by_club, budget = _one_week_market(
         players, projections, current_squad, bank, selling_prices
     )
@@ -1331,7 +1433,7 @@ def best_one_week_squads(
             {p: _projected(projections, p, event) for p in pool},
             budget,
             solver,
-            bench_weight=bench_weight,
+            settings,
         )
         for event in events
     }
@@ -1342,10 +1444,11 @@ def squad_one_week(
     projections: dict[int, PlayerProjection],
     squad: list[int],
     event: int,
+    settings: WindowSettings | None = None,
 ) -> tuple[float, list[int], list[int]]:
     """How ``squad`` lines up in ``event`` on the free-hit basis: its best legal
-    eleven, the armband, and the bench at :data:`BENCH_WEIGHT` — as
-    ``(value, squad, xi)``.
+    eleven, the armband, and the bench valued as ``settings`` value it (None
+    reads the default at call time) — as ``(value, squad, xi)``.
 
     The baseline a free hit is measured against when the calendar prices one.
     It goes through :func:`_best_one_week_squad` with the pool cut to the
@@ -1364,6 +1467,7 @@ def squad_one_week(
         {p: _projected(projections, p, event) for p in pool},
         _UNBOUNDED,
         SOLVER,
+        resolve(settings),
     )
     return priced if priced is not None else (0.0, list(squad), [])
 
@@ -1373,10 +1477,11 @@ def squad_one_week_score(
     projections: dict[int, PlayerProjection],
     squad: list[int],
     event: int,
+    settings: WindowSettings | None = None,
 ) -> float:
     """:func:`squad_one_week`'s score alone — the baseline a free hit is
     measured against."""
-    return squad_one_week(players, projections, squad, event)[0]
+    return squad_one_week(players, projections, squad, event, resolve(settings))[0]
 
 
 def _best_one_week_squad(
@@ -1387,7 +1492,7 @@ def _best_one_week_squad(
     week_points: dict[int, float],
     budget: int,
     solver: pulp.LpSolver,
-    bench_weight: float = BENCH_WEIGHT,
+    settings: WindowSettings,
 ) -> tuple[float, list[int], list[int]] | None:
     """The best legal one-week fifteen the pool holds within ``budget``.
 
@@ -1402,12 +1507,14 @@ def _best_one_week_squad(
     quota, three to a club, an eleven of one keeper and at least three defenders
     and a forward, and a total price inside ``budget``, which is the bank plus the
     sale value of the squad the manager holds. It is scored for the one gameweek
-    with the armband doubled and the bench at :data:`BENCH_WEIGHT`, exactly as the
-    window scores the standing squad, so the two are comparable to the point.
+    with the armband doubled and the bench by order (:func:`_bench_term`),
+    exactly as the window scores the standing squad, so the two are comparable
+    to the point.
 
-    ``bench_weight`` is how much a bench point is worth: the window's own
-    :data:`BENCH_WEIGHT` for a free hit, and 1 when the chip calendar prices a
-    bench boost — a bench that will actually score.
+    ``settings`` says what a bench point is worth: the window's own for a free
+    hit — it must be, or the free-hit pin loses its big-M — and
+    :data:`~aigaffer.solver.optimizer.BOOSTED` when the chip calendar prices a
+    bench boost, a bench that will actually score.
 
     Returns ``(value, squad, xi)`` — the score, the fifteen and the eleven — or
     None if no legal fifteen fits the budget, which the caller treats as it
@@ -1422,10 +1529,15 @@ def _best_one_week_squad(
     # armband lands on a single man without being made a binary.
     captain = problem.add_variable_dicts("fhcap", pool, lowBound=0, upBound=1)
 
-    problem += pulp.lpSum(
-        week_points[p]
-        * (starting[p] + captain[p] + bench_weight * (squad[p] - starting[p]))
-        for p in pool
+    keepers = sorted(by_position[GOALKEEPER])
+    outfield = sorted(p for p in pool if players[p].element_type != GOALKEEPER)
+    bench_value = _bench_term(
+        problem, "fh", settings, keepers, outfield, week_points,
+        {p: squad[p] - starting[p] for p in pool},
+    )
+    problem += (
+        pulp.lpSum(week_points[p] * (starting[p] + captain[p]) for p in pool)
+        + bench_value
     )
 
     problem += pulp.lpSum(squad.values()) == SQUAD_SIZE
@@ -1458,6 +1570,10 @@ def _best_one_week_squad(
     value = (
         sum(week_points[p] for p in eleven)
         + armband
-        + bench_weight * sum(week_points[p] for p in bench)
+        + bench_score(
+            settings,
+            [week_points[p] for p in bench if players[p].element_type == GOALKEEPER],
+            [week_points[p] for p in bench if players[p].element_type != GOALKEEPER],
+        )
     )
     return value, chosen, eleven

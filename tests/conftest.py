@@ -155,16 +155,37 @@ def pytest_configure(config):
     )
 
 
+# The live settings as the source has them, read before the session patch below.
+_LIVE_SETTINGS: list = []
+
+
+@pytest.fixture(autouse=True, scope="session")
+def legacy_session_settings():
+    """LEGACY for the whole session, underneath the per-test patch. A module-
+    or session-scoped fixture (test_orchestrator's pipeline runs) is built
+    before any function-scoped one, so the per-test patch alone would leave it
+    solving under the live settings while the tests beside it solve under
+    LEGACY. And a test's own ``monkeypatch.undo()`` unwinds to this, not to
+    the live settings."""
+    from aigaffer.solver import optimizer
+
+    _LIVE_SETTINGS[:] = [optimizer.DEFAULT_SETTINGS]
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(optimizer, "DEFAULT_SETTINGS", optimizer.LEGACY)
+        yield
+
+
 @pytest.fixture(autouse=True)
 def legacy_window_settings(request, monkeypatch):
     """Run the suite under LEGACY: every hand-computed number in it was worked
     out on the flat-bench model, and LEGACY is that model to the byte. A test
     that is about the live settings passes them explicitly or carries
-    ``@pytest.mark.live_settings``."""
-    if request.node.get_closest_marker("live_settings"):
-        return
+    ``@pytest.mark.live_settings``, which puts the source's own back for it."""
     from aigaffer.solver import optimizer
 
+    if request.node.get_closest_marker("live_settings"):
+        monkeypatch.setattr(optimizer, "DEFAULT_SETTINGS", _LIVE_SETTINGS[0])
+        return
     monkeypatch.setattr(optimizer, "DEFAULT_SETTINGS", optimizer.LEGACY)
 
 

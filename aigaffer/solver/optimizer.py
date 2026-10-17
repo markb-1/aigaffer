@@ -115,6 +115,7 @@ def bench_score(settings: WindowSettings, keepers: list[float], outfield: list[f
     weights = list(settings.bench_order) + [last] * max(0, len(ordered) - len(settings.bench_order))
     return settings.bench_gk * sum(keepers) + sum(w * x for w, x in zip(weights, ordered))
 
+
 # A signing who sits on the bench is money doing nothing. Each window
 # gameweek a charged signing sits costs this much of the multi-week
 # objective (aigaffer.solver.multiweek) — none in a bench-boost week, where
