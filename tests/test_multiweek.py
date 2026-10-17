@@ -3042,6 +3042,51 @@ def test_the_week_after_a_recorded_wildcard_gains_no_free_transfer():
     assert after.objective == pytest.approx(146.124)
 
 
+# A recorded free hit is the same in the carry: the game gives no free
+# transfer the week after it, as after one the plan plays itself. The board
+# above, week 1 held (a recorded free hit's standing squad moves nobody, and
+# generate_plans pins it to none): unlocked the bank carries 1 → 2 and both
+# arrivals are free, 150.124; after the recorded free hit it carries 1 → 1,
+# so the second arrival costs a hit: 150.124 - 4 = 146.124.
+
+
+def test_the_week_after_a_recorded_free_hit_gains_no_free_transfer():
+    players, projections = blooming([5, 6], 2)
+
+    after, after_path = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1,
+        events=[5, 6], decay=DECAY, forced_first_transfers=0,
+        lock=Week1Lock(hold=True),
+    )
+
+    assert after_path.moves[0].transfers_in == [16, 17]
+    assert after_path.moves[0].hits == 1
+    assert after.objective == pytest.approx(146.124)
+
+
+# And in the replay the credit is read off: the spine under WINDOW, nothing
+# worth buying, week 1 held. Unlocked the bank rolls 1 → 2 → 3, credited
+# (2.0 + 1.6) · 0.85² = 2.601 (test_rolling_banks_the_free_transfers_and_
+# credits_them). After a recorded free hit GW10 earns no +1: 1 in GW11,
+# nothing moved, 2 entering GW12, credited 2.0 · 0.7225 = 1.445. The two
+# weeks are the spine's 114.774, so the objective is 116.219.
+
+
+def test_a_recorded_free_hit_keeps_no_extra_free_transfer_past_the_window():
+    players, projections = spine([10, 11], spare=5.6)
+
+    plan, path = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[10, 11],
+        decay=DECAY, settings=WINDOW, forced_first_transfers=0,
+        lock=Week1Lock(hold=True),
+    )
+
+    assert path.moves == []
+    assert path.ft_kept == 2
+    assert path.ft_credit == pytest.approx(2.0 * DECAY ** 2, abs=1e-6)
+    assert plan.objective == pytest.approx(116.219, abs=1e-6)
+
+
 def test_a_lock_without_free_is_byte_identical_to_none():
     players, projections = six_arrivals([5, 6], opening=20.0)
 
