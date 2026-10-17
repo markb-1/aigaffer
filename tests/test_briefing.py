@@ -388,13 +388,18 @@ def test_a_deadline_in_another_timezone_is_converted():
 
 
 def test_the_money_line_carries_the_bank_the_free_transfers_and_the_value():
-    assert "Bank: £2.8m | Free transfers: 1 | Squad value: £99.5m" in briefing()
+    assert "Bank: £2.8m | Free transfers: 1 (2 next week if this one rolls) | Squad value: £99.5m" in briefing()
 
 
 def test_the_free_transfers_are_the_ones_the_caller_passes():
     # The count is an argument, not read off the fetch: a re-brief after the
     # manager has spent a move must be able to say so.
-    assert "Free transfers: 3" in briefing(free_transfers=3)
+    assert "Free transfers: 3 (4 next week if this one rolls)" in briefing(
+        free_transfers=3
+    )
+    assert "Free transfers: 5 (the most; a roll adds none)" in briefing(
+        free_transfers=5
+    )
 
 
 def test_every_squad_player_is_listed_once_with_the_id_the_tools_take():

@@ -42,6 +42,7 @@ from typing import TYPE_CHECKING
 
 from aigaffer.chips import CHIP_ORDER, held_by_rules, held_for
 from aigaffer.config import EARLY_SEASON_GWS
+from aigaffer.data.free_transfers import MAX_FREE_TRANSFERS, after_roll
 from aigaffer.data.models import Event, Player
 from aigaffer.model.xp import PlayerProjection
 from aigaffer.report.render import (
@@ -491,7 +492,15 @@ def _situation(
             f" not a transfer decision. Drafted value: {value}"
         )
     else:
-        moves = "unknown" if free_transfers is None else free_transfers
+        if free_transfers is None:
+            moves = "unknown"
+        elif free_transfers >= MAX_FREE_TRANSFERS:
+            moves = f"{free_transfers} (the most; a roll adds none)"
+        else:
+            moves = (
+                f"{free_transfers} ({after_roll(free_transfers)}"
+                " next week if this one rolls)"
+            )
         money = (
             f"Bank: {price(inputs.squad.bank)}"
             f" | Free transfers: {moves}"

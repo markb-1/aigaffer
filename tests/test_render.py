@@ -541,12 +541,21 @@ def test_a_buy_never_grows_a_sells_tag():
 def test_a_week_that_rolls_says_so_and_banks_its_free_transfer():
     rolled = section(report(choice=ROLL), "Do this")
 
-    assert "No transfers — roll (bank 1 free transfer)." in rolled
+    assert "No transfers — roll (1 free transfer now, 2 next week)." in rolled
     assert not any(line.startswith("SELL") for line in rolled)
 
 
 def test_a_pair_of_banked_transfers_is_pluralized():
-    assert "roll (bank 2 free transfers)." in report(choice=ROLL, free_transfers=2)
+    assert "roll (2 free transfers now, 3 next week)." in report(
+        choice=ROLL, free_transfers=2
+    )
+
+
+def test_a_roll_at_the_cap_says_rolling_adds_none():
+    assert (
+        "roll (5 free transfers; rolling adds none — the most you can hold)."
+        in report(choice=ROLL, free_transfers=5)
+    )
 
 
 def test_a_chip_the_gaffer_plays_is_a_line_to_act_on():
