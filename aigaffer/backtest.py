@@ -47,7 +47,7 @@ from math import sqrt
 from aigaffer.data.fpl_api import FplClient
 from aigaffer.data.models import Bootstrap, Fixture, GwHistory
 from aigaffer.model.minutes import expected_minutes
-from aigaffer.model.strength import build_team_strengths
+from aigaffer.model.strength import TeamStrengths, build_team_strengths
 from aigaffer.model.xp import project_all
 from aigaffer.orchestrator import history_pool
 
@@ -93,25 +93,7 @@ def backtest_gw(
         pid: expected_minutes(_before(history, gw), players[pid])
         for pid, history in histories.items()
     }
-    # The strength fit lives under the same no-peeking rule as the minutes
-    # model: only fixtures from rounds before the one being scored, dated
-    # at that gameweek's own deadline so the decay reads the calendar as
-    # it stood. The fit failing, or a codeless bootstrap, is the editorial
-    # columns — the same net the live run stands on.
-    event = next((e for e in bootstrap.events if e.id == gw), None)
-    # A gameweek the bootstrap has never heard of has no deadline to date
-    # the decay at; the fit stands aside rather than smuggle in today's
-    # calendar and make the same backtest score two things on two days.
-    as_of = event.deadline_time.date() if event is not None else None
-    strengths = (
-        build_team_strengths(
-            bootstrap,
-            [f for f in fixtures if f.event is not None and f.event < gw],
-            as_of,
-        )
-        if as_of is not None
-        else None
-    )
+    strengths = strengths_before(bootstrap, fixtures, gw)
     projections = project_all(
         bootstrap, fixtures, xmins, gw, horizon=1, strengths=strengths
     )
@@ -131,6 +113,31 @@ def backtest_gw(
         "spearman": round(rho, PLACES),
         "top20_hit_rate": round(_hit_rate(outcomes), PLACES),
     }
+
+
+def strengths_before(
+    bootstrap: Bootstrap, fixtures: list[Fixture], gw: int
+) -> TeamStrengths | None:
+    """The team strengths as they could have been fitted at ``gw``'s deadline.
+
+    The strength fit lives under the same no-peeking rule as the minutes
+    model: only fixtures from rounds before ``gw``, dated at that gameweek's
+    own deadline so the decay reads the calendar as it stood. The fit
+    failing, or a codeless bootstrap, is the editorial columns — the same net
+    the live run stands on. Public because the replay
+    (:mod:`aigaffer.replay`) rebuilds every past deadline's board the same way.
+    """
+    event = next((e for e in bootstrap.events if e.id == gw), None)
+    # A gameweek the bootstrap has never heard of has no deadline to date
+    # the decay at; the fit stands aside rather than smuggle in today's
+    # calendar and make the same backtest score two things on two days.
+    if event is None:
+        return None
+    return build_team_strengths(
+        bootstrap,
+        [f for f in fixtures if f.event is not None and f.event < gw],
+        event.deadline_time.date(),
+    )
 
 
 def _before(history: list[GwHistory], gw: int) -> list[GwHistory]:
