@@ -44,7 +44,16 @@ import pytest
 
 from aigaffer.data.models import Player
 from aigaffer.model.xp import PlayerProjection
-from aigaffer.solver.optimizer import MAX_HITS, Week1Lock, candidate_pool, optimize
+from aigaffer.solver.optimizer import (
+    BENCH_BUY_CHARGE,
+    ENABLER_PRICE,
+    MAX_HITS,
+    Plan,
+    Week1Lock,
+    candidate_pool,
+    charged_buys,
+    optimize,
+)
 
 GK, DEF, MID, FWD = 1, 2, 3, 4
 
@@ -525,3 +534,49 @@ def test_a_recorded_wildcard_lifts_the_cap_and_the_hits_in_the_single_week_solve
     assert sorted(free.transfers_in) == [16, 17, 18, 19, 20, 21]
     assert free.hits == 0
     assert free.objective > plain.objective
+
+
+def _priced(pid: int, position: int, cost: int) -> Player:
+    return Player(
+        id=pid, web_name=f"P{pid}", team=pid, element_type=position,
+        now_cost=cost, status="a", minutes=900, starts=10, total_points=0,
+        bonus=0, saves=0,
+    )
+
+
+def test_a_signing_above_his_enabler_price_is_charged_and_one_at_it_is_not():
+    # GK and DEF enablers are £4.5m, MID and FWD £5.0m: at the price is free
+    # bench filler, a tenth above it is money on the bench.
+    players = {
+        1: _priced(1, 1, 45), 2: _priced(2, 1, 46),
+        3: _priced(3, 2, 45), 4: _priced(4, 2, 46),
+        5: _priced(5, 3, 50), 6: _priced(6, 3, 51),
+        7: _priced(7, 4, 50), 8: _priced(8, 4, 51),
+    }
+
+    assert charged_buys(players, players, current=[]) == {2, 4, 6, 8}
+
+
+def test_a_player_already_owned_is_never_charged():
+    players = {1: _priced(1, 1, 61), 2: _priced(2, 3, 90)}
+
+    assert charged_buys(players, players, current=[1, 2]) == set()
+
+
+def test_enabler_prices_are_fixed_not_read_off_the_board():
+    # A £3.9m defender on the board moves nothing: £4.5m is still an enabler.
+    players = {1: _priced(1, 2, 39), 2: _priced(2, 2, 45), 3: _priced(3, 2, 46)}
+
+    assert charged_buys(players, players, current=[]) == {3}
+
+
+def test_the_charge_constants_are_the_specs():
+    assert BENCH_BUY_CHARGE == 0.5
+    assert ENABLER_PRICE == {1: 45, 2: 45, 3: 50, 4: 50}
+
+
+def test_a_plan_carries_no_bench_charge_unless_told():
+    plan = Plan(squad=[], xi=[], transfers_in=[], transfers_out=[], hits=0,
+                xp_total=0.0, objective=0.0)
+
+    assert plan.bench_charge == 0.0

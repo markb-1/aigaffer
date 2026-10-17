@@ -36,7 +36,7 @@ drafted from nothing — pass an empty ``current_squad`` and
 """
 
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -66,6 +66,18 @@ MAX_TRANSFERS = 3
 # earn back. Two hits is a considered gamble; three is a manager tilting.
 MAX_HITS = 2
 
+# A signing who sits on the bench is money doing nothing. Each window
+# gameweek a charged signing sits costs this much of the multi-week
+# objective (aigaffer.solver.multiweek) — none in a bench-boost week, where
+# all fifteen play, and none in a free-hit week, where the standing squad
+# does not. This solver, which scores a whole horizon in one week, does not
+# charge at all.
+BENCH_BUY_CHARGE = 0.5
+# The enabler prices, in tenths: a signing at or under his position's is the
+# cheap bench filler a squad is built around and is never charged. Constants,
+# not read off the board — one £3.9m dead weight would move a whole position.
+ENABLER_PRICE = {GOALKEEPER: 45, DEFENDER: 45, MIDFIELDER: 50, FORWARD: 50}
+
 CANDIDATES_PER_POSITION = 40
 AVAILABLE = "a"
 
@@ -85,6 +97,11 @@ class Plan:
     :func:`~aigaffer.solver.multiweek.optimize_path`: the gameweeks after this
     one, advisory and re-planned every run. A plan from the single-week solver
     has none, which is how a caller tells the two engines apart.
+
+    ``bench_charge`` is what the multi-week objective paid for charged
+    signings on the bench (see :data:`BENCH_BUY_CHARGE`), decayed. It is
+    already out of ``objective`` and is added back into ``xp_total``, so xP
+    stays pure projection; a single-week plan never pays it.
     """
 
     squad: list[int]
@@ -95,6 +112,7 @@ class Plan:
     xp_total: float
     objective: float
     path: "PlannedPath | None" = None
+    bench_charge: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -289,3 +307,18 @@ def _grouped(pool: list[int], key: Callable[[int], int]) -> dict[int, list[int]]
 def _chosen(variables: dict[int, pulp.LpVariable]) -> list[int]:
     """The player ids whose binary came back set."""
     return sorted(pid for pid, var in variables.items() if (var.value() or 0) > 0.5)
+
+
+def charged_buys(
+    players: dict[int, Player], pool: Iterable[int], current: Iterable[int]
+) -> set[int]:
+    """The players in ``pool`` a bench charges for: not in ``current`` — the
+    squad held when the window opens, a recorded signing included — and
+    priced above their position's :data:`ENABLER_PRICE`."""
+    held = set(current)
+    return {
+        p
+        for p in pool
+        if p not in held
+        and players[p].now_cost > ENABLER_PRICE[players[p].element_type]
+    }
