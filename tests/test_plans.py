@@ -12,11 +12,13 @@ asked the same questions instead, and the plans that come back say which
 engine ran by whether they carry a path.
 """
 
+import re
+
 from aigaffer.chips import BENCH_BOOST, FREE_HIT, WILDCARD, HeldChip, whole_season
 from aigaffer.solver import plans as plans_module
 from aigaffer.solver.multiweek import PlannedMove, PlannedPath
 from aigaffer.solver.optimizer import Plan, Week1Lock
-from aigaffer.solver.plans import SWEEP_TIME_LIMIT, generate_plans, recommend
+from aigaffer.solver.plans import SWEEP_TIME_LIMIT, generate_plans, recommend, transfer_counts
 from tests.test_multiweek import DECAY, SQUAD as SPINE_SQUAD, six_arrivals, spine
 
 SQUAD = list(range(1, 16))
@@ -691,3 +693,32 @@ def test_a_recorded_wildcard_adds_one_unforced_window_solve_without_a_held_wildc
     )
 
     assert [call["forced_first_transfers"] for call in calls] == [0, 1, 2, 3, None]
+
+
+def test_every_window_solve_logs_its_time_and_whether_it_was_proven(capsys):
+    # The real solver on the spine, three weeks, one free transfer and no
+    # wildcard held: the sweep pins the opening to 0, 1, 2 and 3 moves
+    # (transfer_counts(1) is range(4)) and takes no unpinned solve, so four
+    # window solves and so four lines.
+    players, projections = spine([5, 6, 7])
+
+    generate_plans(
+        players, projections, SPINE_SQUAD, 0, 1,
+        projections_events=[5, 6, 7], decay=DECAY,
+    )
+
+    captured = capsys.readouterr()
+    # stderr, never stdout: a dry run prints the report there.
+    assert "solver: window" not in captured.out
+    lines = [
+        line for line in captured.err.splitlines()
+        if line.startswith("solver: window ")
+    ]
+    assert len(lines) == len(transfer_counts(1))
+    assert all(
+        re.fullmatch(r"solver: window (free|\d+): \d+\.\ds, (proven|unproven|no plan)", line)
+        for line in lines
+    )
+    assert [line.split(":")[1].strip() for line in lines] == [
+        f"window {n}" for n in transfer_counts(1)
+    ]

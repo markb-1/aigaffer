@@ -27,7 +27,9 @@ its path and a plan off the single-week solver does not, and a caller wanting
 to label a report reads that.
 """
 
+import sys
 from collections.abc import Iterable
+from time import monotonic
 
 from aigaffer.chips import HeldChip, playable_in
 from aigaffer.data.free_transfers import MAX_FREE_TRANSFERS
@@ -42,6 +44,24 @@ from aigaffer.solver.optimizer import MAX_TRANSFERS, Plan, Week1Lock, optimize
 # a squad in hand still comes back with it — only one that overruns with
 # nothing at all is dropped.
 SWEEP_TIME_LIMIT = 20
+
+
+def _logged_path(forced: int | None, **kwargs) -> "tuple[Plan, PlannedPath] | None":
+    """One window solve, with a line in the log: the opening count it was
+    pinned to (or "free"), the seconds it took, and whether CBC proved it — the
+    one record of whether the sweep's time limit is enough on the machine it
+    runs on. It goes to stderr: a dry run prints the report on stdout, and a
+    log line must never mix into that."""
+    started = monotonic()
+    answer = optimize_path(forced_first_transfers=forced, **kwargs)
+    took = monotonic() - started
+    label = "free" if forced is None else str(forced)
+    if answer is None:
+        state = "no plan"
+    else:
+        state = "proven" if answer[1].proven else "unproven"
+    print(f"solver: window {label}: {took:.1f}s, {state}", file=sys.stderr)
+    return answer
 
 
 def transfer_counts(free_transfers: int) -> tuple[int, ...]:
@@ -149,15 +169,15 @@ def generate_plans(
                 (0,) if hold
                 else transfer_counts(min(free_transfers, MAX_FREE_TRANSFERS))
             ):
-                answer = optimize_path(
-                    players,
-                    xp,
-                    current_squad,
-                    bank,
-                    free_transfers,
-                    projections_events,
-                    decay,
-                    forced_first_transfers=count,
+                answer = _logged_path(
+                    count,
+                    players=players,
+                    projections=xp,
+                    current_squad=current_squad,
+                    bank=bank,
+                    free_transfers=free_transfers,
+                    events=projections_events,
+                    decay=decay,
                     time_limit=SWEEP_TIME_LIMIT,
                     held_chips=held_chips,
                     freehit_prices=freehit_prices,
@@ -190,15 +210,15 @@ def generate_plans(
                     for chip in playable_in(held_chips, projections_events[:1])
                 )
             ):
-                answer = optimize_path(
-                    players,
-                    xp,
-                    current_squad,
-                    bank,
-                    free_transfers,
-                    projections_events,
-                    decay,
-                    forced_first_transfers=None,
+                answer = _logged_path(
+                    None,
+                    players=players,
+                    projections=xp,
+                    current_squad=current_squad,
+                    bank=bank,
+                    free_transfers=free_transfers,
+                    events=projections_events,
+                    decay=decay,
                     time_limit=SWEEP_TIME_LIMIT,
                     held_chips=held_chips,
                     freehit_prices=freehit_prices,
