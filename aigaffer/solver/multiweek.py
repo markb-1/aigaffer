@@ -503,7 +503,8 @@ def optimize_path(
     (:class:`~aigaffer.solver.optimizer.Week1Lock`): in the first gameweek a
     kept signing has its sale pinned to zero and a recorded sale its purchase,
     and a recorded wildcard (``lock.free``) makes the week free and uncapped,
-    with no new free transfer after it.
+    with no new free transfer after it — nor any after a recorded free hit
+    (``lock.hold``), whose week moves nobody (the caller pins it to none).
     Later gameweeks are untouched, and so are the free-hit prices, which are
     what-ifs.
 
@@ -716,8 +717,11 @@ def optimize_path(
     # integer without being told to.
     cash = {w: problem.add_variable(f"bank{w}", lowBound=0) for w in weeks}
     moves = {w: pulp.lpSum(buy[w][p] for p in pool) for w in weeks}
-    # A wildcard the owner has already recorded makes week 1 free and uncapped.
+    # A wildcard the owner has already recorded makes week 1 free and uncapped;
+    # a free hit he has recorded makes it a hold week. Either way the game
+    # gives no free transfer for the week after it.
     week1_free = lock is not None and lock.free
+    week1_hold = lock is not None and lock.hold
 
     # Chips: one binary per held chip per window week inside its window — two
     # of a kind can be held (each half's), so everything here is keyed by the
@@ -824,7 +828,11 @@ def optimize_path(
             carry = carry + moves[1] - 1
         elif w in z_wc:
             carry = carry + z_wc[w] - on(WILDCARD, w)
-        if w in y_fh:
+        if w == 1 and week1_hold:
+            # The recorded free hit's lost +1, as ``on(FREE_HIT, 1) = 1``
+            # would take it.
+            carry = carry - 1
+        elif w in y_fh:
             carry = carry - on(FREE_HIT, w)
         return carry
 
@@ -1224,11 +1232,11 @@ def optimize_path(
         if wc_on:
             wildcard_weeks.add(w)
 
-        # The game's carry: a wildcard or free hit (or a wildcard the owner
-        # recorded for week 1) spends none of the bank and earns no +1, so the
+        # The game's carry: a wildcard or free hit (or either recorded by the
+        # owner for week 1) spends none of the bank and earns no +1, so the
         # bank stands; otherwise the moves come off what was free, never below
         # nothing, the week's +1 goes on, and five is the most kept.
-        if chip in (WILDCARD, FREE_HIT) or (w == 1 and week1_free):
+        if chip in (WILDCARD, FREE_HIT) or (w == 1 and (week1_free or week1_hold)):
             nxt = ft_held
         else:
             nxt = min(MAX_FREE_TRANSFERS, max(ft_held - len(incoming), 0) + 1)
