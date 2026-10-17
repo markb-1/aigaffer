@@ -35,7 +35,11 @@ SYSTEM_PROMPT = (
     " future decision could use — captaincy, minutes risk, hits, bench order,"
     " chip timing — not a restatement of the score. Bad luck is not a"
     " mistake: say which it was. One plain sentence or two per point, no"
-    f" headings or bullets of your own. Answer by calling {ANSWER}."
+    " headings or bullets of your own."
+    " The owner sets the team that plays: where it differed from your verdict,"
+    " that was the owner's call — say what the difference cost or gained, and"
+    " never that you ignored or overrode your own verdict."
+    f" Answer by calling {ANSWER}."
 )
 
 TOOLS = [

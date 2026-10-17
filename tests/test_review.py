@@ -227,6 +227,15 @@ def test_the_facts_text_says_what_the_writer_needs():
     assert "Verdict followed: yes" in text
 
 
+def test_a_verdict_not_followed_says_the_differences_were_the_owners_choices():
+    # The verdict's captain was id 7 and the owner fielded someone else: the
+    # facts must say whose choice that was, or the writer takes it for its own.
+    text = review_facts(facts(verdict=verdict(squad_before=[1, 2, 3, 4, 5, 6, 7, 8], captain=7)))
+    assert "Verdict followed: no" in text
+    assert "the owner's choices, not the gaffer's" in text
+    assert "the owner's choices" not in review_facts(facts())
+
+
 def test_the_facts_round_trip_as_json():
     import json
 
