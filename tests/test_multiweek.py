@@ -2736,11 +2736,11 @@ def test_a_riser_held_two_weeks_still_sells_at_the_ledger_price_in_week_three():
 
 
 # --------------------------------------------------------------------------
-# One-week squads at any bench weight, for the chip calendar
+# One-week squads under LEGACY or BOOSTED, for the chip calendar
 # --------------------------------------------------------------------------
 
 
-def test_the_default_bench_weight_prices_the_free_hit_exactly_as_before():
+def test_the_default_settings_price_the_free_hit_exactly_as_before():
     # Threading the settings through the sub-solve must not move the free
     # hit's own price. GW5 is the lopsided week of the hoist test above:
     # fifteen heroes at 6.0 are a one-week squad worth an XI of 11 x 6.0 = 66.0,
@@ -2795,19 +2795,19 @@ def bench_trade() -> tuple[dict[int, Player], dict[int, PlayerProjection]]:
     return _build(rows)
 
 
-def test_bench_weight_one_buys_a_bench_worth_playing():
+def test_boosted_buys_a_bench_worth_playing():
     # A budget of 790. The spine is worth 55.0 started and 6.0 captained, with a bench of
     # 0.5 + 0.5 + 0.5 + 3.9 = 5.4.
     #
-    # At the free hit's tenth the star wins. Selling 8 (5.6) for 16 (7.0) adds
-    # 1.4 to the XI and the armband moves from 6.0 to 7.0, +1.0: 2.4 in all.
-    # The defenders add only 0.1 x 2 x (3.0 - 0.5) = 0.5. Value
+    # Under LEGACY, the free hit's bench at a tenth, the star wins. Selling 8
+    # (5.6) for 16 (7.0) adds 1.4 to the XI and the armband moves from 6.0 to
+    # 7.0, +1.0: 2.4 in all. The defenders add only 0.1 x 2 x (3.0 - 0.5) = 0.5. Value
     # 56.4 + 7.0 + 0.1 x 5.4 = 63.94, and the bench is still 2, 6, 7 and 15.
     #
-    # At a full-weight bench the defenders win. They add 2 x 2.5 = 5.0 to a
-    # bench that now counts in full, against the star's 2.4: 55.0 + 6.0 +
+    # Under BOOSTED the defenders win. They add 2 x 2.5 = 5.0 to a bench that
+    # now counts in full, against the star's 2.4: 55.0 + 6.0 +
     # (0.5 + 3.9 + 3.0 + 3.0) = 71.4. Which four sit on the bench is no longer
-    # the solver's to care about — at full weight a started point and a
+    # the solver's to care about — under BOOSTED a started point and a
     # benched one score alike — so what is pinned is the squad, with 17 and 18
     # in and the star out, and the value.
     players, projections = bench_trade()

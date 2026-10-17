@@ -180,7 +180,10 @@ def legacy_window_settings(request, monkeypatch):
     """Run the suite under LEGACY: every hand-computed number in it was worked
     out on the flat-bench model, and LEGACY is that model to the byte. A test
     that is about the live settings passes them explicitly or carries
-    ``@pytest.mark.live_settings``, which puts the source's own back for it."""
+    ``@pytest.mark.live_settings``, which puts the source's own back for it.
+    The marker reaches this per-test patch alone, so a ``live_settings`` test
+    that uses a module- or session-scoped fixture still gets that fixture
+    built under LEGACY, and should build what it needs itself."""
     from aigaffer.solver import optimizer
 
     if request.node.get_closest_marker("live_settings"):

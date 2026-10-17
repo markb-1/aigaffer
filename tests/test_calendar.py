@@ -54,7 +54,7 @@ Everyone else plays 90 minutes and carries no attacking EV.
 *Triple captain*: 20 every week, at 0.85 × his points — GW8 6.8, GW9 8.5,
 GW10 6.8.
 
-*Bench boost*: at bench weight 1 the best fifteen sells 6 and 7 (0.5) for 16
+*Bench boost*: under BOOSTED the best fifteen sells 6 and 7 (0.5) for 16
 and 17 (3.0) in every week, and 8 (5.6) for 18 in GW10 alone. Lined up on the
 window's basis that fifteen benches 2 (0.5, the spare keeper), 16 and 17 (3.0)
 and 15 (3.9) — the four worst legal substitutes, 10.4 — in every week, GW10
@@ -385,10 +385,10 @@ def test_a_triple_captain_with_no_80_minute_man_is_worth_nothing(board_beyond_wi
 
 
 def test_the_bench_boost_values_the_four_worst_of_the_fifteen(board_beyond_window, monkeypatch):
-    # The weight-1 fifteen, lined up on the window's basis: its bench is its
+    # The BOOSTED fifteen, lined up on the window's basis: its bench is its
     # four lowest-scoring legal substitutes, never four of its best. The
     # solve's own eleven is replaced here by one that benches the four best
-    # midfielders — at weight 1 any eleven scores the same, so the calendar
+    # midfielders — under BOOSTED any eleven scores the same, so the calendar
     # must not read it. The bench is still 2, 16, 17 and 15: 10.4, × 0.7 × 0.9.
     real = calendar.best_one_week_squads
 

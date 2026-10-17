@@ -48,7 +48,7 @@ from aigaffer.orchestrator import PreparedWeek, _held, _week1_lock
 from aigaffer.recording import MODE_NAMES, VERDICT_MODES
 from aigaffer.solver.multiweek import PlannedPath, _free_hit_prices, optimize_path
 from aigaffer.solver.lineup import Lineup, attacking_evs, pick_lineup
-from aigaffer.solver.optimizer import HIT_POINTS, GOALKEEPER, Plan, bench_score, resolve
+from aigaffer.solver.optimizer import GOALKEEPER, HIT_POINTS, Plan, bench_score, resolve
 from aigaffer.store import Store
 
 # How far the net must be from nothing before it is called, per chip: the FPL

@@ -684,6 +684,15 @@ def _team_sheet(lineup: Lineup, board: _Board, event: int, pick: int | None) -> 
     return "\n".join(lines)
 
 
+def _carries_ft(plan: Plan) -> bool:
+    """Whether ``plan``'s net carries a free-transfer credit or a transfer
+    cost — the two things the :data:`FT_CREDIT` caption explains. A plan off
+    the one-week model has no path and so neither."""
+    return plan.path is not None and (
+        plan.path.ft_credit > 0 or plan.path.transfer_cost > 0
+    )
+
+
 def _candidates(plans: list[tuple[int, Plan]], board: _Board, pick: int | None) -> str:
     """The shortlist, numbered, with the boundary the manager may not cross.
 
@@ -705,7 +714,7 @@ def _candidates(plans: list[tuple[int, Plan]], board: _Board, pick: int | None) 
         lines += ["", WINDOW_UNITS, "", PATH_GUARD]
     if any(plan.bench_charge > 0 for _, plan in plans):
         lines += ["", BENCH_BUYS]
-    if any(p.path is not None and (p.path.ft_credit > 0 or p.path.transfer_cost > 0) for _, p in plans):
+    if any(_carries_ft(plan) for _, plan in plans):
         lines += ["", FT_CREDIT.format(penalty=resolve(None).ft_use_penalty)]
     lines += [
         "",
