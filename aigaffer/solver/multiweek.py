@@ -951,7 +951,7 @@ def optimize_path(
         ]
         problem += ft_end <= carry_into(last)
         problem += ft_end == pulp.lpSum(ft_steps)
-        # The credit against holding one (spec R14): the steps fill in order
+        # The credit is measured against holding one FT: the steps fill in order
         # only because the values do not increase, so the first FT's value is
         # in the steps and taken back off here as a constant — the solver's
         # objective and the recompute's are then the same number, and net
@@ -1301,7 +1301,12 @@ def optimize_path(
 
     # ft_kept is the game's rule replayed on the solution's own integers — not
     # read off ``banked``, which is pinned from above only and, with no credit
-    # to push it (LEGACY), sits wherever CBC left it.
+    # to push it (LEGACY), sits wherever CBC left it. Under a credit a proven
+    # optimum pushes ``banked`` and ``ft_end`` to their ceilings, which are the
+    # game's numbers, so the two agree; on a time-limited (unproven) solve the
+    # incumbent may leave ``banked`` below its ceiling, and the replayed credit
+    # can then differ from what the incumbent counted. That is accepted: the
+    # replay is the game's number.
     ft_kept = ft_path[-1]
     ft_credit = 0.0
     if settings.ft_values:
@@ -1379,7 +1384,7 @@ def _projected(
 
 
 def _bench_term(problem, tag, settings, keepers, outfield, points, bench, boost=None):
-    """The bench's value as an affine expression — floor plus bonus (spec R2).
+    """The bench's value as an affine expression — a floor and two bonus slots.
 
     ``bench[p]`` is p's bench indicator (``squad − xi``, less ``z_bb`` in a week
     a bench boost may be played); ``boost`` is that week's boost binary, or
