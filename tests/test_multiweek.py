@@ -52,6 +52,7 @@ free-transfer bank standing at each deadline.
 
 from collections import Counter
 
+import pulp
 import pytest
 
 from aigaffer.chips import HeldChip, whole_season
@@ -3495,3 +3496,55 @@ def test_a_charged_bench_in_a_blank_free_hit_week_stays_feasible():
     assert sorted(plan.transfers_in) == [16, 17]
     assert path.week1_chip == "none"
     assert path.bench_charge == pytest.approx(0.5, abs=1e-6)
+
+
+def _relaxed_bounds(monkeypatch) -> list[float]:
+    """Every window solve's LP-relaxation value, collected as it happens."""
+    bounds: list[float] = []
+    real = pulp.LpProblem.solve
+
+    def solve(self, solver=None, **kwargs):
+        if self.name == "aigaffer_transfer_path":
+            real(self, pulp.PULP_CBC_CMD(msg=0, mip=False))
+            bounds.append(pulp.value(self.objective))
+        return real(self, solver, **kwargs)
+
+    monkeypatch.setattr(pulp.LpProblem, "solve", solve)
+    return bounds
+
+
+def test_a_relaxed_bench_boost_cannot_boost_the_whole_squad(monkeypatch):
+    # Three flat weeks at 6.0 a man, nothing to buy. The integer optimum
+    # boosts one week: 0.9 x 24.0 - 20.0 = 1.6 over the do-nothing, in GW10.
+    # Without the four-man row a relaxation plays 4/15 of the chip in every
+    # week with every man 4/15 benched, and boosts all fifteen each week for
+    # 21.6 - 5.33 a week; with it, the relaxation is the integer optimum.
+    bounds = _relaxed_bounds(monkeypatch)
+    players, projections = flat([10, 11, 12], 6.0)
+
+    plan, path = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1,
+        events=[10, 11, 12], decay=DECAY, held_chips=whole_season(BENCH_BOOST),
+    )
+
+    assert path.week1_chip == BENCH_BOOST
+    assert bounds == [pytest.approx(plan.objective, abs=1e-6)]
+
+
+def test_a_relaxed_triple_captain_cannot_split_the_armband(monkeypatch):
+    # Three flat weeks at 6.0 a man and a triple captain with no bar: the
+    # integer optimum triples one armband once, +6.0, in GW10. A captaincy
+    # split three ways under a third of the chip in every week would triple
+    # a whole armband each week; with the one-armband row it cannot.
+    bounds = _relaxed_bounds(monkeypatch)
+    players, projections = flat([10, 11, 12], 6.0)
+    held = whole_season(TRIPLE_CAPTAIN)
+
+    plan, path = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1,
+        events=[10, 11, 12], decay=DECAY, held_chips=held,
+        bars={held[0].id: {10: 0.0, 11: 0.0, 12: 0.0}},
+    )
+
+    assert path.week1_chip == TRIPLE_CAPTAIN
+    assert bounds == [pytest.approx(plan.objective, abs=1e-6)]

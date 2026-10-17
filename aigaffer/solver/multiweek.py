@@ -727,6 +727,10 @@ def optimize_path(
     # in the weeks its kind may be played in (``chip_weeks``), and so is every
     # auxiliary below: elsewhere the chip's factor is zero and so is the
     # product, with nothing to linearize. A kind not held builds none at all.
+    # Each also carries one aggregate row — four boosted men a boosted week,
+    # one tripled armband a tripled week — which every integer solution
+    # satisfies anyway and which keeps the relaxation from spreading a chip
+    # thinly over every week.
     z_bb = per_week("zbb", chip_weeks[BENCH_BOOST], lowBound=0, upBound=1)
     z_tc = per_week("ztc", chip_weeks[TRIPLE_CAPTAIN], lowBound=0, upBound=1)
     # One auxiliary a gameweek, not one a player: ``z_wc[w]`` is ``moves[w]·wc[w]``,
@@ -924,12 +928,23 @@ def optimize_path(
                 problem += z_bb[w][p] <= diff
                 problem += z_bb[w][p] <= bb
                 problem += z_bb[w][p] >= diff - (1 - bb)
+            # The bench is four men, so a boosted week boosts exactly four:
+            # true of every integer squad, and the row that stops a
+            # relaxation spreading a fraction of the chip over every week and
+            # boosting all fifteen in each — without it the bound stands tens
+            # of points above any plan and CBC cannot close it in a sweep.
+            problem += (
+                pulp.lpSum(z_bb[w][p] for p in pool) == (SQUAD_SIZE - XI_SIZE) * bb
+            )
         if w in z_tc:
             tc = on(TRIPLE_CAPTAIN, w)
             for p in pool:
                 problem += z_tc[w][p] <= captain[w][p]
                 problem += z_tc[w][p] <= tc
                 problem += z_tc[w][p] >= captain[w][p] - (1 - tc)
+            # One captain, so a tripled week triples exactly one armband: the
+            # same kind of row, against a captaincy split across several men.
+            problem += pulp.lpSum(z_tc[w][p] for p in pool) == tc
         if w in z_wc:
             # The two ceilings on the carry's add-back: it cannot exceed the
             # gameweek's moves and it vanishes off a non-wildcarded gameweek. No
