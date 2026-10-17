@@ -113,8 +113,8 @@ def what_changed(prev: dict | None, cur: dict) -> list[str]:
         if before is None or after is None:
             continue
         if before["nw"] != after["nw"]:
-            now = f"news '{after['nw']}'" if after["nw"] else "news cleared"
-            was = f"'{before['nw']}'" if before["nw"] else "none"
+            now = f"news '{_clean(after['nw'])}'" if after["nw"] else "news cleared"
+            was = f"'{_clean(before['nw'])}'" if before["nw"] else "none"
             lines.append(f"{after['n']}: {now} (was {was})")
         elif before["st"] != after["st"]:
             lines.append(f"{after['n']}: status {after['st']} (was {before['st']})")
@@ -188,7 +188,7 @@ def _plan_section(cur: dict) -> list[str]:
     plan = cur["plans"][cur["chosen"]]
     decision = cur["decision"]
     return [
-        decision["rationale"] or _fallback(cur),
+        _clean(decision.get("rationale")) or _fallback(cur),
         "",
         f"Expected points over the window: {plan['xp']:.2f}"
         f" (net of hits and charges {plan['net']:.2f});"
@@ -196,29 +196,47 @@ def _plan_section(cur: dict) -> list[str]:
     ]
 
 
-def _transfers(cur: dict) -> list[str]:
-    plan = cur["plans"][cur["chosen"]]
-    if not plan["in"]:
-        return ["No transfers this week."]
+def _table_head(cur: dict) -> list[str]:
+    """The header and separator of a player table, one column a gameweek."""
     events = cur["events"]
-    out = [
+    return [
         "| | Player | Price | " + " | ".join(f"GW{gw}" for gw in events) + " | Window |",
         "|---|---|---|" + "---|" * len(events) + "---|",
     ]
+
+
+def _transfers(cur: dict) -> list[str]:
+    """Each move gets a table of its own.
+
+    Markdown only reads rows as a table when a header and separator lead them,
+    so a second pair's rows after a paragraph would show as raw pipes.
+    """
+    plan = cur["plans"][cur["chosen"]]
+    if not plan["in"]:
+        return ["No transfers this week."]
     reasons = {
         (item.get("out"), item.get("in")): item.get("reason")
         for item in _reasons(cur).get("transfers") or []
     }
-    for gone, came in _pairs(cur):
-        out.append(_player_row(cur, gone, "Out"))
-        out.append(_player_row(cur, came, "In"))
+    out: list[str] = []
+    pairs = _pairs(cur)
+    for gone, came in pairs:
         gap = cur["players"][came]["t"] - cur["players"][gone]["t"]
-        out.append("")
-        out.append(
+        out += [
+            f"### {_name(cur, gone)} → {_name(cur, came)}",
+            "",
+            *_table_head(cur),
+            _player_row(cur, gone, "Out"),
+            _player_row(cur, came, "In"),
+            "",
             f"{_name(cur, came)} over {_name(cur, gone)}: {gap:+.2f} over the window. "
-            + (reasons.get((gone, came)) or _fallback(cur))
-        )
-        out.append("")
+            + _clean(reasons.get((gone, came)) or _fallback(cur)),
+            "",
+        ]
+    if len(pairs) < max(len(plan["in"]), len(plan["out"])):
+        # A legal plan swaps like for like, so this should never print; if it
+        # does, say so rather than show fewer moves than were made.
+        out += ["Note: a move could not be paired by position and is not shown.", ""]
     return out[:-1]
 
 
@@ -235,11 +253,7 @@ def _squad(cur: dict) -> list[str]:
     else:
         fielded, xi = cur["squad"], cur["xi"]
         out = ["## Your squad", ""]
-    events = cur["events"]
-    out += [
-        "| | Player | Price | " + " | ".join(f"GW{gw}" for gw in events) + " | Window |",
-        "|---|---|---|" + "---|" * len(events) + "---|",
-    ]
+    out += _table_head(cur)
     out += [_player_row(cur, pid, "XI") for pid in xi]
     bench = [p for p in fielded if p not in xi] if free_hit else cur["bench"]
     out += [_player_row(cur, pid, f"Bench {i}") for i, pid in enumerate(bench, 1)]
@@ -262,7 +276,7 @@ def _armbands(cur: dict) -> list[str]:
             continue
         line = f"- **{label}: {_name(cur, pid)}** ({totals.get(pid, _window(cur, pid)):.2f})"
         if key:
-            line += f" — {reasons.get(key) or _fallback(cur)}"
+            line += f" — {_clean(reasons.get(key)) or _fallback(cur)}"
         out.append(line)
     if rivals:
         out.append("- Rivals: " + ", ".join(f"{_name(cur, p)} ({totals[p]:.2f})" for p in rivals))
@@ -274,7 +288,7 @@ def _skipped(cur: dict) -> list[str]:
     if not rows:
         return ["Nothing to report."]
     notes = {
-        item.get("id"): item.get("reason") for item in _reasons(cur).get("skipped") or []
+        item.get("id"): _clean(item.get("reason")) for item in _reasons(cur).get("skipped") or []
     }
     out = ["| Player | Instead of | Gap | Price | Why not | Note |", "|---|---|---|---|---|---|"]
     for item in rows:
@@ -298,7 +312,7 @@ def _options(cur: dict) -> list[str]:
             f"| {pid} | {_names(cur, plan['in'])} | {_names(cur, plan['out'])}"
             f" | {plan['hits']} | {plan['xp']:.2f} | {plan['net']:.2f} | {', '.join(marks)} |"
         )
-    return [*out, "", _reasons(cur).get("plan") or _fallback(cur)]
+    return [*out, "", _clean(_reasons(cur).get("plan")) or _fallback(cur)]
 
 
 def _chips(cur: dict) -> list[str]:
@@ -306,7 +320,10 @@ def _chips(cur: dict) -> list[str]:
     chip = _chip(cur)
     out = [f"Chip played: {chip}."]
     if chip != "none":
-        out.append(_reasons(cur).get("chips") or decision.get("chip_justification") or _fallback(cur))
+        out.append(
+            _clean(_reasons(cur).get("chips") or decision.get("chip_justification"))
+            or _fallback(cur)
+        )
     out += ["", "Expected value by chip:"]
     out += [f"- {name}: {value:.2f}" for name, value in cur["chip_evs"].items()]
     if cur.get("calendar"):
@@ -348,6 +365,13 @@ def _name(snapshot: dict, pid: int | None) -> str:
 
 def _names(snapshot: dict, pids: list[int]) -> str:
     return ", ".join(_name(snapshot, p) for p in pids) or "none"
+
+
+def _clean(text: str | None) -> str:
+    """Free text made safe for a table cell or a one-line bullet: newlines
+    become spaces and a pipe is escaped, since the gaffer's words and the API's
+    news are not ours to keep from breaking the table around them."""
+    return (text or "").replace("\r", " ").replace("\n", " ").replace("|", "\\|")
 
 
 def _reasons(cur: dict) -> dict:

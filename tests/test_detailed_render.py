@@ -89,6 +89,7 @@ def test_the_sections_appear_in_order():
         "## What changed",
         "## The plan",
         "## Transfers",
+        "### Justin → Cucurella",
         "## Your squad",
         "## Captain and vice",
         "## Transfers skipped",
@@ -206,6 +207,31 @@ def test_a_free_hit_week_titles_the_squad_as_the_free_hit_team():
     assert "Standing squad: Saka, Salah, Haaland, Justin, Raya" in text
 
 
+def assert_tables_well_formed(text):
+    """Every table in the document: a header and separator lead its rows, and
+    every row has the header's column count (escaped pipes not counted)."""
+    lines = text.splitlines()
+    index = 0
+    tables = 0
+    while index < len(lines):
+        if lines[index].startswith("|"):
+            assert index + 1 < len(lines) and set(lines[index + 1]) <= set("|-"), (
+                f"table rows without a header and separator at line {index}: {lines[index]}"
+            )
+            width = _columns(lines[index])
+            while index < len(lines) and lines[index].startswith("|"):
+                assert _columns(lines[index]) == width, lines[index]
+                index += 1
+            tables += 1
+        else:
+            index += 1
+    return tables
+
+
+def _columns(line):
+    return len(line.replace("\\|", "").strip("|").split("|"))
+
+
 def _reasoned():
     return snap(reasons={
         "transfers": [{"out": 4, "in": 7, "reason": "Cucurella has two games to Justin's one."}],
@@ -284,3 +310,53 @@ def test_transfers_pair_by_position_not_by_sorted_id():
     lines = what_changed(snap("early", "T1"), cur)
 
     assert "Transfers: Emm → Emmtwo, Dee → Deetwo (was: Justin → Cucurella)" in lines
+
+
+def test_every_transfer_has_its_own_table():
+    players = {
+        **PLAYERS,
+        8: row("Eight", "MID", 60, [["WOL", "a"]], [], 1.0, 0.0),
+        9: row("Nine", "MID", 60, [["LEE", "h"]], [["LEE", "h"]], 3.0, 3.0),
+    }
+    cur = snap(players=players, plans={0: plan(0, [7, 9], [4, 8])})
+
+    text = render_detailed([cur], "d")
+    section = _section(text, "Transfers")
+
+    assert section.count("### ") == 2
+    assert "### Justin → Cucurella" in section and "### Eight → Nine" in section
+    for part in section.split("### ")[1:]:
+        lines = part.splitlines()
+        assert lines[2].startswith("| | Player") and lines[3].startswith("|---")
+        assert lines[4].startswith("| Out") and lines[5].startswith("| In")
+    assert assert_tables_well_formed(text) == 5  # two transfers, squad, skipped, options
+
+
+def test_squad_and_skipped_tables_are_well_formed():
+    text = render_detailed([_reasoned()], "d")
+
+    assert assert_tables_well_formed(text) >= 3
+
+
+def test_free_text_cannot_break_a_table_or_a_line():
+    nasty = _reasoned()
+    nasty["reasons"]["skipped"] = [{"id": 3, "reason": "too dear | by a lot\nreally"}]
+    nasty["reasons"]["transfers"][0]["reason"] = "a | b\nc"
+
+    text = render_detailed([nasty], "d")
+
+    assert "too dear \\| by a lot really" in text
+    assert "a \\| b c" in text
+    assert assert_tables_well_formed(text) >= 3
+    early = snap("early", "T1")
+    news = snap("scout", "T2", players={**PLAYERS, 1: {**PLAYERS[1], "nw": "knock\nout"}})
+    assert "Saka: news 'knock out' (was none)" in what_changed(early, news)
+
+
+def test_an_unpairable_move_is_noted_not_dropped_silently():
+    # Two incoming defenders but only one outgoing man to pair with.
+    cur = snap(plans={0: plan(0, [7, 4], [6])})
+
+    section = _section(render_detailed([cur], "d"), "Transfers")
+
+    assert "Note: a move could not be paired by position and is not shown." in section
