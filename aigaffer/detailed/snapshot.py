@@ -32,9 +32,9 @@ from collections import defaultdict
 from pathlib import Path
 
 from aigaffer.data.models import Bootstrap, Event, Fixture
+from aigaffer.detailed.skipped import skipped_transfers
 from aigaffer.model.xp import PlayerProjection, projected_events
 from aigaffer.report.render import POSITIONS
-from aigaffer.detailed.skipped import skipped_transfers
 from aigaffer.solver.optimizer import Plan, resolve
 
 # The order a gameweek's runs happen in. "The latest" snapshot is the last of
