@@ -1383,7 +1383,16 @@ def _projected(
     return projection.per_gw.get(event, 0.0) if projection else 0.0
 
 
-def _bench_term(problem, tag, settings, keepers, outfield, points, bench, boost=None):
+def _bench_term(
+    problem: pulp.LpProblem,
+    tag: str,
+    settings: WindowSettings,
+    keepers: list[int],
+    outfield: list[int],
+    points: dict[int, float],
+    bench: dict[int, pulp.LpAffineExpression],
+    boost: pulp.LpAffineExpression | None = None,
+) -> pulp.LpAffineExpression:
     """The bench's value as an affine expression — a floor and two bonus slots.
 
     ``bench[p]`` is p's bench indicator (``squad − xi``, less ``z_bb`` in a week
@@ -1603,7 +1612,7 @@ def squad_one_week_score(
 ) -> float:
     """:func:`squad_one_week`'s score alone — the baseline a free hit is
     measured against."""
-    return squad_one_week(players, projections, squad, event, resolve(settings))[0]
+    return squad_one_week(players, projections, squad, event, settings)[0]
 
 
 def _best_one_week_squad(

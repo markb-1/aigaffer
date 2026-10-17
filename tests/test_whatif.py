@@ -361,9 +361,13 @@ def test_the_free_hit_week_drops_its_bench_share_and_sums_to_the_net(monkeypatch
     assert (result.band, result.lean) == (MARGINAL, HOLD)
 
 
-def test_the_free_hit_week_strips_the_bench_by_order_under_the_live_settings(
+def test_the_free_hit_week_strips_the_bench_by_order_under_window(
     monkeypatch, held, no_fh_prices
 ):
+    # The default is set to WINDOW outright, not to the source's live settings
+    # (which the live_settings marker would give), so these figures are
+    # WINDOW's whatever the live default later becomes.
+    #
     # Under WINDOW the free-hit bench is not a flat 0.1 a point: the keeper
     # counts 0.03 and the outfield men 0.25 / 0.08 / 0.02 by order of points.
     # Bench 32 (keeper, 3.0), 33 (10.0), 34 (6.0), 35 (2.0):
