@@ -159,3 +159,10 @@ def test_an_empty_end_turn_joins_the_ask_to_the_briefing():
     messages = client.requests[1]["messages"]
     assert len(messages) == 1 and messages[0]["role"] == "user"
     assert ANSWER in messages[0]["content"][-1]["text"]
+
+
+def test_the_prompt_leaves_the_team_that_played_to_the_owner():
+    from aigaffer.manager.review_writer import SYSTEM_PROMPT
+
+    assert "that was the owner's call" in SYSTEM_PROMPT
+    assert "never that you ignored or overrode your own verdict" in SYSTEM_PROMPT

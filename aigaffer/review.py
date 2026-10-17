@@ -371,7 +371,13 @@ def _followed_line(followed: Followed | None) -> str:
         )
     if not followed.captain:
         parts.append(f"the verdict's captain was {followed.captain_wanted}")
-    return "Verdict followed: no — " + "; ".join(parts) + "."
+    # The writer took a bare "captain was Mbeumo" as its own act and wrote "I
+    # ignored the verdict": say whose choice the difference was.
+    return (
+        "Verdict followed: no — " + "; ".join(parts) + "."
+        " The owner sets the team that plays, so these differences were the"
+        " owner's choices, not the gaffer's."
+    )
 
 
 MARKER = "<!-- looking-back gw{n} -->"
