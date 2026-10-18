@@ -52,8 +52,8 @@ from pathlib import Path
 
 import httpx
 
-from aigaffer.backtest import backtest_gw, finished_gameweeks
 from aigaffer.ask import make_ask
+from aigaffer.backtest import backtest_gw, finished_gameweeks
 from aigaffer.chip_forecast import chip_forecast
 from aigaffer.config import SCOUT_HORIZON_HOURS, Config
 from aigaffer.data.fpl_api import FplClient
