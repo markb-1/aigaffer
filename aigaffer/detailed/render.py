@@ -277,14 +277,26 @@ def _squad(cur: dict) -> list[str]:
     return [*out, "", WEIGHTED_CAPTION]
 
 
+def captain_rivals(cur: dict) -> list[int]:
+    """The men the armband could have gone to instead: the XI's other
+    attackers, strongest plain window total first, at most :data:`RIVALS`.
+
+    Public because the gaffer's writer is briefed on the same list the report
+    prints, so a captain reason that weighs Saka against Haaland is weighing
+    him against the man the reader sees beside him.
+    """
+    captain = cur["captain"]
+    return sorted(
+        (p for p in cur["xi"] if p != captain and cur["players"][p]["p"] in _ATTACKERS),
+        key=lambda p: (-_window(cur, p), p),
+    )[:RIVALS]
+
+
 def _armbands(cur: dict) -> list[str]:
     reasons = _reasons(cur)
     captain, vice = cur["captain"], cur["vice"]
     totals = {pid: _window(cur, pid) for pid in cur["xi"]}
-    rivals = sorted(
-        (p for p in cur["xi"] if p != captain and cur["players"][p]["p"] in _ATTACKERS),
-        key=lambda p: (-totals[p], p),
-    )[:RIVALS]
+    rivals = captain_rivals(cur)
     out = []
     # The writer gives one reason for the armbands, about the captain; the vice
     # is shown without one.
