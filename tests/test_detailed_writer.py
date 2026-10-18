@@ -196,11 +196,13 @@ def test_word_limits_are_enforced():
     with pytest.raises(ToolError, match="61 words"):
         validate_reasons(answer(**transfer(padded(head, 61))), snap())
 
+    # A skipped line past its limit is not an error but a line dropped (see
+    # test_a_bad_skipped_line_costs_only_itself): at 40 Isak's is kept, at 41
+    # it is gone and Gordon's stands alone.
     skip = [{"id": 8, "reason": padded("Isak", 40)}, GOOD["skipped"][1]]
-    validate_reasons(answer(skipped=skip), snap())
+    assert [i["id"] for i in validate_reasons(answer(skipped=skip), snap())["skipped"]] == [8, 9]
     skip[0] = {"id": 8, "reason": padded("Isak", 41)}
-    with pytest.raises(ToolError, match="41 words"):
-        validate_reasons(answer(skipped=skip), snap())
+    assert [i["id"] for i in validate_reasons(answer(skipped=skip), snap())["skipped"]] == [9]
 
     for key in ("captain", "chips", "plan"):
         validate_reasons(answer(**{key: padded("Saka", 80)}), snap())
@@ -228,12 +230,65 @@ def test_reasons_are_plain_sentences_flattened_to_one_line():
         validate_reasons(answer(captain="Saka <parameter name='x'>"), snap())
 
 
+# --- leniency: a skipped line, and the chips on a week with none ------------------
+
+
+def test_a_bad_skipped_line_costs_only_itself():
+    # Isak's line runs to 41 words, or carries markup, beside a good line for
+    # Gordon. The answer is taken first time — no retry spent, the transfer,
+    # captain and plan reasons kept — with Gordon's line alone.
+    long = {"id": 8, "reason": "Isak" + " x" * 40}
+    marked = {"id": 8, "reason": "## Isak"}
+    for bad in (long, marked):
+        cleaned = validate_reasons(answer(skipped=[bad, GOOD["skipped"][1]]), snap())
+        assert cleaned["skipped"] == [GOOD["skipped"][1]]
+        assert cleaned["transfers"][0]["reason"] == TRANSFER
+    # A bad line does not use up the id: a good one after it for the same man
+    # is taken.
+    again = validate_reasons(answer(skipped=[long, GOOD["skipped"][0]]), snap())
+    assert again["skipped"] == [GOOD["skipped"][0]]
+    # A voice phrase and an empty line are dropped the same way.
+    for reason in ("The model says Isak is too dear.", "   "):
+        assert validate_reasons(
+            answer(skipped=[{"id": 8, "reason": reason}, GOOD["skipped"][1]]), snap()
+        )["skipped"] == [GOOD["skipped"][1]]
+
+    client = FakeClient([reply(use(ANSWER, answer(skipped=[long, GOOD["skipped"][1]])))])
+    reasons = write_reasons(CFG, snap(), client=client)
+    assert len(client.requests) == 1
+    assert reasons["skipped"] == [GOOD["skipped"][1]] and reasons["plan"] == GOOD["plan"]
+
+
+def test_the_chips_reason_may_be_empty_on_a_week_with_no_chip():
+    # The snapshot's chip is "none": an empty or missing chips reason is "".
+    assert validate_reasons(answer(chips=""), snap())["chips"] == ""
+    assert validate_reasons(answer(chips="   "), snap())["chips"] == ""
+    absent = {k: v for k, v in GOOD.items() if k != "chips"}
+    assert validate_reasons(absent, snap())["chips"] == ""
+    # One given is still checked: plain, in bounds, his own voice.
+    with pytest.raises(ToolError, match="chips"):
+        validate_reasons(answer(chips="## No chip"), snap())
+    # A chip played needs its reason.
+    boost = snap(decision={**snap()["decision"], "chip": "bench_boost"})
+    with pytest.raises(ToolError, match="chips"):
+        validate_reasons(answer(chips=""), boost)
+    assert validate_reasons(GOOD, boost)["chips"] == GOOD["chips"]
+
+
+def test_transfers_captain_and_plan_stay_strict():
+    # The leniency is the skipped lines' and the chipless chips' alone.
+    for over in ({"captain": ""}, {"plan": "x " * 81}, {"transfers": []}):
+        with pytest.raises(ToolError):
+            validate_reasons(answer(**over), snap())
+
+
 # --- ids --------------------------------------------------------------------------
 
 
 def test_ids_must_be_the_snapshots():
     # The transfer ids are the chosen plan's pair (out 4, in 7), and every
-    # pair gets one reason; the skipped ids are the snapshot's rows, each once.
+    # pair gets one reason. The skipped ids are the snapshot's rows, each once,
+    # but a line that breaks that is dropped rather than refused.
     for moves in (
         [{"out": 4, "in": 5, "reason": TRANSFER}],  # the wrong man in
         [{"out": 7, "in": 4, "reason": TRANSFER}],  # the pair the wrong way round
@@ -245,13 +300,21 @@ def test_ids_must_be_the_snapshots():
         with pytest.raises(ToolError, match="transfers"):
             validate_reasons(answer(transfers=moves), snap())
 
-    for skipped in (
-        [{"id": 8, "reason": "Isak blanks."}],  # Gordon left out
-        [*GOOD["skipped"], {"id": 1, "reason": "Saka is owned."}],  # not a skipped row
-        [GOOD["skipped"][0], GOOD["skipped"][0], GOOD["skipped"][1]],  # Isak twice
-    ):
-        with pytest.raises(ToolError, match="skipped"):
-            validate_reasons(answer(skipped=skipped), snap())
+    def kept(skipped):
+        return validate_reasons(answer(skipped=skipped), snap())["skipped"]
+
+    # Gordon left out: Isak's line alone, and Gordon's note blank in the report.
+    assert kept([{"id": 8, "reason": "Isak blanks."}]) == [{"id": 8, "reason": "Isak blanks."}]
+    # Saka (1) is owned, not a skipped row; "8" is a string and True a bool:
+    # each dropped, the two good lines kept.
+    for stray in ({"id": 1, "reason": "Saka is owned."}, {"id": "8", "reason": "x"},
+                  {"id": True, "reason": "x"}, "not a line"):
+        assert kept([*GOOD["skipped"], stray]) == GOOD["skipped"]
+    # Isak twice: the first line stands, the second is dropped.
+    twice = [GOOD["skipped"][0], {"id": 8, "reason": "Isak again."}, GOOD["skipped"][1]]
+    assert kept(twice) == GOOD["skipped"]
+    # Not a list at all is no lines, not a failed answer.
+    assert kept("Isak and Gordon") == []
 
     # A week with no move takes an empty list, and the result keeps the order
     # the snapshot gives the rows in, not the order the answer did.
@@ -341,7 +404,7 @@ def test_talking_instead_of_answering_gets_a_plain_ask():
 def test_every_tool_use_gets_a_result():
     # Two calls in one failed turn: each gets its own tool_result, in one user
     # message, or the API answers the next request with a 400.
-    bad = answer(skipped=[])
+    bad = answer(captain="")
     client = FakeClient([
         reply(use("other", {}, "tu_a"), use(ANSWER, bad, "tu_b")),
         reply(use(ANSWER, GOOD, "tu_c")),
