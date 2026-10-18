@@ -18,6 +18,8 @@ from aigaffer import __main__ as cli
 from aigaffer import inbox
 from aigaffer.chips import FREE_HIT, WILDCARD
 from aigaffer.inbox import (
+    ASK_LINE,
+    ASK_WRONG,
     CHIP_FORECAST,
     CHIP_FORECAST_OFF,
     CHIP_KINDS,
@@ -29,6 +31,7 @@ from aigaffer.inbox import (
     WHATIFS_OFF,
     confirm_handled,
     dispatch,
+    is_question,
     mark_failed,
     marked_failed,
     normalise,
@@ -566,3 +569,109 @@ def test_the_inboxs_default_reply_path_sends_with_the_keyboard(monkeypatch, tmp_
 
     assert [body["reply_markup"] for body in bodies] == [KEYBOARD]
     assert bodies[0]["chat_id"] == CHAT
+
+
+# --- Phase 3: a question goes to the gaffer ---------------------------------
+
+
+class AskStub:
+    """The gaffer's answerer, faked: records what it was handed and returns a
+    canned answer, as the real one will."""
+
+    def __init__(self, answer: str | None = "because fixtures") -> None:
+        self.calls: list[tuple[str, int, datetime]] = []
+        self.answer = answer
+
+    def __call__(self, raw, update_id, sent_at, reply):
+        self.calls.append((raw, update_id, sent_at))
+        return self.answer
+
+
+def run_asking(tmp_path, phone: Phone, ask, chip_whatif=None) -> int:
+    return run_inbox(
+        TOKEN, CHAT, tmp_path, recorded, chip_whatif,
+        get=phone.get, send=phone.send, ask=ask,
+    )
+
+
+def test_a_question_mark_routes_to_the_gaffer(tmp_path):
+    ask = AskStub()
+    phone = Phone([update(1, "Is Saka a good captain?")])
+    run_asking(tmp_path, phone, ask)
+    # The gaffer gets the RAW text (case and mark intact), not the normalised.
+    assert [c[0] for c in ask.calls] == ["Is Saka a good captain?"]
+    assert ask.calls[0][1] == 1
+    assert phone.sent == ["because fixtures"]
+
+
+def test_an_interrogative_start_routes_without_a_mark(tmp_path):
+    ask = AskStub()
+    phone = Phone([update(1, "why saka")])
+    run_asking(tmp_path, phone, ask)
+    assert [c[0] for c in ask.calls] == ["why saka"]
+
+
+def test_a_trailing_question_mark_alone_routes(tmp_path):
+    ask = AskStub()
+    run_asking(tmp_path, Phone([update(1, "Saka vs Palmer?  ")]), ask)
+    assert len(ask.calls) == 1
+
+
+def test_a_typo_of_a_command_still_gets_help(tmp_path):
+    ask = AskStub()
+    phone = Phone([update(1, "transfer made")])
+    run_asking(tmp_path, phone, ask)
+    assert ask.calls == []
+    assert phone.sent == [HELP]
+
+
+def test_existing_commands_win_over_questions(tmp_path):
+    ask = AskStub()
+    whatif = WhatIfStub(replies=())
+    phone = Phone([update(1, "Wildcard?")])
+    run_asking(tmp_path, phone, ask, whatif)
+    assert ask.calls == []
+    assert whatif.calls == [(WILDCARD, 1, whatif.calls[0][2])]
+
+
+def test_help_names_how_to_ask():
+    assert ASK_LINE in HELP
+    assert "question mark" in ASK_LINE
+
+
+def test_ask_off_gives_help():
+    sent_at = datetime.now(UTC)
+    assert dispatch("why saka", 7, sent_at, no_reply, recorded, raw="Why Saka?") == HELP
+
+
+def test_a_question_is_a_mark_or_an_interrogative_first_word():
+    assert is_question("anything at all?")
+    assert is_question("  Why Saka")
+    assert is_question("Should I roll")
+    assert not is_question("hello")
+    assert not is_question("")
+    # "island" merely starts with the letters of "is"; only a whole word counts.
+    assert not is_question("island")
+
+
+def test_a_question_that_raises_gets_the_ask_apology(tmp_path):
+    def broken_ask(raw, update_id, sent_at, reply):
+        raise RuntimeError("gaffer down")
+
+    phone = Phone([update(1, "why saka")])
+    run_asking(tmp_path, phone, broken_ask)
+    assert phone.sent == [ASK_WRONG]
+
+
+def test_a_transfers_made_failure_keeps_its_apology_even_with_a_mark(tmp_path):
+    # "Transfers made?" is still the command, so its failure is the recording's
+    # apology, not the gaffer's.
+    def broken_handler(sent_at):
+        raise RuntimeError("db down")
+
+    phone = Phone([update(1, "Transfers made?")])
+    run_inbox(
+        TOKEN, CHAT, tmp_path, broken_handler,
+        get=phone.get, send=phone.send, ask=AskStub(),
+    )
+    assert phone.sent == [SOMETHING_WRONG]

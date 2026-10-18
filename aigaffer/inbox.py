@@ -66,6 +66,17 @@ CHIP_KINDS = {
 }
 CHIP_WORDS = frozenset(CHIP_KINDS)
 
+# Words that open a question even when the mark is forgotten ("why saka").
+# Matched against the whole first word, so "island" is not "is".
+QUESTION_WORDS = (
+    "why", "what", "how", "should", "is", "was", "would", "could", "can",
+    "and", "who", "which", "when",
+)
+ASK_LINE = (
+    "Ask the gaffer anything about this week's plan — end with a question"
+    " mark, e.g. 'Why Saka?'"
+)
+
 HELP = (
     "Tap a button below, or text me:\n"
     "• Transfers made — straight after you enter the latest recommendation"
@@ -76,10 +87,12 @@ HELP = (
     " if you play it, don't send Transfers made.\n"
     "• Chip forecast — when the bot currently plans to play each chip, from the"
     " latest report. Instant.\n"
-    "• help — this message."
+    "• help — this message.\n"
+    + ASK_LINE
 )
 SOMETHING_WRONG = "Something went wrong recording that — try again in a minute."
 WHATIF_WRONG = "Something went wrong with that what-if — ask again in a minute."
+ASK_WRONG = "I couldn't answer that just now — ask again in a minute."
 WHATIFS_OFF = "Chip what-ifs aren't set up on this box."
 CHIP_FORECAST_OFF = "Chip forecast is not configured."
 FORECAST_WRONG = "Something went wrong with that forecast — try again in a minute."
@@ -91,6 +104,9 @@ FORECAST_WRONG = "Something went wrong with that forecast — try again in a min
 # say and minutes between them.
 Reply = Callable[[str], None]
 ChipWhatIf = Callable[[str, int, datetime, Reply], str | None]
+# The gaffer's answerer for a free-text question: given the RAW text, as the
+# owner typed it, it returns the answer (or None if it replied for itself).
+Ask = Callable[[str, int, datetime, Reply], str | None]
 
 NOT_CONFIGURED = "aigaffer inbox: telegram not configured — nothing to read"
 UNREACHABLE = "aigaffer inbox: telegram unreachable ({reason})"
@@ -110,6 +126,18 @@ def normalise(text: str) -> str:
     return collapsed.rstrip(string.punctuation + " ")
 
 
+def is_question(raw: str) -> bool:
+    """Whether the RAW text reads as a question: it ends with "?" or its first
+    word is an interrogative. Raw, not normalised, because ``normalise``
+    strips the very mark that says so. Commands are tried before this, so a
+    typo of one ("transfer made") is not a question and still gets help."""
+    text = raw.strip()
+    if text.endswith("?"):
+        return True
+    words = text.lower().split()
+    return bool(words) and words[0].strip(string.punctuation) in QUESTION_WORDS
+
+
 def dispatch(
     command: str,
     update_id: int,
@@ -118,6 +146,8 @@ def dispatch(
     transfers_made: Callable[[datetime], str],
     chip_whatif: ChipWhatIf | None = None,
     chip_forecast: Callable[[datetime], str] | None = None,
+    ask: Ask | None = None,
+    raw: str = "",
 ) -> str | None:
     """The reply to one normalised message, or None when the handler has
     already replied for itself — which is what a chip what-if does.
@@ -138,6 +168,10 @@ def dispatch(
         if chip_whatif is None:
             return WHATIFS_OFF
         return chip_whatif(kind, update_id, sent_at, reply)
+    # Commands win; only then is the raw text a question for the gaffer. With
+    # no gaffer wired (ask None) a question gets the help, as anything else.
+    if ask is not None and is_question(raw):
+        return ask(raw, update_id, sent_at, reply)
     return HELP
 
 
@@ -148,6 +182,7 @@ def run_inbox(
     transfers_made: Callable[[datetime], str],
     chip_whatif: ChipWhatIf | None = None,
     chip_forecast: Callable[[datetime], str] | None = None,
+    ask: Ask | None = None,
     *,
     get: Callable[[str, int | None], list[dict]] = get_updates,
     send: Callable[[str, str, str], None] = send_message,
@@ -203,14 +238,17 @@ def run_inbox(
             )
             if ours:
                 sent_at = datetime.fromtimestamp(message["date"], UTC)
-                command = normalise(message.get("text") or "")
+                raw = message.get("text") or ""
+                command = normalise(raw)
                 if command in CHIP_KINDS:
                     apology = WHATIF_WRONG
                 elif command == CHIP_FORECAST:
                     apology = FORECAST_WRONG
+                elif command != TRANSFERS_MADE and ask is not None and is_question(raw):
+                    apology = ASK_WRONG
                 answer = dispatch(
                     command, uid, sent_at, reply, transfers_made, chip_whatif,
-                    chip_forecast,
+                    chip_forecast, ask, raw,
                 )
                 if answer is not None:
                     send(token, chat_id, answer)
