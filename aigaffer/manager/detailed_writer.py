@@ -28,7 +28,15 @@ What a reason must be, checked here rather than hoped for in the prompt:
   telling the owner nothing the table beside the words does not;
 * short and plain. 60 words a transfer, 40 a skipped player, 80 each for the
   captain, the chips and the plan; one line each, no headings or markup;
-* about the snapshot's own moves and rows, by their ids, each exactly once.
+* about the snapshot's own moves, by their ids, each exactly once.
+
+The skipped lines are the exception, and on purpose. A week passes over a
+dozen players or more, and one line that runs long or names a man who is not
+on the list should cost that line, not the transfer, captain and plan
+reasons beside it, which a retry would put at risk. So a bad skipped line is
+dropped and the rest kept, and the report leaves that row's note blank. And
+on a week with no chip the chips reason may be empty: the report prints it
+only beside a chip played.
 
 The model's rules are the manager's: no ``tool_choice`` (Opus 5.5 answers it
 with a 400), no thinking parameter, history append-only, every ``tool_use``
@@ -74,7 +82,8 @@ SYSTEM_PROMPT = (
     " rivals', or one gameweek's fixture — and names the game that decided it."
     " The chips reason says why this chip, or why none this week. The plan"
     " reason says why the chosen plan beat the others weighed. Each skipped"
-    " player gets one short line on why he was passed over."
+    " player gets one short line on why he was passed over. On a week with no"
+    " chip the chips reason may be left empty."
     f" Word limits: {TRANSFER_WORDS} words per transfer reason, {SKIPPED_WORDS}"
     f" words per skipped player, and {PROSE_WORDS} words each for the captain,"
     " the chips and the plan. Plain sentences, no headings, bullets or markup."
@@ -159,10 +168,19 @@ def validate_reasons(args: dict, snapshot: dict) -> dict:
     return {
         "transfers": _transfers(args.get("transfers"), snapshot),
         "captain": _prose(args.get("captain"), "captain", PROSE_WORDS),
-        "chips": _prose(args.get("chips"), "chips", PROSE_WORDS),
+        "chips": _chips(args.get("chips"), snapshot),
         "plan": _prose(args.get("plan"), "plan", PROSE_WORDS),
         "skipped": _skipped(args.get("skipped"), snapshot),
     }
+
+
+def _chips(value: Any, snapshot: dict) -> str:
+    """The chips reason: required beside a chip played, and allowed to be
+    empty on a week with none, where the report has no line to put it on."""
+    if (snapshot["decision"].get("chip") or "none") == "none":
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return ""
+    return _prose(value, "chips", PROSE_WORDS)
 
 
 def _is_id(value: Any) -> bool:
@@ -282,25 +300,24 @@ def _names_an_opponent(text: str, opponents: dict[str, str | None]) -> bool:
 
 
 def _skipped(items: Any, snapshot: dict) -> list[dict]:
-    rows = snapshot.get("skipped") or []
-    ids = [row["id"] for row in rows]
-    listing = ", ".join(f"{pid} {_name(snapshot, pid)}" for pid in ids) or "none — give an empty list"
-    if not isinstance(items, list):
-        raise ToolError(f"skipped must be a list, one line per player passed over: {listing}.")
+    """The skipped lines that hold up, in the snapshot's row order.
+
+    Never a ToolError (see the module docstring): a line that is not a dict,
+    names an id that is not a skipped row, says it twice, runs past the word
+    limit, carries markup or hands the judgement to the model is dropped, and
+    the rest are kept. A missing line is a blank note in the report.
+    """
+    ids = [row["id"] for row in snapshot.get("skipped") or []]
     reasons: dict[int, str] = {}
-    for item in items:
+    for item in items if isinstance(items, list) else []:
         pid = item.get("id") if isinstance(item, dict) else None
-        if not _is_id(pid) or pid not in ids:
-            raise ToolError(f"skipped has id {pid!r}, which is not a skipped row. The ids are: {listing}.")
-        if pid in reasons:
-            raise ToolError(f"skipped gives id {pid} twice; one line each.")
-        label = f"the skipped reason for {_name(snapshot, pid)} (id {pid})"
-        reasons[pid] = _prose(item.get("reason"), label, SKIPPED_WORDS)
-    missing = [pid for pid in ids if pid not in reasons]
-    if missing:
-        named = ", ".join(f"{pid} {_name(snapshot, pid)}" for pid in missing)
-        raise ToolError(f"skipped has no line for {named}; give every skipped player one.")
-    return [{"id": pid, "reason": reasons[pid]} for pid in ids]
+        if not _is_id(pid) or pid not in ids or pid in reasons:
+            continue
+        try:
+            reasons[pid] = _prose(item.get("reason"), "skipped", SKIPPED_WORDS)
+        except ToolError:
+            continue
+    return [{"id": pid, "reason": reasons[pid]} for pid in ids if pid in reasons]
 
 
 # --- the briefing ----------------------------------------------------------------

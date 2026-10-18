@@ -53,7 +53,7 @@ from aigaffer.orchestrator import (
     PreparedWeek,
     SolveResult,
     DETAILED_SKIPPED,
-    REASONS_UNAVAILABLE,
+    REASONS_SKIPPED,
     _calendar,
     _chosen_id,
     _fielded_lineup,
@@ -5085,8 +5085,9 @@ def test_no_writer_call_without_a_gaffer(monkeypatch, tmp_path):
 
 def test_a_writer_that_fails_leaves_the_slots_unavailable_not_the_run(monkeypatch, tmp_path, capsys):
     # Two answers that will not validate: the writer gives up after its one
-    # retry, the reasons are None, the report says "unavailable" in his slots,
-    # and the run is saved as ever with one line on the log saying why.
+    # retry, the snapshot keeps no reasons, the report written before the
+    # phone stands with "unavailable" in his slots, and the run is saved as
+    # ever with one line on the log saying why.
     from aigaffer.manager import detailed_writer
 
     bad = {"transfers": [], "captain": "", "chips": "", "plan": "", "skipped": []}
@@ -5101,14 +5102,51 @@ def test_a_writer_that_fails_leaves_the_slots_unavailable_not_the_run(monkeypatc
     report = (tmp_path / "reports" / DETAILED).read_text(encoding="utf-8")
 
     assert len(client.requests) == 2
-    assert snapshot["reasons"] is None
+    assert snapshot.get("reasons") is None
     assert REASON_UNAVAILABLE in report
     assert store.has_run(2, "scout") is True
     out = capsys.readouterr().out
-    assert REASONS_UNAVAILABLE.format(reason="invalid answer") in out
-    assert REASONS_UNAVAILABLE.format(reason="invalid answer") == (
-        "detailed: reasons unavailable (invalid answer)"
+    assert REASONS_SKIPPED.format(reason="invalid answer") in out
+    assert REASONS_SKIPPED.format(reason="invalid answer") == (
+        "detailed: reasons skipped (invalid answer)"
     )
+
+
+def test_the_phone_goes_before_the_gaffer_is_asked_for_his_reasons(monkeypatch, tmp_path):
+    # The writer is a conversation of up to two three-minute requests, and the
+    # owner's message must never wait on it: the digest is delivered first,
+    # then the reasons are asked for and written over the report the run
+    # already wrote without them.
+    from aigaffer.manager import detailed_writer
+
+    order = []
+    real_deliver = orchestrator._deliver
+
+    def deliver(cfg, text, *args, **kwargs):
+        order.append("phone")
+        return real_deliver(cfg, text, *args, **kwargs)
+
+    def report_on_disk():
+        return (tmp_path / "reports" / DETAILED).read_text(encoding="utf-8")
+
+    calls = scripted_writer(monkeypatch)
+    scripted = detailed_writer.write_reasons
+
+    def write(cfg, snapshot, client=None):
+        order.append("writer")
+        # Already on disk, without his words: the report the phone points at.
+        assert REASON_UNAVAILABLE in report_on_disk()
+        return scripted(cfg, snapshot, client)
+
+    monkeypatch.setattr(orchestrator, "_deliver", deliver)
+    monkeypatch.setattr(detailed_writer, "write_reasons", write)
+
+    gaffer_run(monkeypatch, tmp_path, send=True)
+
+    assert order == ["phone", "writer"]
+    [snapshot] = load_snapshots(tmp_path / "state", 2)
+    assert snapshot["reasons"]["plan"] in report_on_disk()
+    assert len(calls) == 1
 
 
 def test_the_chosen_plan_is_found_by_identity_then_by_squad():

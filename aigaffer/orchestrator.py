@@ -267,11 +267,11 @@ OVERTAKEN = (
 # Said when the detailed report could not be built or written; the run goes
 # on without it, as it does without a ledger it could not write.
 DETAILED_SKIPPED = "detailed: report skipped ({reason})"
-# Said when the gaffer's reasons for the detailed report could not be had; the
-# report is written with "unavailable" in his slots, and the run goes on. The
-# reason is the writer's own (a stop reason, an error's class name), never an
-# exception's words.
-REASONS_UNAVAILABLE = "detailed: reasons unavailable ({reason})"
+# Said when the gaffer's reasons for the detailed report could not be added;
+# the report already written keeps "unavailable" in his slots, and the run
+# goes on. The reason is the writer's own (a stop reason, an error's class
+# name) or an exception's class name, never an exception's words.
+REASONS_SKIPPED = "detailed: reasons skipped ({reason})"
 
 # The reason a manager whose own module would not import is withheld under.
 # There is no decision to label and the class name already went to stdout;
@@ -797,6 +797,10 @@ def run_pipeline(
         print(SHELVED)
         send = False
 
+    # Whether this run wrote its own snapshot, which is the one the gaffer's
+    # reasons are added to after the phone; a snapshot on disk from an
+    # earlier run of the mode is not this run's decision.
+    detailed = False
     if save:
         # The real inputs, never the effective: the ledger keeps the API's truth.
         observe(store, inputs.squad, inputs.players, inputs.chips_used)
@@ -816,8 +820,8 @@ def run_pipeline(
                         choice, costed, xmins, prices, calendar, chip, decision,
                         freehit_squad, freehit_xi,
                     ),
-                    gaffer,
                 )
+                detailed = True
             except Exception as error:  # the long read, not the week
                 print(DETAILED_SKIPPED.format(reason=type(error).__name__))
         store.save_run(event.id, mode, report, decision)
@@ -856,6 +860,13 @@ def run_pipeline(
             digest += f"\n{MANAGER_UNAVAILABLE}\n"
         digest += _audit_line(ledger)
         _deliver(cfg, digest)
+    # The gaffer's reasons for the long read, last of all: a short Opus
+    # conversation that can take minutes, and the phone is the thing that
+    # must not wait for it. The detailed report is already on disk with
+    # "unavailable" in his slots; this rewrites it with his words, or leaves
+    # it as it is. Only a week he decided has words of his to ask for.
+    if detailed and gaffer is not None and gaffer.source == BY_MANAGER:
+        _add_reasons(cfg, event, mode, gaffer)
     return report
 
 
@@ -2714,17 +2725,11 @@ def _stamp(clock: datetime) -> str:
     return clock.astimezone(UTC).strftime(DEADLINE_FORMAT)
 
 
-def _write_detailed(
-    cfg: Config, event: Event, mode: str, snapshot: dict,
-    gaffer: "ManagerDecision | None" = None,
-) -> None:
+def _write_detailed(cfg: Config, event: Event, mode: str, snapshot: dict) -> None:
     """Keep the run's snapshot, and the gameweek's detailed report built on it.
 
-    On a week the gaffer decided (``gaffer.source`` is his, not a fallback's),
-    he is asked for his reasons first (:func:`_reasons`) and they go into the
-    snapshot's ``reasons``, so the report and every later question read the
-    same words. A week he did not decide has no words of his to ask for, and
-    no request is made.
+    Written with no ``reasons``: the gaffer's words are asked for after the
+    phone has gone (:func:`_add_reasons`) and written over this.
 
     The snapshot goes to ``state/detailed/gw{n}-{mode}.json``, marked
     ``reran`` when that mode had already written one this gameweek — a forced
@@ -2741,9 +2746,14 @@ def _write_detailed(
         **snapshot,
         "reran": snapshot_path(cfg.state_dir, event.id, mode).exists(),
     }
-    if gaffer is not None and gaffer.source == BY_MANAGER:
-        snapshot["reasons"] = _reasons(cfg, snapshot)
     write_snapshot(cfg.state_dir, event.id, mode, snapshot)
+    _render_detailed_report(cfg, event)
+
+
+def _render_detailed_report(cfg: Config, event: Event) -> None:
+    """Render the gameweek's detailed report from its snapshots on disk and
+    write it over the old one, atomically: the question handler reads it
+    while a tick may be writing."""
     text = render_detailed(load_snapshots(cfg.state_dir, event.id), deadline_text(event))
     path = cfg.state_dir.parent / "reports" / f"GW{event.id} Detailed Report.md"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -2752,28 +2762,40 @@ def _write_detailed(
     os.replace(temporary, path)
 
 
-def _reasons(cfg: Config, snapshot: dict) -> dict | None:
-    """The gaffer's reasons for the decision ``snapshot`` records, or None.
+def _add_reasons(cfg: Config, event: Event, mode: str, gaffer: "ManagerDecision") -> None:
+    """Ask the gaffer for his reasons and write them into this run's snapshot
+    and the gameweek's detailed report.
 
-    None, said on the log, whenever they cannot be had — the writer's two
-    requests both missed, the API was down, the module would not import —
-    because the reasons are the long read's prose and never the week: the
-    report prints "unavailable" in each slot and the run goes on. The writer
-    is imported here, as the manager is in :func:`_consult`, so a run that
-    never asks for reasons never imports the SDK.
+    After the phone, so a slow conversation — two requests of up to three
+    minutes each — never holds up the owner's message. The snapshot is read
+    back from disk, the one :func:`_write_detailed` wrote moments ago, so the
+    words are written onto exactly the file the report is rendered from, and
+    both are rewritten through the same atomic writers.
+
+    Never at the run's expense: the writer missing twice, the API down, the
+    module not importing, a file that will not read — each costs the reasons
+    and one line on the log, and the report already written stands with
+    "unavailable" in his slots. ``gaffer`` is the decision the run already
+    checked was his; it is passed so the caller's condition and this
+    function's subject are one object.
+
+    The writer is imported here, as the manager is in :func:`_consult`, so a
+    run that never asks for reasons never imports the SDK.
     """
     try:
         from aigaffer.manager.detailed_writer import ReasonsUnavailable, write_reasons
     except Exception as error:  # a broken install costs the prose, not the week
-        print(REASONS_UNAVAILABLE.format(reason=type(error).__name__))
-        return None
+        print(REASONS_SKIPPED.format(reason=type(error).__name__))
+        return
     try:
-        return write_reasons(cfg, snapshot)
+        snapshot = next(s for s in load_snapshots(cfg.state_dir, event.id) if s["mode"] == mode)
+        snapshot["reasons"] = write_reasons(cfg, snapshot)
+        write_snapshot(cfg.state_dir, event.id, mode, snapshot)
+        _render_detailed_report(cfg, event)
     except ReasonsUnavailable as error:
-        print(REASONS_UNAVAILABLE.format(reason=error))
+        print(REASONS_SKIPPED.format(reason=error))
     except Exception as error:  # the gaffer's words are a luxury here too
-        print(REASONS_UNAVAILABLE.format(reason=type(error).__name__))
-    return None
+        print(REASONS_SKIPPED.format(reason=type(error).__name__))
 
 
 def _write_report(cfg: Config, event_id: int, mode: str, report: str) -> None:
