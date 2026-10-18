@@ -53,6 +53,7 @@ from pathlib import Path
 import httpx
 
 from aigaffer.backtest import backtest_gw, finished_gameweeks
+from aigaffer.ask import make_ask
 from aigaffer.chip_forecast import chip_forecast
 from aigaffer.config import SCOUT_HORIZON_HOURS, Config
 from aigaffer.data.fpl_api import FplClient
@@ -463,6 +464,7 @@ def _inbox(client: FplClient) -> int:
     :mod:`aigaffer.inbox` knows nothing of git or of the store. The chip
     what-if is bound beside it with the inbox directory, where its marker and
     its log live, and the same lock, which it takes only to copy the store.
+    Questions go to the gaffer (:mod:`aigaffer.ask`) when the manager is on.
     The chip forecast needs only the configuration and the client: it reads
     the store without the lock, a few rows and nothing written.
     """
@@ -479,9 +481,13 @@ def _inbox(client: FplClient) -> int:
     )
     whatif = partial(chip_whatif, cfg, client, directory, directory / STATE_LOCK)
     forecast = partial(chip_forecast, cfg, client)
+    # The gaffer answers questions only where there is a manager to answer
+    # them; without one a question gets the help, as before. The client is
+    # built on the first question, so a box that is never asked builds none.
+    ask = make_ask(cfg, directory) if cfg.manager_enabled else None
     return run_inbox(
         cfg.telegram_token, cfg.telegram_chat_id, directory, handler, whatif,
-        forecast,
+        forecast, ask=ask,
     )
 
 
