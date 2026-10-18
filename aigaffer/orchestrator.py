@@ -2741,10 +2741,18 @@ def _write_detailed(cfg: Config, event: Event, mode: str, snapshot: dict) -> Non
     :func:`_write_report` uses, which in a test is the tmp directory the test
     owns. Atomically, through a temp file renamed over the old one: the
     question handler reads it while a tick may be writing.
+
+    The snapshot also keeps ``deadline``, the very text the report's header
+    is rendered with: the question handler (:mod:`aigaffer.ask`) renders the
+    report again from the snapshots alone, with no bootstrap to read the
+    deadline from, and the two renderings must not disagree about when the
+    week closes. It is set here beside ``reran``, not in ``build_snapshot``,
+    because both are facts about the file being written rather than the run.
     """
     snapshot = {
         **snapshot,
         "reran": snapshot_path(cfg.state_dir, event.id, mode).exists(),
+        "deadline": deadline_text(event),
     }
     write_snapshot(cfg.state_dir, event.id, mode, snapshot)
     _render_detailed_report(cfg, event)

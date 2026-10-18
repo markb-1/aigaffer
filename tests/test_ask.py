@@ -220,9 +220,39 @@ def test_the_request_follows_the_model_rules(tmp_path):
     # first block; the question comes after it.
     first = request["messages"][0]["content"]
     assert first[0]["cache_control"] == {"type": "ephemeral"}
+    # board() has no "deadline" key, as a snapshot written before the key
+    # existed: the header falls back to NO_DEADLINE.
     report = render_detailed([board()], ask_module.NO_DEADLINE)
     assert report in first[0]["text"]
     assert QUESTION in first[-1]["text"]
+
+
+def test_the_report_carries_the_snapshots_deadline(tmp_path):
+    # A snapshot that keeps its deadline text is rendered with it, exactly as
+    # the run rendered the reports/ file: the header is the same line.
+    deadline = "Sat 18 Oct 2026 10:00 UTC"
+    cfg, inbox = setup(tmp_path, board(deadline=deadline))
+    client = FakeClient([answered()])
+    ask(cfg, inbox, client)
+
+    sent = client.requests[0]["messages"][0]["content"][0]["text"]
+    assert f"Deadline: {deadline} · Last updated: deadline run " in sent
+    assert ask_module.NO_DEADLINE not in sent
+    assert render_detailed([board(deadline=deadline)], deadline) in sent
+
+
+def test_a_question_with_no_scripted_client_is_refused_by_the_guard(tmp_path, capsys):
+    # conftest replaces the asker's client builder with one that refuses
+    # every request: a test that forgets to script a client cannot reach
+    # Anthropic, and the question fails the way it would on a dead network.
+    cfg, inbox = setup(tmp_path, board())
+
+    result = make_ask(cfg, inbox)(QUESTION, 1, SENT, lambda _: None)
+
+    assert result == ASK_WRONG
+    assert "AnthropicUnreachable" in capsys.readouterr().out
+    assert cap(inbox) is None
+    assert thread(inbox) == []
 
 
 def test_the_report_is_rendered_and_never_read_from_reports(tmp_path):

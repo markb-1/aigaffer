@@ -4833,6 +4833,16 @@ def test_a_saved_run_writes_the_snapshot_and_the_detailed_report(scout_run):
     assert snapshot["decision"]["source"] == "solver"
 
 
+def test_the_snapshot_keeps_its_deadline_text(scout_run):
+    # The question handler renders the report from the snapshot alone, with no
+    # bootstrap to read the deadline from: so the snapshot keeps the very text
+    # the report's header was rendered with (GW2's fixture deadline,
+    # 2025-08-22T17:30:00Z, in the deadline's format).
+    [snapshot] = load_snapshots(scout_run.cfg.state_dir, 2)
+    assert snapshot["deadline"] == "Fri 22 Aug 2025 17:30 UTC"
+    assert f"Deadline: {snapshot['deadline']} · " in detailed_report(scout_run.cfg)
+
+
 def test_a_second_run_of_the_same_mode_is_marked_a_rerun(tmp_path):
     # A forced rerun overwrites its own snapshot; "What changed" says so,
     # because two entries headed "scout" with nothing to tell them apart

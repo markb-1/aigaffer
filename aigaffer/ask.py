@@ -78,9 +78,10 @@ NO_SNAPSHOT = "I haven't written this week's detailed report yet — ask after t
 CAP_REACHED = "That's today's questions — ask again tomorrow."
 PLAN_CHANGED = "The plan changed since your last question. "
 
-# The snapshot keeps no deadline (it is the run's, not the gameweek's), and
-# fetching the bootstrap for one line of a report the owner already has is a
-# request a question does not need. The report's header says so instead.
+# The snapshot keeps the deadline text the run rendered its report with
+# (``deadline``, set by the orchestrator's ``_write_detailed``), so the header
+# reads as the reports/ file does without a bootstrap fetch. A snapshot written
+# before that key existed has none, and its header says this instead.
 NO_DEADLINE = "as in the GW report"
 
 ASK_DIR = "ask"
@@ -136,7 +137,7 @@ def _handle(
     if not snapshots:
         return NO_SNAPSHOT
     snapshot = snapshots[-1]
-    report_md = render_detailed(snapshots, NO_DEADLINE)
+    report_md = render_detailed(snapshots, snapshot.get("deadline") or NO_DEADLINE)
 
     thread_path = folder / f"gw{snapshot['gw']}.jsonl"
     thread = _thread(thread_path)[-THREAD_KEEP:]
