@@ -36,6 +36,7 @@ from aigaffer.chips import TRIPLE_CAPTAIN, held_for, whole_season
 from aigaffer.config import Config
 from aigaffer.data.fpl_api import FplClient
 from aigaffer.data.models import GwHistory, Player
+from aigaffer.detailed.render import NO_GAFFER, REASON_UNAVAILABLE
 from aigaffer.detailed.snapshot import load_snapshots
 from aigaffer.ledger import Observation
 from aigaffer.manager import agent
@@ -52,6 +53,7 @@ from aigaffer.orchestrator import (
     PreparedWeek,
     SolveResult,
     DETAILED_SKIPPED,
+    REASONS_UNAVAILABLE,
     _calendar,
     _chosen_id,
     _fielded_lineup,
@@ -79,6 +81,7 @@ from aigaffer.solver.lineup import Lineup, attacking_evs, pick_lineup
 from aigaffer.solver.multiweek import FALLBACK_BARS, PlannedPath
 from aigaffer.solver.optimizer import FORWARD, MIDFIELDER, Plan
 from aigaffer.store import Store
+from tests.test_manager_agent import FakeClient, reply, use
 from tests.fixtures import (
     HISTORY_PATH,
     PICKS_15_IDS,
@@ -2637,6 +2640,9 @@ def test_a_dry_run_still_asks_the_gaffer(monkeypatch, tmp_path):
 
 
 def test_the_run_says_whether_the_gaffer_decided(monkeypatch, capsys, tmp_path):
+    # His reasons are scripted, so the writer answers and — having nothing to
+    # report when it works — adds nothing to the log.
+    scripted_writer(monkeypatch)
     gaffer_run(monkeypatch, tmp_path, send=False)
 
     assert capsys.readouterr().out.strip() == "the gaffer decided: 2 searches"
@@ -4974,6 +4980,135 @@ def test_a_fallback_with_no_registry_weighs_the_shortlist(monkeypatch, tmp_path)
     assert gaffer.decisions[0].registry == {}
     assert len(snapshot["plans"]) == len(gaffer.consults[0].solve0.plans)
     assert snapshot["chosen"] == consult_index(gaffer, gaffer.decisions[0].plan)
+
+
+# --- the gaffer's reasons ----------------------------------------------------
+#
+# The writer's own conversation is pinned by tests/test_detailed_writer.py on a
+# hand-built snapshot. Here it is the real writer on the run's real snapshot,
+# with only the client scripted: the answer is built from the snapshot the
+# writer is handed, so the ids and opponents are the run's own and the real
+# validation passes them or fails the test.
+
+
+def scripted_writer(monkeypatch):
+    """Answer the detailed writer from a scripted client; return its calls.
+
+    Each call records the snapshot the run handed over and the client that
+    answered it. The transfer reasons name the man in's first opponent in the
+    window and his weighted total, so they clear the opponent and number checks
+    on whatever board the pipeline built.
+    """
+    from aigaffer.detailed.render import _pairs
+    from aigaffer.manager import detailed_writer
+
+    real = detailed_writer.write_reasons
+    calls = []
+
+    def write(cfg, snapshot, client=None):
+        players = snapshot["players"]
+        moves = []
+        for out, came in _pairs(snapshot):
+            opponent = next(
+                opp for gw in snapshot["events"] for opp, _ in players[came]["f"][gw]
+            )
+            moves.append({
+                "out": out, "in": came,
+                "reason": f"{players[came]['n']} for the {opponent} game: {players[came]['t']:.2f} weighted.",
+            })
+        answer = {
+            "transfers": moves,
+            "captain": "The armband goes on total xP over the window, and he tops the eleven.",
+            "chips": "No chip: nothing on the board is worth playing one on this week.",
+            "plan": "The chosen plan nets the most of the shortlist after the hit.",
+            "skipped": [
+                {"id": row["id"], "reason": f"Passed over: {row['tag']}."}
+                for row in snapshot["skipped"]
+            ],
+        }
+        scripted = FakeClient([reply(use(detailed_writer.ANSWER, answer))])
+        calls.append((snapshot, scripted))
+        return real(cfg, snapshot, client=scripted)
+
+    monkeypatch.setattr(detailed_writer, "write_reasons", write)
+    return calls
+
+
+def test_reasons_reach_the_report_when_the_gaffer_decided(monkeypatch, tmp_path):
+    # His week on the solver's own plan, which sells Grant: one transfer to
+    # explain, his armbands, and the skipped rows the run passed over.
+    calls = scripted_writer(monkeypatch)
+
+    def his(consult):
+        return decided(consult, plan=consult.solve0.choice)
+
+    gaffer_run(monkeypatch, tmp_path, his, send=False)
+    [snapshot] = load_snapshots(tmp_path / "state", 2)
+    report = (tmp_path / "reports" / DETAILED).read_text(encoding="utf-8")
+
+    [(handed, client)] = calls
+    assert len(client.requests) == 1
+    # He was briefed on the week he decided, words and all.
+    assert handed["decision"]["source"] == "manager"
+    assert GAFFER_RATIONALE in client.requests[0]["messages"][0]["content"][0]["text"]
+    # What he wrote went into the snapshot, in the renderer's shape, and out
+    # through the report: every slot his words, none of them the fallback.
+    reasons = snapshot["reasons"]
+    assert [move["out"] for move in reasons["transfers"]] == [GRANT]
+    assert reasons["transfers"][0]["reason"] in report
+    assert reasons["captain"] in report and reasons["plan"] in report
+    assert snapshot["skipped"], "the run passed somebody over"
+    assert [item["id"] for item in reasons["skipped"]] == [row["id"] for row in snapshot["skipped"]]
+    assert reasons["skipped"][0]["reason"] in report
+    assert REASON_UNAVAILABLE not in report.split("## Transfers\n")[1].split("\n## ")[0]
+
+
+def test_no_writer_call_without_a_gaffer(monkeypatch, tmp_path):
+    # A run with the manager off and a run on the solver's fallback are both
+    # the solver's week: no gaffer's words to ask for, no request, no reasons
+    # key, and the report's slots say whose pick it was.
+    calls = scripted_writer(monkeypatch)
+    off = tmp_path / "off"
+    cfg = config(state_dir=off / "state")
+    run_pipeline(cfg, make_client(pipeline_routes()), Store(off / "aigaffer.db"), "scout", send=False)
+    fallback = tmp_path / "fallback"
+    fallback.mkdir()
+    gaffer_run(monkeypatch, fallback, unavailable, send=False)
+
+    assert calls == []
+    for root in (off, fallback):
+        [snapshot] = load_snapshots(root / "state", 2)
+        assert "reasons" not in snapshot
+        report = (root / "reports" / DETAILED).read_text(encoding="utf-8")
+        assert NO_GAFFER in report and REASON_UNAVAILABLE not in report
+
+
+def test_a_writer_that_fails_leaves_the_slots_unavailable_not_the_run(monkeypatch, tmp_path, capsys):
+    # Two answers that will not validate: the writer gives up after its one
+    # retry, the reasons are None, the report says "unavailable" in his slots,
+    # and the run is saved as ever with one line on the log saying why.
+    from aigaffer.manager import detailed_writer
+
+    bad = {"transfers": [], "captain": "", "chips": "", "plan": "", "skipped": []}
+    client = FakeClient([
+        reply(use(detailed_writer.ANSWER, bad, "tu_1")),
+        reply(use(detailed_writer.ANSWER, bad, "tu_2")),
+    ])
+    monkeypatch.setattr(detailed_writer, "build_review_client", lambda cfg: client)
+
+    _, store, _ = gaffer_run(monkeypatch, tmp_path, send=False)
+    [snapshot] = load_snapshots(tmp_path / "state", 2)
+    report = (tmp_path / "reports" / DETAILED).read_text(encoding="utf-8")
+
+    assert len(client.requests) == 2
+    assert snapshot["reasons"] is None
+    assert REASON_UNAVAILABLE in report
+    assert store.has_run(2, "scout") is True
+    out = capsys.readouterr().out
+    assert REASONS_UNAVAILABLE.format(reason="invalid answer") in out
+    assert REASONS_UNAVAILABLE.format(reason="invalid answer") == (
+        "detailed: reasons unavailable (invalid answer)"
+    )
 
 
 def test_the_chosen_plan_is_found_by_identity_then_by_squad():

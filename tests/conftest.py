@@ -24,6 +24,38 @@ def no_anthropic_key(monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
 
 
+class AnthropicUnreachable(Exception):
+    """What the detailed writer's client raises in a test that did not script one."""
+
+
+class _UnreachableClient:
+    """A client for the detailed writer whose every request is refused, here."""
+
+    def __init__(self, cfg) -> None:
+        self.messages = self
+
+    def create(self, **_):
+        raise AnthropicUnreachable("tests never reach Anthropic")
+
+
+@pytest.fixture(autouse=True)
+def no_reasons_request(monkeypatch):
+    """Close the second door: the detailed writer's own client.
+
+    A pipeline test that wants a gaffer stubs ``run_manager`` and hands the
+    config a key of its own, deliberately — and the run then asks the gaffer
+    for his reasons (:mod:`aigaffer.manager.detailed_writer`) with a real
+    client built on that key, which the stub never stood in for. So that
+    client is replaced for every test with one that refuses each request:
+    the writer fails as it would against a dead network, the run goes on
+    without the reasons as it must, and a test that wants them scripts its
+    own client and passes it in.
+    """
+    monkeypatch.setattr(
+        "aigaffer.manager.detailed_writer.build_review_client", _UnreachableClient
+    )
+
+
 # ---------------------------------------------------------------------------
 # A session cache for repeat solves
 # ---------------------------------------------------------------------------
