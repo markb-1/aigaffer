@@ -160,6 +160,69 @@ def test_the_tick_commits_the_detailed_reports(box, tmp_path):
     assert "reports/GW2 Detailed Report.md" in files
 
 
+def test_a_detailed_write_interrupted_mid_way_is_never_committed(tmp_path, monkeypatch):
+    # Both detailed writers go through a temp file renamed into place, and
+    # the tick does `git add state/` and `git add "reports/"`: a crash between
+    # the write and the rename must leave nothing the next commit picks up.
+    # Each writer is crashed at its rename, so the names checked are the
+    # ones it really leaves behind, and git itself is asked about them
+    # against this repository's .gitignore. The finished files must still
+    # be committed, so they are checked not to be ignored.
+    from types import SimpleNamespace
+
+    from aigaffer import orchestrator
+    from aigaffer.detailed.snapshot import write_snapshot
+    from tests.fixtures import config
+
+    real = os.replace
+
+    def crash(source, target):
+        raise OSError("killed mid-write")
+
+    # Each crash in a checkout of its own: the report writer writes a
+    # snapshot first, and that write would rename away the first's leftover.
+    first, second = tmp_path / "snapshot", tmp_path / "report"
+    monkeypatch.setattr(os, "replace", crash)
+    with pytest.raises(OSError):
+        write_snapshot(first / "state", 2, "scout", {"gw": 2})
+
+    # The report writer: its snapshot lands, and its own rename is the crash.
+    monkeypatch.setattr(
+        os, "replace",
+        lambda source, target: crash(source, target)
+        if str(target).endswith(".md") else real(source, target),
+    )
+    monkeypatch.setattr(orchestrator, "load_snapshots", lambda *_: [{}])
+    monkeypatch.setattr(orchestrator, "render_detailed", lambda *_: "# GW2 Detailed Report\n")
+    monkeypatch.setattr(orchestrator, "deadline_text", lambda _: "")
+    with pytest.raises(OSError):
+        orchestrator._write_detailed(
+            config(state_dir=second / "state"), SimpleNamespace(id=2), "scout", {"gw": 2}
+        )
+    monkeypatch.setattr(os, "replace", real)
+
+    left = sorted(
+        path.relative_to(root).as_posix()
+        for root in (first, second)
+        for path in root.rglob("*.tmp")
+    )
+    assert left == [
+        "reports/.GW2 Detailed Report.md.tmp",
+        "state/detailed/.gw2-scout.json.tmp",
+    ]
+
+    def ignored(path: str) -> bool:
+        check = subprocess.run(
+            ["git", "check-ignore", "--no-index", "-q", path], cwd=ROOT
+        )
+        return check.returncode == 0
+
+    for path in left:
+        assert ignored(path), path
+    for path in ("reports/GW2 Detailed Report.md", "state/detailed/gw2-scout.json"):
+        assert not ignored(path), path
+
+
 def test_the_workflow_commits_the_detailed_reports_when_there_are_any():
     # The GitHub Actions twin of the tick's commit step. Guarded, because the
     # step runs even after a run that died before writing anything, and a

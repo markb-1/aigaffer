@@ -20,5 +20,11 @@ state/news/.*.tmp
 # A review append interrupted mid-way (append_review renames it into place).
 /.GW*.md.tmp
 
+# A detailed write interrupted mid-way: the run's snapshot (write_snapshot)
+# and the gameweek's detailed report (_write_detailed) are both renamed into
+# place, and run-tick.sh adds state/ and reports/, so neither is committed.
+state/detailed/.*.tmp
+reports/.*.tmp
+
 # The replay's per-decision rows name other managers' entries; local only.
 /state/replay/
