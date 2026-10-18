@@ -13,6 +13,13 @@ second group matters because a plan the gaffer weighed and passed over is
 exactly the "what about..." the owner will ask. A player in both groups keeps
 his per-position row (first wins).
 
+A man no better over the window than the squad man he would replace (a gap of
+zero or less) is left off, unless another plan bought him. A top-three
+goalkeeper behind two owned ones better than him is not a transfer anybody
+skipped; there was nothing to skip. A plan that bought him is different: the
+gaffer weighed that plan, so the owner may well ask why not, and the row is
+where the answer is.
+
 The tags are checked in a fixed order and the first that applies is the answer,
 because a man who is both unaffordable and a minutes risk is better explained
 by the thing that made the move impossible than the thing that made it
@@ -110,12 +117,14 @@ def skipped_transfers(
         ]
         pool.sort(key=lambda pid: (-players[pid]["t"], pid))
         candidates.extend(pool[:PER_POSITION])
+    elsewhere: set[int] = set()
     for plan_id in sorted(plans):
         if plan_id == chosen:
             continue
         for pid in plans[plan_id]["in"]:
             if pid in players and pid not in owned and pid not in bought:
                 candidates.append(pid)
+                elsewhere.add(pid)
 
     weakest_starter: dict[str, float] = {}
     for starter in xi:
@@ -132,6 +141,8 @@ def skipped_transfers(
         out_id = min(mates, key=lambda s: (players[s]["t"], s))
         out = players[out_id]
         gap = round(row["t"] - out["t"], 2)
+        if gap <= 0 and pid not in elsewhere:
+            continue
         sale = out["sp"] if out["sp"] is not None else out["pr"]
         same_club = sum(1 for s in squad if s in players and players[s]["c"] == row["c"])
         if row["pr"] > bank + sale:

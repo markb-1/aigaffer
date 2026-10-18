@@ -179,6 +179,20 @@ def test_the_captain_line_shows_the_plain_total_labelled():
     assert "- **Captain: Saka** (11.42 over the window)" in section
 
 
+def test_the_rivals_leave_out_the_vice_and_say_what_they_are_ranked_on():
+    # XI 1, 2, 3, 4, 5, 6 with Saka (1) captain and Haaland (3) vice. The XI's
+    # other attackers by plain window total: Haaland 6.00 + 3.00 = 9.00,
+    # Xhaka 2.00 + 4.00 = 6.00, Salah 5.00 + 0.00 = 5.00. Haaland is the
+    # strongest of them, but he is the vice and has his own line above, so the
+    # two rivals are Xhaka and Salah.
+    shot = snap(xi=[1, 2, 3, 4, 5, 6], bench=[], captain=1, vice=3)
+    section = _section(render_detailed([shot], "d"), "Captain and vice")
+
+    assert "- **Vice: Haaland** (9.00 over the window)" in section
+    assert "- Rivals (by total xP over the window): Xhaka (6.00), Salah (5.00)" in section
+    assert section.count("Haaland") == 1
+
+
 def test_the_squad_lists_the_xi_by_position_then_total_and_the_bench_in_order():
     # XI given deliberately jumbled: Haaland FWD, Saka MID 11.42, Raya GKP,
     # Salah MID 5.00, Justin DEF. Expected: Raya, Justin, Saka, Salah, Haaland,
