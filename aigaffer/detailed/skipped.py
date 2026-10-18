@@ -16,8 +16,15 @@ his per-position row (first wins).
 The tags are checked in a fixed order and the first that applies is the answer,
 because a man who is both unaffordable and a minutes risk is better explained
 by the thing that made the move impossible than the thing that made it
-unattractive: unaffordable, club limit, minutes risk, not worth a transfer,
-and failing all of those, beaten by the chosen move.
+unattractive: unaffordable, club limit, minutes risk, would sit on the bench, not worth a
+transfer, and failing all of those, the plan does better without him.
+
+"Would sit on the bench" is for a man whose weighted total is below that of the
+weakest XI player at his position: he would not start for the owner, so the gap
+to the lowest squad man (usually the benched backup) overstates what he is
+worth. A backup keeper behind a starter is the classic case. It sits after
+minutes risk (a man who may not play is better explained by that) and before
+not worth a transfer (the bench is the truer reason a small gap is small).
 
 "Not worth a transfer" mirrors what the solver itself charges for a move (R6):
 a transfer that costs a banked free transfer loses that step's value, decayed
@@ -32,8 +39,9 @@ from aigaffer.solver.optimizer import HIT_POINTS, WindowSettings
 UNAFFORDABLE = "unaffordable"
 CLUB_LIMIT = "club limit"
 MINUTES_RISK = "minutes risk"
+BENCH = "would sit on the bench"
 NOT_WORTH = "not worth a transfer"
-BEATEN = "beaten by the chosen move"
+BEATEN = "the plan does better without him"
 
 # Below this expected minutes a man is as likely to sit as to play.
 MINUTES_FLOOR = 60
@@ -76,6 +84,8 @@ def skipped_transfers(
     decay: float,
     window: int,
     settings: WindowSettings,
+    *,
+    xi: list[int],
 ) -> list[dict]:
     """The alternatives not taken, as ``{"id","pos","replaces","gap","price_diff","tag"}``.
 
@@ -83,7 +93,8 @@ def skipped_transfers(
     ``gap`` the candidate's total less his, to two decimals. ``price_diff`` is
     the candidate's price less the replaced man's *sale* price (his selling
     price when the snapshot has one, else his price), in tenths — what the swap
-    would cost the bank. ``bank`` is in tenths.
+    would cost the bank. ``bank`` is in tenths. ``xi`` is the fielded eleven,
+    against which the bench tag is judged.
     """
     chosen_plan = plans[chosen]
     owned = set(squad)
@@ -106,6 +117,12 @@ def skipped_transfers(
             if pid in players and pid not in owned and pid not in bought:
                 candidates.append(pid)
 
+    weakest_starter: dict[str, float] = {}
+    for starter in xi:
+        if starter in players:
+            pos, total = players[starter]["p"], players[starter]["t"]
+            weakest_starter[pos] = min(weakest_starter.get(pos, total), total)
+
     rows = []
     for pid in dict.fromkeys(candidates):
         row = players[pid]
@@ -123,6 +140,8 @@ def skipped_transfers(
             tag = CLUB_LIMIT
         elif row["xm"] < MINUTES_FLOOR:
             tag = MINUTES_RISK
+        elif row["p"] in weakest_starter and row["t"] < weakest_starter[row["p"]]:
+            tag = BENCH
         elif gap < threshold:
             tag = NOT_WORTH
         else:
