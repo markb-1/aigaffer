@@ -140,8 +140,9 @@ ASK = f"Call {ANSWER} now with your answer to his question — no more lookups."
 LAST_TURN = f"That was your last lookup. Call {ANSWER} now with your answer to his question."
 
 # Markdown that would arrive in Telegram as its raw characters: a heading or a
-# table row at the start of a line, bold, code, an HTML comment.
-_MARKDOWN = re.compile(r"(?m)^\s*(?:#|\|)|\*\*|__|`|<!--")
+# table row at the start of a line, a bullet or numbered item ("- ", "* ",
+# "\u2022 ", "1. "), bold, code, an HTML comment.
+_MARKDOWN = re.compile(r"(?m)^\s*(?:#|\||[-*\u2022]\s|\d+\.\s)|\*\*|__|`|<!--")
 
 
 class AskUnavailable(Exception):
@@ -263,16 +264,21 @@ def plan_detail(snapshot: dict, plan_id: Any) -> dict:
 # --- the answer ------------------------------------------------------------------
 
 
-def validate_answer(text: Any, gw: int) -> str:
-    """The answer, flattened to one line, or a ToolError that says what to fix."""
+def validate_answer(text: Any, gw: int, max_words: int = ANSWER_WORDS) -> str:
+    """The answer, flattened to one line, or a ToolError that says what to fix.
+
+    ``max_words`` is the exclusive limit: the handler lowers it by the words
+    of the "plan changed" prefix it will add afterwards, so the answer that
+    goes out is still under 120.
+    """
     if not isinstance(text, str) or not text.strip():
         raise ToolError("The answer must be a few plain sentences.")
     if _MARKDOWN.search(text) or MARKUP.search(text):
-        raise ToolError("Write plain text: no tables, headings, bold or code — Telegram shows them raw.")
+        raise ToolError("Write plain text: no tables, headings, lists, bold or code — Telegram shows them raw.")
     flat = " ".join(text.split())
     words = len(flat.split())
-    if words >= ANSWER_WORDS:
-        raise ToolError(f"That is {words} words; keep it under {ANSWER_WORDS}.")
+    if words >= max_words:
+        raise ToolError(f"That is {words} words; keep it under {max_words}.")
     if not re.search(rf"\bGW{gw}\b", flat, re.IGNORECASE):
         raise ToolError(f"Name the gameweek: say GW{gw} in the answer, e.g. \"For GW{gw}'s plan: …\".")
     return flat
@@ -334,13 +340,17 @@ def _changed(snapshot: dict, thread: list[dict]) -> bool:
 # --- the conversation ------------------------------------------------------------
 
 
-def answer(cfg: Config, snapshot: dict, report_md: str, thread: list[dict], question: str, client: Any) -> str:
+def answer(
+    cfg: Config, snapshot: dict, report_md: str, thread: list[dict], question: str, client: Any,
+    max_words: int = ANSWER_WORDS,
+) -> str:
     """The gaffer's answer to ``question``, or AskUnavailable.
 
     ``thread`` is the earlier exchanges this gameweek, already capped by the
     handler; ``client`` is the handler's, built lazily there.
+    ``max_words`` is the answer's exclusive word limit, lower than 120 when the handler will add a prefix.
     """
-    conversation = _Conversation(client, cfg, snapshot, report_md, thread, question)
+    conversation = _Conversation(client, cfg, snapshot, report_md, thread, question, max_words)
     try:
         return conversation.run()
     except anthropic.AnthropicError as error:
@@ -353,8 +363,9 @@ class _Conversation:
 
     def __init__(
         self, client: Any, cfg: Config, snapshot: dict, report_md: str,
-        thread: list[dict], question: str,
+        thread: list[dict], question: str, max_words: int = ANSWER_WORDS,
     ) -> None:
+        self.max_words = max_words
         self.client = client
         self.cfg = cfg
         self.snapshot = snapshot
@@ -412,7 +423,7 @@ class _Conversation:
             try:
                 if name == ANSWER:
                     try:
-                        return validate_answer(given.get("text"), self.snapshot["gw"]), results
+                        return validate_answer(given.get("text"), self.snapshot["gw"], self.max_words), results
                     except ToolError:
                         self.wrong += 1
                         raise

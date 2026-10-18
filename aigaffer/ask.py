@@ -88,6 +88,7 @@ ASK_DIR = "ask"
 CAP_FILE = "cap.json"
 
 NO_ANSWER = "aigaffer ask: no answer ({reason})"
+ANSWERED = "ask: answered GW{gw} ({turns} requests, {input} in / {output} out tokens)"
 NOT_RECORDED = "aigaffer ask: answered, not recorded ({reason})"
 
 
@@ -142,11 +143,18 @@ def _handle(
     thread_path = folder / f"gw{snapshot['gw']}.jsonl"
     thread = _thread(thread_path)[-THREAD_KEEP:]
 
+    # Decided before the writer, because the prefix is added after validation
+    # and an answer of 119 words would otherwise go out at 126: the writer is
+    # held to 120 less the prefix's words when it will apply.
+    moves = plan_moves(snapshot)
+    changed = bool(thread) and thread[-1].get("plan_moves") not in (None, moves)
+    max_words = ask_writer.ANSWER_WORDS - len(PLAN_CHANGED.split()) if changed else ask_writer.ANSWER_WORDS
+
     budget = _Metered(gaffer, MAX_TURNS)
     text = None
     for _ in range(ATTEMPTS):
         try:
-            text = ask_writer.answer(cfg, snapshot, report_md, thread, raw, budget)
+            text = ask_writer.answer(cfg, snapshot, report_md, thread, raw, budget, max_words)
             break
         except Exception as error:  # an API error, an invalid answer, a fault: retried once
             reason = str(error) if isinstance(error, AskUnavailable) else type(error).__name__
@@ -154,8 +162,10 @@ def _handle(
     if text is None:
         return ASK_WRONG
 
-    moves = plan_moves(snapshot)
-    if thread and thread[-1].get("plan_moves") not in (None, moves):
+    print(ANSWERED.format(
+        gw=snapshot["gw"], turns=budget.requests, input=budget.tokens["input"], output=budget.tokens["output"]
+    ))
+    if changed:
         text = PLAN_CHANGED + text
     try:
         # Answered is answered: a disk that will not take the cap or the
@@ -177,13 +187,24 @@ class _Metered:
     def __init__(self, gaffer: Callable[[], Any], turns: int) -> None:
         self._gaffer = gaffer
         self.left = turns
+        self.requests = 0
+        # Counted as the review writer's meter does: only whole-number usage
+        # fields are added, and a response with none costs nothing here.
+        self.tokens = {"input": 0, "output": 0}
         self.messages = self
 
     def create(self, **request: Any) -> Any:
         if self.left <= 0:
             raise AskUnavailable("turns")
         self.left -= 1
-        return self._gaffer().messages.create(**request)
+        self.requests += 1
+        response = self._gaffer().messages.create(**request)
+        usage = getattr(response, "usage", None)
+        for ours, theirs in (("input", "input_tokens"), ("output", "output_tokens")):
+            value = getattr(usage, theirs, None)
+            if isinstance(value, int) and not isinstance(value, bool):
+                self.tokens[ours] += value
+        return response
 
 
 def _say(reply: Reply, text: str) -> None:

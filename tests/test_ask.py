@@ -27,6 +27,7 @@ The question is always answered on the newest snapshot. A good answer here is
 
 import json
 import os
+import types
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -543,6 +544,54 @@ def test_an_answer_must_name_its_gameweek_and_fit_120_words():
             validate_answer(marked, 8)
     with pytest.raises(ToolError):
         validate_answer("", 8)
+
+
+def test_the_changed_plan_prefix_fits_inside_the_120_words(tmp_path):
+    cfg, inbox = setup(tmp_path, board())
+    write_thread(inbox, [{"q": "Why Isak?", "a": "For GW8's plan: Isak.", "ts": SENT.isoformat(),
+                          "plan_moves": {"out": [3], "in": [8]}}])
+    # 119 words alone pass, but the 7-word prefix would take them to 126; the
+    # gaffer is told it is too long and answers again, shorter.
+    long = " ".join(["GW8"] + ["word"] * 118)
+    client = FakeClient([answered(long, "tu_1"), answered(GOOD, "tu_2")])
+
+    result, _ = ask(cfg, inbox, client)
+
+    assert result == CHANGED + GOOD
+    assert len(result.split()) < 120
+    assert len(client.requests) == 2
+    # The budget is 120 less the prefix's seven words: 112 pass, 113 do not.
+    assert validate_answer(" ".join(["GW8"] + ["word"] * 111), 8, max_words=113)
+    with pytest.raises(ToolError, match="113"):
+        validate_answer(" ".join(["GW8"] + ["word"] * 112), 8, max_words=113)
+
+
+def test_an_answer_may_not_be_a_list():
+    for line in ("- Cucurella", "* Cucurella", "\u2022 Cucurella", "1. Cucurella"):
+        with pytest.raises(ToolError, match="plain"):
+            validate_answer(f"For GW8:\n{line}\n", 8)
+    # A hyphen or a number inside a sentence is not a list.
+    assert validate_answer("For GW8: a well-judged 3-1 call, 2. Fine.", 8)
+
+
+def test_an_answer_logs_its_requests_and_tokens(tmp_path, capsys):
+    cfg, inbox = setup(tmp_path, board())
+    # A lookup, then the answer: two requests. Input 100 + 50, output 20 + 30.
+    first = reply(use(PLAYER, {"name_or_id": "Palmer"}, "tu_p"))
+    first.usage = types.SimpleNamespace(input_tokens=100, output_tokens=20)
+    second = answered()
+    second.usage = types.SimpleNamespace(input_tokens=50, output_tokens=30)
+
+    assert ask(cfg, inbox, FakeClient([first, second]))[0] == GOOD
+
+    assert "ask: answered GW8 (2 requests, 150 in / 50 out tokens)" in capsys.readouterr().out
+
+
+def test_accents_fold_in_a_name_search():
+    players = {**PLAYERS, 15: row("Gy\u00f6keres", "FWD", "ARS", "Arsenal", 90,
+                                  [["FUL", "a"]], [["LEE", "h"]], 5.0, 6.0)}
+    found = find_player(snap(players=players), "Gyokeres")
+    assert isinstance(found, dict) and "Gy\u00f6keres" in json.dumps(found, ensure_ascii=False)
 
 
 def test_an_invalid_answer_gets_one_retry_in_the_conversation():
