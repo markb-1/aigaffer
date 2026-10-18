@@ -159,6 +159,7 @@ def build_snapshot(
         decay,
         len(events),
         resolve(None),
+        xi=xi,
     )
 
     return {

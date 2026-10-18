@@ -23,7 +23,7 @@ solver's pick when no gaffer ran, "reason unavailable" when one did and left
 no words.
 """
 
-from aigaffer.report.render import plural, price
+from aigaffer.report.render import chip_label, plural, price
 
 NO_GAFFER = "Solver's pick — no gaffer this run"
 REASON_UNAVAILABLE = "Reason unavailable this run"
@@ -31,7 +31,15 @@ REASON_UNAVAILABLE = "Reason unavailable this run"
 NO_CHANGE = "No change to the plan"
 FIRST_LOOK = "First look"
 
+# Said once under each table of players: the Weighted column is the one the
+# planner decides on, and it is smaller than the sum of the cells beside it.
+WEIGHTED_CAPTION = (
+    "Weighted counts later gameweeks for less, as the planner does;"
+    " it is the total decisions are made on."
+)
+
 _ATTACKERS = ("MID", "FWD")
+_POSITION_ORDER = {"GKP": 0, "DEF": 1, "MID": 2, "FWD": 3}
 RIVALS = 2
 
 
@@ -190,9 +198,9 @@ def _plan_section(cur: dict) -> list[str]:
     return [
         _clean(decision.get("rationale")) or _fallback(cur),
         "",
-        f"Expected points over the window: {plan['xp']:.2f}"
-        f" (net of hits and charges {plan['net']:.2f});"
-        f" {plural(plan['hits'], 'hit')}; bank {price(cur['bank'])}.",
+        f"Expected points over the window: {plan['xp']:.2f} xP;"
+        f" net {plan['net']:.2f} (after hits and charges, plus the credit for"
+        f" free transfers kept); {plural(plan['hits'], 'hit')}; bank {price(cur['bank'])}.",
     ]
 
 
@@ -200,8 +208,8 @@ def _table_head(cur: dict) -> list[str]:
     """The header and separator of a player table, one column a gameweek."""
     events = cur["events"]
     return [
-        "| | Player | Price | " + " | ".join(f"GW{gw}" for gw in events) + " | Window |",
-        "|---|---|---|" + "---|" * len(events) + "---|",
+        "| | Player | Price | " + " | ".join(f"GW{gw}" for gw in events) + " | Total | Weighted |",
+        "|---|---|---|" + "---|" * len(events) + "---|---|",
     ]
 
 
@@ -222,6 +230,7 @@ def _transfers(cur: dict) -> list[str]:
     pairs = _pairs(cur)
     for gone, came in pairs:
         gap = cur["players"][came]["t"] - cur["players"][gone]["t"]
+        plain_gap = _window(cur, came) - _window(cur, gone)
         out += [
             f"### {_name(cur, gone)} → {_name(cur, came)}",
             "",
@@ -229,7 +238,10 @@ def _transfers(cur: dict) -> list[str]:
             _player_row(cur, gone, "Out"),
             _player_row(cur, came, "In"),
             "",
-            f"{_name(cur, came)} over {_name(cur, gone)}: {gap:+.2f} over the window. "
+            WEIGHTED_CAPTION,
+            "",
+            f"{_name(cur, came)} over {_name(cur, gone)}: {gap:+.2f} weighted"
+            f" ({plain_gap:+.2f} plain) over the window. "
             + _clean(reasons.get((gone, came)) or _fallback(cur)),
             "",
         ]
@@ -254,10 +266,15 @@ def _squad(cur: dict) -> list[str]:
         fielded, xi = cur["squad"], cur["xi"]
         out = ["## Your squad", ""]
     out += _table_head(cur)
-    out += [_player_row(cur, pid, "XI") for pid in xi]
+    # The XI by position (goalkeeper to forward), the strongest weighted total
+    # first within one; then the bench in the order the subs come on.
+    lineup = sorted(
+        xi, key=lambda p: (_POSITION_ORDER.get(cur["players"][p]["p"], 9), -cur["players"][p]["t"], p)
+    )
+    out += [_player_row(cur, pid, "XI") for pid in lineup]
     bench = [p for p in fielded if p not in xi] if free_hit else cur["bench"]
     out += [_player_row(cur, pid, f"Bench {i}") for i, pid in enumerate(bench, 1)]
-    return out
+    return [*out, "", WEIGHTED_CAPTION]
 
 
 def _armbands(cur: dict) -> list[str]:
@@ -274,7 +291,7 @@ def _armbands(cur: dict) -> list[str]:
     for label, pid, key in (("Captain", captain, "captain"), ("Vice", vice, None)):
         if pid is None:
             continue
-        line = f"- **{label}: {_name(cur, pid)}** ({totals.get(pid, _window(cur, pid)):.2f})"
+        line = f"- **{label}: {_name(cur, pid)}** ({totals.get(pid, _window(cur, pid)):.2f} over the window)"
         if key:
             line += f" — {_clean(reasons.get(key)) or _fallback(cur)}"
         out.append(line)
@@ -290,7 +307,7 @@ def _skipped(cur: dict) -> list[str]:
     notes = {
         item.get("id"): _clean(item.get("reason")) for item in _reasons(cur).get("skipped") or []
     }
-    out = ["| Player | Instead of | Gap | Price | Why not | Note |", "|---|---|---|---|---|---|"]
+    out = ["| Player | Instead of | Gap (weighted) | Price | Why not | Note |", "|---|---|---|---|---|---|"]
     for item in rows:
         out.append(
             f"| {_name(cur, item['id'])} | {_name(cur, item['replaces'])}"
@@ -318,14 +335,18 @@ def _options(cur: dict) -> list[str]:
 def _chips(cur: dict) -> list[str]:
     decision = cur["decision"]
     chip = _chip(cur)
-    out = [f"Chip played: {chip}."]
+    out = [f"Chip played: {chip_label(chip)}." if chip != "none" else "No chip this week."]
     if chip != "none":
         out.append(
             _clean(_reasons(cur).get("chips") or decision.get("chip_justification"))
             or _fallback(cur)
         )
-    out += ["", "Expected value by chip:"]
-    out += [f"- {name}: {value:.2f}" for name, value in cur["chip_evs"].items()]
+    out += ["", "Points each chip would add this week:"]
+    for name, value in cur["chip_evs"].items():
+        # The wildcard is priced over the whole horizon, and says so, as the
+        # gameweek report's chip panel does.
+        label = chip_label(name) + (" (over the window)" if name == "wildcard" else "")
+        out.append(f"- {label}: {value:+.2f}")
     if cur.get("calendar"):
         out += ["", "Calendar:"]
         out += [f"- {line}" for line in cur["calendar"]]
@@ -349,7 +370,11 @@ def _cell(row: dict, gw: int) -> str:
 def _player_row(cur: dict, pid: int, tag: str) -> str:
     row = cur["players"][pid]
     cells = " | ".join(_cell(row, gw) for gw in cur["events"])
-    return f"| {tag} | {row['n']} ({row['p']}, {row['c']}) | {price(row['pr'])} | {cells} | {row['t']:.2f} |"
+    total = sum(row["x"].values())
+    return (
+        f"| {tag} | {row['n']} ({row['p']}, {row['c']}) | {price(row['pr'])}"
+        f" | {cells} | {total:.2f} | {row['t']:.2f} |"
+    )
 
 
 def _window(cur: dict, pid: int) -> float:

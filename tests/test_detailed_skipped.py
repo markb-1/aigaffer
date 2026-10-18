@@ -20,8 +20,12 @@ def plan(transfers_in, ft_kept=0):
     return {"in": list(transfers_in), "ft_kept": ft_kept}
 
 
-def run(players, squad, plans, chosen=0, bank=100, ft=1, window=6, settings=WINDOW):
-    rows = skipped_transfers(players, squad, plans, chosen, bank, ft, DECAY, window, settings)
+def run(players, squad, plans, chosen=0, bank=100, ft=1, window=6, settings=WINDOW, xi=()):
+    # xi defaults to nobody, so the bench tag stays out of the older tests; the
+    # bench tests below name their starters.
+    rows = skipped_transfers(
+        players, squad, plans, chosen, bank, ft, DECAY, window, settings, xi=list(xi)
+    )
     return {r["id"]: r for r in rows}, rows
 
 
@@ -84,7 +88,7 @@ def test_tags_in_order():
         12: row("MID", "ARS", 9.0, pr=90, xm=50.0),
         # 5.1 - 5.0 = 0.1 < 0.2: not worth a transfer.
         13: row("MID", "ARS", 5.1, pr=90),
-        # 9 - 5 = 4.0 >= 0.2: beaten by the chosen move.
+        # 9 - 5 = 4.0 >= 0.2: the plan does better without him.
         14: row("MID", "ARS", 9.0, pr=90),
     }
     plans = {0: plan([]), 1: plan([10, 11, 12, 13, 14])}
@@ -93,7 +97,7 @@ def test_tags_in_order():
     assert found[11]["tag"] == "club limit"
     assert found[12]["tag"] == "minutes risk"
     assert found[13]["tag"] == "not worth a transfer"
-    assert found[14]["tag"] == "beaten by the chosen move"
+    assert found[14]["tag"] == "the plan does better without him"
     # price_diff is against the sale price: 96 - 90 = 6.
     assert found[10]["price_diff"] == 6
     # A man from the replaced man's own club is no club-limit problem: swap
@@ -108,7 +112,7 @@ def test_tags_in_order():
         # ft_values[2] = 1.6; 0.85**6 = 0.377150; 1.6 * 0.377150 = 0.603440;
         # + ft_use_penalty 0.2 = 0.80344.
         (5.7, "not worth a transfer"),  # gap 0.7 < 0.80344
-        (5.9, "beaten by the chosen move"),  # gap 0.9 >= 0.80344
+        (5.9, "the plan does better without him"),  # gap 0.9 >= 0.80344
     ],
 )
 def test_not_worth_a_transfer_uses_the_lost_ft_step(gap_total, tag):
@@ -136,10 +140,10 @@ def test_with_no_free_move_left_the_threshold_is_a_hit():
     found, _ = run(players, [1], plans, ft=1)
     assert HIT_POINTS == 4
     assert found[10]["tag"] == "not worth a transfer"
-    assert found[11]["tag"] == "beaten by the chosen move"
+    assert found[11]["tag"] == "the plan does better without him"
     # With two free transfers one is still free: threshold 0.2, both beat it.
     found, _ = run(players, [1], plans, ft=2)
-    assert found[10]["tag"] == "beaten by the chosen move"
+    assert found[10]["tag"] == "the plan does better without him"
 
 
 # --- tag order: a player who meets two conditions gets the earlier tag -------
@@ -188,12 +192,12 @@ def test_club_limit_needs_three_squad_mates_and_a_replaced_man_from_elsewhere():
     b[2] = row("MID", "CHE", 1.0)
     found, _ = run(b, [1, 2, 3, 4], {0: plan([]), 1: plan([])})
     assert found[10]["replaces"] == 2
-    assert found[10]["tag"] == "beaten by the chosen move"
+    assert found[10]["tag"] == "the plan does better without him"
     # Case C: only two CHE in the squad (1 ARS 5.0; 2, 3 CHE): the count is
     # 2, not 3, so no club limit. Gap 9 - 5 = 4.0: beaten.
     c = {k: v for k, v in a.items() if k != 4}
     found, _ = run(c, [1, 2, 3], {0: plan([]), 1: plan([])})
-    assert found[10]["tag"] == "beaten by the chosen move"
+    assert found[10]["tag"] == "the plan does better without him"
 
 
 # --- the threshold, branch by branch ------------------------------------------
@@ -211,7 +215,7 @@ def _tag_at(gap, plans, ft, settings=WINDOW, window=6):
     return found[10]["tag"]
 
 
-NOT, BEAT = "not worth a transfer", "beaten by the chosen move"
+NOT, BEAT = "not worth a transfer", "the plan does better without him"
 
 
 def test_two_kept_free_transfers_lose_the_second_step():
@@ -303,3 +307,71 @@ def test_an_owned_player_is_never_offered_however_good():
     }
     _, rows = run(players, [1, 2], {0: plan([]), 1: plan([])})
     assert [r["id"] for r in rows] == [10]
+
+
+# --- would sit on the bench ---------------------------------------------------
+
+
+def test_a_keeper_between_the_backup_and_the_starter_would_sit_on_the_bench():
+    # Squad GKs: 1 (starter, 6.0, in the XI) and 2 (backup, 3.0, benched).
+    # The man replaced is the lowest, 2 (3.0), so candidate 10 at 5.0 reads as
+    # a gap of +2.0; but the weakest XI keeper is 1 at 6.0, and 5.0 < 6.0, so
+    # he would sit behind the starter.
+    players = {
+        1: row("GKP", "AAA", 6.0),
+        2: row("GKP", "BBB", 3.0),
+        10: row("GKP", "CCC", 5.0),  # gap 2.0 >= 0.2, minutes fine: only the bench applies
+    }
+    found, _ = run(players, [1, 2], {0: plan([]), 1: plan([])}, xi=[1])
+    assert found[10]["tag"] == "would sit on the bench"
+
+
+def test_a_man_better_than_the_weakest_starter_is_not_a_bench_man():
+    # Same keepers, candidate 10 at 6.5 > 6.0 (the starter): he would start.
+    players = {
+        1: row("GKP", "AAA", 6.0),
+        2: row("GKP", "BBB", 3.0),
+        10: row("GKP", "CCC", 6.5),
+    }
+    found, _ = run(players, [1, 2], {0: plan([]), 1: plan([])}, xi=[1])
+    assert found[10]["tag"] == "the plan does better without him"
+    # A man exactly level with the weakest starter is not below him.
+    players[10] = row("GKP", "CCC", 6.0)
+    found, _ = run(players, [1, 2], {0: plan([]), 1: plan([])}, xi=[1])
+    assert found[10]["tag"] == "the plan does better without him"
+
+
+def test_the_bench_comparison_is_against_starters_at_his_own_position():
+    # Candidate 10 is a DEF at 4.0. The XI's weakest DEF is 3 at 5.0, the XI's
+    # MID 4 is at 1.0 and must not count: 4.0 < 5.0, bench.
+    players = {
+        3: row("DEF", "AAA", 5.0),
+        5: row("DEF", "BBB", 1.0),  # benched DEF, not in the XI
+        4: row("MID", "CCC", 1.0),
+        10: row("DEF", "DDD", 4.0),
+    }
+    found, _ = run(players, [3, 5, 4], {0: plan([]), 1: plan([])}, xi=[3, 4])
+    assert found[10]["tag"] == "would sit on the bench"
+
+
+def test_minutes_risk_beats_the_bench_tag():
+    # Candidate 10: 50 minutes (risk) and 5.0 < the starter's 6.0 (bench).
+    players = {
+        1: row("GKP", "AAA", 6.0),
+        2: row("GKP", "BBB", 3.0),
+        10: row("GKP", "CCC", 5.0, xm=50.0),
+    }
+    found, _ = run(players, [1, 2], {0: plan([]), 1: plan([])}, xi=[1])
+    assert found[10]["tag"] == "minutes risk"
+
+
+def test_the_bench_tag_beats_not_worth_a_transfer():
+    # Candidate 10: 3.1 against the replaced backup's 3.0, gap 0.1 < 0.2 (not
+    # worth), and 3.1 < the starter's 6.0 (bench). Bench is first.
+    players = {
+        1: row("GKP", "AAA", 6.0),
+        2: row("GKP", "BBB", 3.0),
+        10: row("GKP", "CCC", 3.1),
+    }
+    found, _ = run(players, [1, 2], {0: plan([]), 1: plan([])}, xi=[1])
+    assert found[10]["tag"] == "would sit on the bench"

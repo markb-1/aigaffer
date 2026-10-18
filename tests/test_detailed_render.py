@@ -108,7 +108,88 @@ def test_a_transfer_shows_both_mens_fixtures_side_by_side_and_the_gap():
     assert "Justin" in transfers and "Cucurella" in transfers
     assert "LEE(h) 3.00" in transfers and "— 0.00" in transfers
     assert "wol(a) 2.00" in transfers and "LEE(h) 4.00" in transfers
-    assert "+3.00" in transfers
+    assert "Cucurella over Justin: +3.00 weighted (+3.00 plain) over the window." in transfers
+
+
+def test_totals_are_plain_and_weighted_and_the_gap_gives_both():
+    # Two men whose weighted total t is below their plain sum, as in a real
+    # decayed window. Out (Justin): x 3.00 + 0.00, plain 3.00, t 2.50.
+    # In (Cucurella): x 2.00 + 4.00, plain 6.00, t 4.00.
+    # Weighted gap 4.00 - 2.50 = +1.50; plain gap 6.00 - 3.00 = +3.00.
+    players = {
+        **PLAYERS,
+        4: {**PLAYERS[4], "t": 2.5},
+        7: {**PLAYERS[7], "t": 4.0},
+    }
+    text = render_detailed([snap(players=players)], "d")
+
+    transfers = _section(text, "Transfers")
+    assert "| Total | Weighted |" in transfers
+    assert "Window" not in text
+    assert "Cucurella over Justin: +1.50 weighted (+3.00 plain) over the window." in transfers
+    # Cucurella's row ends with plain 6.00 then weighted 4.00; Justin's 3.00, 2.50.
+    assert any(l.startswith("| In |") and l.endswith("| 6.00 | 4.00 |") for l in transfers.splitlines())
+    assert any(l.startswith("| Out |") and l.endswith("| 3.00 | 2.50 |") for l in transfers.splitlines())
+    caption = ("Weighted counts later gameweeks for less, as the planner does;"
+               " it is the total decisions are made on.")
+    assert caption in transfers
+    assert caption in _section(text, "Your squad")
+
+
+def test_the_skipped_gap_header_says_weighted():
+    section = _section(render_detailed([snap()], "d"), "Transfers skipped")
+
+    assert "| Gap (weighted) |" in section
+
+
+def test_the_plan_line_reads_in_full():
+    # snap(): xp 20.00, net 19.00, 0 hits, bank 5 tenths = 0.5m.
+    section = _section(render_detailed([snap()], "d"), "The plan")
+
+    assert (
+        "Expected points over the window: 20.00 xP; net 19.00 (after hits and charges,"
+        " plus the credit for free transfers kept); 0 hits; bank £0.5m."
+    ) in section
+
+
+def test_the_chips_section_uses_chip_labels_and_signs():
+    none = _section(render_detailed([snap()], "d"), "Chips")
+    assert "No chip this week." in none
+    assert "Chip played: none" not in none
+    assert "Points each chip would add this week:" in none
+    assert "- Bench Boost: +6.10" in none
+
+    played = snap(
+        decision={**snap()["decision"], "chip": "bench_boost"},
+        chip_evs={"bench_boost": 14.6, "triple_captain": -1.0, "wildcard": 12.0},
+    )
+    text = _section(render_detailed([played], "d"), "Chips")
+    assert "Chip played: Bench Boost." in text
+    assert "- Bench Boost: +14.60" in text
+    assert "- Triple Captain: -1.00" in text
+    # The wildcard is priced over the window, and says so as the GW report does.
+    assert "- Wildcard (over the window): +12.00" in text
+
+
+def test_the_captain_line_shows_the_plain_total_labelled():
+    # Saka: 4.12 + 7.30 = 11.42 plain (t is 11.42 too here, so make t differ).
+    players = {**PLAYERS, 1: {**PLAYERS[1], "t": 9.0}}
+    section = _section(render_detailed([snap(players=players)], "d"), "Captain and vice")
+
+    assert "- **Captain: Saka** (11.42 over the window)" in section
+
+
+def test_the_squad_lists_the_xi_by_position_then_total_and_the_bench_in_order():
+    # XI given deliberately jumbled: Haaland FWD, Saka MID 11.42, Raya GKP,
+    # Salah MID 5.00, Justin DEF. Expected: Raya, Justin, Saka, Salah, Haaland,
+    # then bench 5 (Xhaka) after.
+    cur = snap(xi=[3, 1, 6, 2, 4])
+    squad = _section(render_detailed([cur], "d"), "Your squad")
+
+    names = [l.split("|")[2].split(" (")[0].strip() for l in squad.splitlines()
+             if l.startswith("| XI") or l.startswith("| Bench")]
+    assert names == ["Raya", "Justin", "Saka", "Salah", "Haaland", "Xhaka"]
+    assert "| Bench 1 |" in squad
 
 
 def test_double_and_blank_cells():
