@@ -169,6 +169,9 @@ jobs:
           if compgen -G "GW*.md" > /dev/null; then
             git add GW*.md
           fi
+          # The detailed reports beside them, guarded for the same reason:
+          # a checkout no run has written one into has no reports/ at all.
+          if [ -d reports ]; then git add "reports/"; fi
           # The README's latest-verdict line moves with the root file. An
           # unchanged README stages as nothing, so this costs no commit.
           git add README.md

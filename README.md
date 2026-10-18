@@ -41,6 +41,10 @@ withheld alert open with the same line. The full reports are kept as a diary in
 CI to `GW{n}.md` at the repo root — the copy the GitHub homepage shows,
 written first by the early scout, rewritten by the scout midweek and
 overwritten by the deadline run. Once a gameweek's points are final, its file gains a short **Looking back** review at the end — what went well, what went wrong, and the lessons the next week's gaffer reads.
+Beside them, `reports/GW{n} Detailed Report.md` is the long read for each
+gameweek — every transfer with its fixtures, the squad, the armbands, the
+moves passed over and what changed between the week's runs — while
+`state/reports/` stays the run-by-run history.
 
 The reminder is the solver alone — the manager is never woken for it — and
 its ⚠️ means the *news* moved, not that the manager isn't a solver: it diffs

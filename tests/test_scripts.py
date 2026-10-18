@@ -145,6 +145,30 @@ def test_a_recording_the_inbox_never_committed_goes_with_the_next_tick(box, tmp_
     assert "state/executed/gw2.json" in files
 
 
+def test_the_tick_commits_the_detailed_reports(box, tmp_path):
+    # reports/ beside state/: the run writes "GW{n} Detailed Report.md"
+    # there, a name with spaces in it, and the tick commits it with the
+    # state like the root GW{n}.md. The stub interpreter writes nothing, so
+    # the file stands in for the one the run would have left.
+    clone, remote = box
+    (clone / "reports").mkdir()
+    (clone / "reports" / "GW2 Detailed Report.md").write_text("# GW2 Detailed Report\n")
+
+    tick(clone, tmp_path)
+
+    files = git("ls-tree", "-r", "--name-only", "main", cwd=remote).splitlines()
+    assert "reports/GW2 Detailed Report.md" in files
+
+
+def test_the_workflow_commits_the_detailed_reports_when_there_are_any():
+    # The GitHub Actions twin of the tick's commit step. Guarded, because the
+    # step runs even after a run that died before writing anything, and a
+    # checkout with no reports/ yet must not fail the step over it.
+    workflow = (ROOT / ".github" / "workflows" / "gaffer.yml").read_text()
+
+    assert 'if [ -d reports ]; then git add "reports/"; fi' in workflow
+
+
 def test_a_tick_with_nothing_to_send_pushes_nothing(box, tmp_path):
     clone, remote = box
 

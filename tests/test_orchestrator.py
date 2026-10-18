@@ -36,6 +36,7 @@ from aigaffer.chips import TRIPLE_CAPTAIN, held_for, whole_season
 from aigaffer.config import Config
 from aigaffer.data.fpl_api import FplClient
 from aigaffer.data.models import GwHistory, Player
+from aigaffer.detailed.snapshot import load_snapshots
 from aigaffer.ledger import Observation
 from aigaffer.manager import agent
 from aigaffer.manager.agent import ManagerDecision
@@ -50,7 +51,9 @@ from aigaffer.orchestrator import (
     PipelineInputs,
     PreparedWeek,
     SolveResult,
+    DETAILED_SKIPPED,
     _calendar,
+    _chosen_id,
     _fielded_lineup,
     _held,
     _entered_lineup,
@@ -4779,3 +4782,215 @@ def test_a_calm_reminder_after_a_free_hit_deadline_carries_the_free_hit_team(
         assert PLAYERS[pid].web_name in shown
     for pid in record["bench"]:
         assert PLAYERS[pid].web_name not in shown
+
+
+# --- the detailed report ---------------------------------------------------
+#
+# What the snapshot holds and how the report reads are pinned by
+# tests/test_detailed_*.py on hand-built dicts. What is pinned here is the
+# wiring: a saved run with a squad writes both, from the plan the week
+# actually chose, and nothing else does — a dry run, a draft, a run whose
+# detailed half fell over. Every root is the tmp directory holding the
+# test's state_dir, so no test writes into the real repo's reports/.
+
+DETAILED = "GW2 Detailed Report.md"
+
+
+def detailed_report(cfg: Config) -> str:
+    return (cfg.state_dir.parent / "reports" / DETAILED).read_text(encoding="utf-8")
+
+
+def test_a_saved_run_writes_the_snapshot_and_the_detailed_report(scout_run):
+    report = detailed_report(scout_run.cfg)
+    [snapshot] = load_snapshots(scout_run.cfg.state_dir, 2)
+    decision = scout_run.store.decision(2, "scout")
+    chosen = snapshot["plans"][snapshot["chosen"]]
+
+    assert report.startswith("# GW2 Detailed Report\n")
+    # The GW report's own deadline line, word for word: the two documents
+    # describe one week and must not disagree about when it closes.
+    assert "Deadline: Fri 22 Aug 2025 17:30 UTC · Last updated: scout run " in report
+    assert snapshot["mode"] == "scout" and snapshot["reran"] is False
+    # The plan the week chose, not merely a plan the solver had: the moves and
+    # the armbands are the decision record's.
+    assert (chosen["in"], chosen["out"]) == (
+        decision["transfers_in"], decision["transfers_out"]
+    )
+    assert (snapshot["captain"], snapshot["vice"]) == (decision["captain"], decision["vice"])
+    # No gaffer, so the registry is the solver's shortlist under the ids the
+    # briefing would have printed, and none of it is a re-solve's.
+    assert len(snapshot["plans"]) == len(bullets(scout_run.report, "Candidate plans"))
+    assert not any(plan["resolved"] for plan in snapshot["plans"].values())
+    assert snapshot["squad"] == PICKS_15_IDS
+    assert snapshot["bank"] == 28  # PICKS_15_JSON's, in tenths
+    assert set(PICKS_15_IDS) <= set(snapshot["players"])
+    assert snapshot["decision"]["source"] == "solver"
+
+
+def test_a_second_run_of_the_same_mode_is_marked_a_rerun(tmp_path):
+    # A forced rerun overwrites its own snapshot; "What changed" says so,
+    # because two entries headed "scout" with nothing to tell them apart
+    # would read as a bug in the history.
+    cfg = config(state_dir=tmp_path / "state")
+    store = Store(cfg.state_dir / "aigaffer.db")
+    client = make_client(pipeline_routes())
+
+    run_pipeline(cfg, client, store, "scout", send=False)
+    [first] = load_snapshots(cfg.state_dir, 2)
+    run_pipeline(cfg, client, store, "scout", send=False)
+    [second] = load_snapshots(cfg.state_dir, 2)
+
+    assert first["reran"] is False
+    assert second["reran"] is True
+    assert " (re-run)**" in detailed_report(cfg)
+
+
+def test_a_dry_run_writes_neither(tmp_path):
+    cfg = config(state_dir=tmp_path / "state")
+
+    run_pipeline(
+        cfg, make_client(pipeline_routes()), Store(tmp_path / "aigaffer.db"),
+        "scout", send=False, save=False,
+    )
+
+    assert not (tmp_path / "reports").exists()
+    assert not (cfg.state_dir / "detailed").exists()
+
+
+def test_a_draft_week_writes_no_detailed_report(tmp_path, capsys):
+    # Fifteen bought from nothing: no squad to show, no transfers to explain
+    # and no options weighed against a team that does not exist yet. The GW
+    # report says "initial squad draft"; the detailed one says nothing — and
+    # by choice, not by falling over: a draft is not a skipped report, so the
+    # log does not say one was.
+    routes = pipeline_routes()
+    del routes[PICKS_PATH]
+    cfg = config(state_dir=tmp_path / "state")
+    store = Store(tmp_path / "aigaffer.db")
+
+    report = run_pipeline(cfg, make_client(routes), store, "scout", send=False)
+
+    assert "initial squad draft" in report
+    assert store.has_run(2, "scout") is True, "the run itself was saved"
+    assert "detailed: report skipped" not in capsys.readouterr().out
+    assert not (tmp_path / "reports").exists()
+    assert not (cfg.state_dir / "detailed").exists()
+
+
+def test_a_recorded_free_hit_week_shows_no_transfers_and_the_standing_squad(tmp_path):
+    # He entered a free hit, so the standing squad is held (lock.hold) and
+    # the plan makes no move this week: the Transfers section says so rather
+    # than print the temporary team as fifteen signings. The fifteen on file
+    # is the standing one, named above the free-hit team the week fields.
+    store = Store(tmp_path / "aigaffer.db")
+    store.save_executed(
+        make_executed(
+            chip="free_hit", transfers_in=[], transfers_out=[],
+            squad_after=sorted(PICKS_15_IDS), bank_after=28, ft_after=1,
+            buy_prices={}, sell_prices={}, freehit_squad=FH_SQUAD, freehit_xi=FH_XI,
+            arrival_status={9: "a", 10: "a", 12: "a", 17: "a", 18: "a"},
+        )
+    )
+    cfg = config(state_dir=tmp_path / "state")
+
+    run_pipeline(cfg, make_client(pipeline_routes()), store, "deadline", send=False)
+    report = detailed_report(cfg)
+    [snapshot] = load_snapshots(cfg.state_dir, 2)
+
+    transfers = report[report.index("## Transfers\n"):]
+    assert transfers.split("\n")[2] == "No transfers this week."
+    assert sorted(snapshot["squad"]) == sorted(PICKS_15_IDS)
+    assert snapshot["freehit"] == {"squad": FH_SQUAD, "xi": FH_XI}
+    standing = ", ".join(PLAYERS[pid].web_name for pid in snapshot["squad"])
+    assert f"Standing squad: {standing}" in report
+    assert "## Your free-hit team" in report
+
+
+def test_a_detailed_report_failure_does_not_fail_the_run(monkeypatch, tmp_path, capsys):
+    # The detailed report is the long read, not the week: a snapshot that
+    # cannot be built costs that file and one line on the log, never the GW
+    # report, the store's record or the phone.
+    def broken(**_):
+        raise RuntimeError("a board nobody foresaw")
+
+    monkeypatch.setattr(orchestrator, "build_snapshot", broken)
+    cfg = config(state_dir=tmp_path / "state")
+    store = Store(tmp_path / "aigaffer.db")
+
+    report = run_pipeline(cfg, make_client(pipeline_routes()), store, "scout", send=False)
+
+    assert report.startswith("# AI Gaffer — GW2 scout")
+    assert (tmp_path / "GW2.md").read_text(encoding="utf-8") == report
+    assert store.has_run(2, "scout") is True
+    assert DETAILED_SKIPPED.format(reason="RuntimeError") in capsys.readouterr().out
+    assert DETAILED_SKIPPED.format(reason="RuntimeError") == (
+        "detailed: report skipped (RuntimeError)"
+    )
+    assert not (tmp_path / "reports").exists()
+
+
+def test_a_gaffer_week_is_written_on_his_plan_his_armbands_and_his_minutes(
+    monkeypatch, tmp_path
+):
+    # He rolled the transfer, wore his own armbands, and re-solved with Grant
+    # at no minutes: the snapshot is the week he decided, costed on the
+    # projections he decided on, so Grant's xMins is his 0 and not the
+    # model's. The registry he finalized against is the plans weighed.
+    def his(consult):
+        decision = decided(consult)
+        decision.adjustments = [
+            {"player_id": GRANT, "expected_minutes": 0.0, "reason": "suspended (club)"}
+        ]
+        decision.projections = consult.projections
+        decision.registry = dict(enumerate(consult.solve0.plans))
+        return decision
+
+    _, store, gaffer = gaffer_run(monkeypatch, tmp_path, his, send=False)
+    [snapshot] = load_snapshots(tmp_path / "state", 2)
+    decision = gaffer.decisions[0]
+
+    assert snapshot["plans"][snapshot["chosen"]]["in"] == []
+    assert snapshot["chosen"] == consult_index(gaffer, decision.plan)
+    assert (snapshot["captain"], snapshot["vice"]) == (decision.captain, decision.vice)
+    assert snapshot["players"][GRANT]["xm"] == 0.0
+    assert snapshot["decision"]["source"] == "manager"
+    assert snapshot["decision"]["rationale"] == GAFFER_RATIONALE
+
+
+def consult_index(gaffer: Gaffer, plan: Plan) -> int:
+    """Where ``plan`` sits on the shortlist the gaffer was briefed with."""
+    return next(i for i, p in enumerate(gaffer.consults[0].solve0.plans) if p is plan)
+
+
+def test_a_fallback_with_no_registry_weighs_the_shortlist(monkeypatch, tmp_path):
+    # The pipeline's own fallbacks (a chip refused in a recorded chip week,
+    # a briefing that would not build) are built without a registry. Their
+    # week is the solver's, chosen from the shortlist, so the shortlist is
+    # what the snapshot lists — not an empty registry the chosen plan is
+    # missing from.
+    _, store, gaffer = gaffer_run(monkeypatch, tmp_path, unavailable, send=False)
+    [snapshot] = load_snapshots(tmp_path / "state", 2)
+
+    assert gaffer.decisions[0].registry == {}
+    assert len(snapshot["plans"]) == len(gaffer.consults[0].solve0.plans)
+    assert snapshot["chosen"] == consult_index(gaffer, gaffer.decisions[0].plan)
+
+
+def test_the_chosen_plan_is_found_by_identity_then_by_squad():
+    # Two plans with one squad (a roll and a hold the window priced apart)
+    # are told apart by which object was chosen; a plan rebuilt with the
+    # same squad — a copy that crossed a re-solve — is still found by its
+    # squad; a plan in neither is an error for the caller's net to catch.
+    def plan(squad, xp):
+        return Plan(
+            squad=squad, xi=[], transfers_in=[], transfers_out=[], hits=0,
+            xp_total=xp, objective=xp,
+        )
+
+    first, twin, other = plan([1, 2, 3], 10.0), plan([3, 2, 1], 11.0), plan([4, 5, 6], 9.0)
+    plans = {0: first, 1: twin, 7: other}
+
+    assert _chosen_id(plans, twin) == 1
+    assert _chosen_id(plans, replace(other)) == 7
+    with pytest.raises(ValueError):
+        _chosen_id(plans, plan([7, 8, 9], 1.0))

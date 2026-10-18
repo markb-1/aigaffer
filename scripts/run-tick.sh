@@ -61,6 +61,9 @@ main() {
   # state/ includes state/executed/, the inbox's recorded weeks.
   git add state/
   if ls GW*.md >/dev/null 2>&1; then git add GW*.md; fi
+  # The detailed reports ("GW{n} Detailed Report.md"), when a run has
+  # written any: a box that has not run one yet has no reports/ to add.
+  if [ -d reports ]; then git add "reports/"; fi
   git add README.md
   if git diff --cached --quiet; then
     # Nothing new from this run — but an inbox recording whose push failed
