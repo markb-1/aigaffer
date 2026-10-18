@@ -69,6 +69,7 @@ seen. The solve holds the entered moves still in week 1, and every document
 says what squad it is working from.
 """
 
+import os
 from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
@@ -109,6 +110,13 @@ from aigaffer.data.models import (
     Squad,
     Standing,
 )
+from aigaffer.detailed.render import render_detailed
+from aigaffer.detailed.snapshot import (
+    build_snapshot,
+    load_snapshots,
+    snapshot_path,
+    write_snapshot,
+)
 from aigaffer.executed import Executed, apply_executed
 from aigaffer.ledger import Observation, observe, selling_price
 from aigaffer.news_ledger import (
@@ -127,9 +135,13 @@ from aigaffer.report.render import (
     # ``agent.MANAGER``, reached without importing the manager package at
     # module scope; renamed because this module's own DECIDED is a log line.
     DECIDED as BY_MANAGER,
+    DEADLINE_FORMAT,
     NO_CHIP,
+    deadline as deadline_text,
     formation,
+    planned_chips,
     played_chip,
+    render_chip_calendar,
     render_digest,
     render_entered_reminder,
     render_reminder,
@@ -139,6 +151,7 @@ from aigaffer.report.render import (
 )
 from aigaffer.report.telegram import KEYBOARD, send_report
 from aigaffer.review import LastWeek, last_week as review_lessons
+from aigaffer.solver import multiweek
 from aigaffer.solver.calendar import (
     ChipCalendar,
     build_calendar,
@@ -160,6 +173,7 @@ from aigaffer.solver.optimizer import (
     SQUAD_SIZE,
     Plan,
     Week1Lock,
+    candidate_pool,
     optimize,
 )
 from aigaffer.solver.plans import generate_plans, recommend
@@ -250,6 +264,9 @@ OVERTAKEN = (
     "the other scheduler recorded this report while this run was going"
     " — standing down"
 )
+# Said when the detailed report could not be built or written; the run goes
+# on without it, as it does without a ledger it could not write.
+DETAILED_SKIPPED = "detailed: report skipped ({reason})"
 
 # The reason a manager whose own module would not import is withheld under.
 # There is no decision to label and the class name already went to stdout;
@@ -471,9 +488,12 @@ def run_pipeline(
     With ``save`` the report is written to ``state/reports/gw{n}-{mode}.md``,
     to ``GW{n}.md`` at the repo root — the copy the GitHub homepage shows,
     where the deadline run overwrites the scout's — and recorded in the
-    store; with ``send`` it goes to Telegram, if a token
-    and a chat are configured. A dry run turns both off and leaves nothing
-    behind, which is what makes it safe to point at the live API.
+    store. A week with a squad also keeps its snapshot and the gameweek's
+    detailed report beside them (:func:`_write_detailed`), a failure of which
+    is a line on the log and never the run's. With ``send`` it goes to
+    Telegram, if a token and a chat are configured. A dry run turns both off
+    and leaves nothing behind, which is what makes it safe to point at the
+    live API.
 
     Neither flag reaches the manager. Asking him is reading and thinking, not
     sending or saving, and a dry run that skipped it would print a report
@@ -776,6 +796,24 @@ def run_pipeline(
         # The real inputs, never the effective: the ledger keeps the API's truth.
         observe(store, inputs.squad, inputs.players, inputs.chips_used)
         _write_report(cfg, event.id, mode, report)
+        # The long read beside it: the run's snapshot, and the gameweek's
+        # detailed report rendered from every snapshot the week has so far.
+        # Not on a draft — fifteen bought from nothing has no squad to show
+        # and no transfer to explain — and never at the week's expense: the
+        # GW report above is the verdict, and a snapshot that will not build
+        # costs this file and one line on the log, as the ledger's write does.
+        if not solved.draft_mode and effective.squad is not None:
+            try:
+                _write_detailed(
+                    cfg, event, mode,
+                    _run_snapshot(
+                        cfg, mode, clock, inputs, effective, solved, gaffer,
+                        choice, costed, xmins, prices, calendar, chip, decision,
+                        freehit_squad, freehit_xi,
+                    ),
+                )
+            except Exception as error:  # the long read, not the week
+                print(DETAILED_SKIPPED.format(reason=type(error).__name__))
         store.save_run(event.id, mode, report, decision)
         # What he learned this run, for the next one — only a week he
         # decided, and only when he recorded something (spec section 6). After
@@ -2517,6 +2555,184 @@ def _label(mode: str, drafting: bool) -> str:
     scout and says so."""
     name = MODE_LABELS.get(mode, mode)
     return f"{name} — {DRAFT_LABEL}" if drafting else name
+
+
+def _run_snapshot(
+    cfg: Config,
+    mode: str,
+    clock: datetime,
+    inputs: PipelineInputs,
+    effective: PipelineInputs,
+    solved: SolveResult,
+    gaffer: "ManagerDecision | None",
+    choice: Plan,
+    costed: dict[int, PlayerProjection],
+    xmins: dict[int, float],
+    prices: dict[int, int] | None,
+    calendar: ChipCalendar | None,
+    chip: str,
+    decision: dict,
+    freehit_squad: list[int] | None,
+    freehit_xi: list[int] | None,
+) -> dict:
+    """The run as :func:`~aigaffer.detailed.snapshot.build_snapshot` keeps it.
+
+    Everything here is something the run already holds; the work is choosing
+    the right copy of each, which is always the one the decision was made on:
+
+    - ``costed``, the gaffer's projections when he re-solved, and the minutes
+      that go with them (:func:`_costed_minutes`), so the xP and the xMins
+      beside a player are the ones the plan was chosen on;
+    - the plans he could have finalized, under the ids he saw them by — his
+      registry, or the solver's shortlist numbered the way the briefing
+      numbers it (:func:`~aigaffer.manager.briefing.initial_plan_ids`) when
+      there was no gaffer, or a fallback that carries no registry of its own;
+    - the projected set: everyone a history was fetched for, the window's own
+      candidate cut on the same projections, and the squad. A player outside
+      it was never really projected, and storing him would store a
+      confident-looking zero.
+
+    The briefing module is imported here rather than at module scope, for the
+    reason :func:`_consult` gives: the manager package is reached from inside
+    a function or not at all. It imports nothing of the SDK's, so a run with
+    the manager switched off pays nothing for it.
+    """
+    from aigaffer.manager.briefing import initial_plan_ids
+
+    event = effective.event
+    squad_ids = list(effective.squad.player_ids)
+    plans = (
+        gaffer.registry
+        if gaffer is not None and gaffer.registry
+        else dict(initial_plan_ids(solved))
+    )
+    pool = candidate_pool(
+        effective.players, costed, squad_ids, limit=multiweek.CANDIDATES_PER_POSITION
+    )
+    freehit = (
+        (freehit_squad, freehit_xi)
+        if freehit_squad is not None and freehit_xi is not None
+        else None
+    )
+    return build_snapshot(
+        event=event,
+        mode=mode,
+        ts=_stamp(clock),
+        bootstrap=effective.bootstrap,
+        fixtures=effective.fixtures,
+        projections=costed,
+        xmins=_costed_minutes(xmins, gaffer),
+        projected_ids=set(inputs.histories) | set(pool) | set(squad_ids),
+        squad_ids=squad_ids,
+        selling_prices=prices,
+        plans=plans,
+        chosen_id=_chosen_id(plans, choice),
+        decision=decision,
+        chip_evs=asdict(solved.chips),
+        calendar_lines=_calendar_lines(calendar, choice, chip, event.id),
+        freehit=freehit,
+        bank=effective.squad.bank,
+        # How many ids the briefing printed: every id at or above it is a
+        # re-solve's, which is how the snapshot marks a plan "resolved".
+        shortlist=len(solved.plans),
+        decay=cfg.decay,
+    )
+
+
+def _chosen_id(plans: dict[int, Plan], choice: Plan) -> int:
+    """The id ``choice`` goes by in ``plans``.
+
+    By identity first: the gaffer finalizes a plan out of the registry, so the
+    object he chose is the object filed under his id, and two plans with one
+    squad (a roll and a hold the window priced apart) are told apart only that
+    way. By squad second, for a choice that is a copy of a registry plan
+    rather than the plan itself. Neither is a ValueError, which the caller's
+    net turns into a skipped report rather than a snapshot pointing at the
+    wrong plan.
+    """
+    for pid, plan in plans.items():
+        if plan is choice:
+            return pid
+    for pid, plan in plans.items():
+        if sorted(plan.squad) == sorted(choice.squad):
+            return pid
+    raise ValueError(f"the chosen plan is not among the plans {sorted(plans)}")
+
+
+def _costed_minutes(
+    xmins: dict[int, float], gaffer: "ManagerDecision | None"
+) -> dict[int, float]:
+    """The coming week's minutes the decision was costed on.
+
+    The run's own unless he re-solved; then his applied adjustments on top,
+    clamped to a match the way :func:`build_projections` clamps them, which
+    is exactly what the re-solve's projections were built on. What he only
+    wrote down after his last re-solve (``unapplied``) reached nothing and is
+    left out, as it is everywhere else.
+    """
+    if gaffer is None or gaffer.projections is None:
+        return xmins
+    spent = {
+        adjustment["player_id"]: min(
+            FULL_MATCH, max(NO_MINUTES, float(adjustment["expected_minutes"]))
+        )
+        for adjustment in gaffer.adjustments
+    }
+    return {**xmins, **spent}
+
+
+def _calendar_lines(
+    calendar: ChipCalendar | None, choice: Plan, chip: str, event_id: int
+) -> list[str]:
+    """The chip calendar's lines as the GW report prints them, without the
+    heading or the bullets: the detailed report lays them out itself, and
+    two renderings of one calendar must never name different weeks."""
+    section = render_chip_calendar(
+        calendar, event_id, planned_chips(choice, chip, event_id), choice
+    )
+    if section is None:
+        return []
+    return [
+        line.removeprefix("- ")
+        for line in section.splitlines()[1:]
+        if line.strip()
+    ]
+
+
+def _stamp(clock: datetime) -> str:
+    """The run's clock in the deadline's format, so the detailed report's
+    header reads its two times the same way. A naive clock is UTC, as a
+    naive deadline is."""
+    if clock.tzinfo is None:
+        clock = clock.replace(tzinfo=UTC)
+    return clock.astimezone(UTC).strftime(DEADLINE_FORMAT)
+
+
+def _write_detailed(cfg: Config, event: Event, mode: str, snapshot: dict) -> None:
+    """Keep the run's snapshot, and the gameweek's detailed report built on it.
+
+    The snapshot goes to ``state/detailed/gw{n}-{mode}.json``, marked
+    ``reran`` when that mode had already written one this gameweek — a forced
+    rerun overwrites its own file, and "What changed" says it was a second
+    look rather than show two runs of one mode with nothing between them. The
+    report is rendered from every snapshot the gameweek has, so the history
+    is the files' and not this run's memory of it, and it is written to
+    ``reports/GW{n} Detailed Report.md`` beside ``state/`` — the root
+    :func:`_write_report` uses, which in a test is the tmp directory the test
+    owns. Atomically, through a temp file renamed over the old one: the
+    question handler reads it while a tick may be writing.
+    """
+    snapshot = {
+        **snapshot,
+        "reran": snapshot_path(cfg.state_dir, event.id, mode).exists(),
+    }
+    write_snapshot(cfg.state_dir, event.id, mode, snapshot)
+    text = render_detailed(load_snapshots(cfg.state_dir, event.id), deadline_text(event))
+    path = cfg.state_dir.parent / "reports" / f"GW{event.id} Detailed Report.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.tmp")
+    temporary.write_text(text, encoding="utf-8")
+    os.replace(temporary, path)
 
 
 def _write_report(cfg: Config, event_id: int, mode: str, report: str) -> None:
