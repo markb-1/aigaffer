@@ -50,10 +50,17 @@ def no_reasons_request(monkeypatch):
     the writer fails as it would against a dead network, the run goes on
     without the reasons as it must, and a test that wants them scripts its
     own client and passes it in.
+
+    The question handler (:mod:`aigaffer.ask`) builds the same client the
+    same way, lazily, on the first question that needs the gaffer; a test
+    that wires the inbox with a key and no scripted client would otherwise
+    send that question for real. It gets the same refusing client, and the
+    question fails into "ask again" as it would against a dead network.
     """
     monkeypatch.setattr(
         "aigaffer.manager.detailed_writer.build_review_client", _UnreachableClient
     )
+    monkeypatch.setattr("aigaffer.ask.build_review_client", _UnreachableClient)
 
 
 # ---------------------------------------------------------------------------
