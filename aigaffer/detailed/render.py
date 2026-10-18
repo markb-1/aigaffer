@@ -41,6 +41,7 @@ WEIGHTED_CAPTION = (
 _ATTACKERS = ("MID", "FWD")
 _POSITION_ORDER = {"GKP": 0, "DEF": 1, "MID": 2, "FWD": 3}
 RIVALS = 2
+RIVALS_LABEL = "Rivals (by total xP over the window)"
 
 
 def render_detailed(snapshots: list[dict], deadline_text: str) -> str:
@@ -281,13 +282,18 @@ def captain_rivals(cur: dict) -> list[int]:
     """The men the armband could have gone to instead: the XI's other
     attackers, strongest plain window total first, at most :data:`RIVALS`.
 
+    The vice is left out. He has his own line just above, total and all, and
+    listing him again spends one of the two places on a man the reader has
+    already been shown, where the next attacker is the comparison they have
+    not.
+
     Public because the gaffer's writer is briefed on the same list the report
     prints, so a captain reason that weighs Saka against Haaland is weighing
     him against the man the reader sees beside him.
     """
-    captain = cur["captain"]
+    taken = {cur["captain"], cur.get("vice")}
     return sorted(
-        (p for p in cur["xi"] if p != captain and cur["players"][p]["p"] in _ATTACKERS),
+        (p for p in cur["xi"] if p not in taken and cur["players"][p]["p"] in _ATTACKERS),
         key=lambda p: (-_window(cur, p), p),
     )[:RIVALS]
 
@@ -308,7 +314,9 @@ def _armbands(cur: dict) -> list[str]:
             line += f" — {_clean(reasons.get(key)) or _fallback(cur)}"
         out.append(line)
     if rivals:
-        out.append("- Rivals: " + ", ".join(f"{_name(cur, p)} ({totals[p]:.2f})" for p in rivals))
+        # Named for what they are ranked on: the plain sum over the window,
+        # not the weighted total the planner decides transfers on.
+        out.append(f"- {RIVALS_LABEL}: " + ", ".join(f"{_name(cur, p)} ({totals[p]:.2f})" for p in rivals))
     return out or ["No armbands recorded."]
 
 

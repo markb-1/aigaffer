@@ -146,6 +146,32 @@ def test_with_no_free_move_left_the_threshold_is_a_hit():
     assert found[10]["tag"] == "the plan does better without him"
 
 
+def test_a_man_no_better_than_the_one_he_replaces_is_dropped_unless_a_plan_bought_him():
+    # The lone squad MID 1 has t 5.0. Candidates, all in the top three:
+    #   10 at 4.0: gap -1.0, nobody bought him — dropped;
+    #   11 at 5.0: gap  0.0, nobody bought him — dropped (no gain is no case);
+    #   12 at 4.5: gap -0.5, but plan 1 bought him — kept, since a plan the
+    #              gaffer weighed thought him worth having;
+    # and 13 at 6.0, gap +1.0, is kept as ever.
+    players = {
+        1: row("MID", "AAA", 5.0),
+        10: row("MID", "BBB", 4.0),
+        11: row("MID", "CCC", 5.0),
+        12: row("MID", "DDD", 4.5),
+        13: row("MID", "EEE", 6.0),
+    }
+    plans = {0: plan([]), 1: plan([12])}
+    found, rows = run(players, [1], plans)
+    # Top three by total: 13 (6.0), 11 (5.0), 12 (4.5); 10 is fourth and only
+    # offered at all because no one bought him — he is not.
+    assert [r["id"] for r in rows] == [13, 12]
+    assert found[12]["gap"] == -0.5
+    # The chosen plan's own buys are never offered, so "another plan" means a
+    # plan other than the chosen one: chosen 1 buying 12 leaves him out.
+    _, rows = run(players, [1], plans, chosen=1)
+    assert [r["id"] for r in rows] == [13]
+
+
 # --- tag order: a player who meets two conditions gets the earlier tag -------
 
 
@@ -244,8 +270,9 @@ def test_one_kept_with_no_free_move_left_is_a_hit():
 def test_legacy_has_no_step_and_no_penalty():
     # LEGACY: ft_values () and penalty 0, so even ft_kept 3 loses no step.
     # Free move left (nothing bought, one free): threshold 0. Gap -0.1 < 0
-    # is not worth; gap 0.0 is not < 0, so beaten.
-    free = {0: plan([], ft_kept=3), 1: plan([])}
+    # is not worth; gap 0.0 is not < 0, so beaten. A gap of zero or less is
+    # only offered at all when another plan bought him, so plan 1 does here.
+    free = {0: plan([], ft_kept=3), 1: plan([10])}
     assert _tag_at(-0.1, free, ft=1, settings=LEGACY) == NOT
     assert _tag_at(0.0, free, ft=1, settings=LEGACY) == BEAT
     # No free move left: threshold HIT_POINTS = 4 exactly. 3.9 < 4; 4.0 is not.
