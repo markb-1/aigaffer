@@ -441,11 +441,12 @@ def test_the_cli_inbox_reads_the_inbox_directory(monkeypatch, tmp_path):
     seen = {}
 
     def fake_run_inbox(
-        token, chat_id, directory, handler, chip_whatif=None, chip_forecast=None
+        token, chat_id, directory, handler, chip_whatif=None, chip_forecast=None,
+        ask=None,
     ):
         seen.update(token=token, chat_id=chat_id, directory=directory,
                     handler=handler, chip_whatif=chip_whatif,
-                    chip_forecast=chip_forecast)
+                    chip_forecast=chip_forecast, ask=ask)
         return 0
 
     monkeypatch.setattr(cli, "run_inbox", fake_run_inbox)
@@ -465,6 +466,36 @@ def test_the_cli_inbox_reads_the_inbox_directory(monkeypatch, tmp_path):
     forecast = seen["chip_forecast"]
     assert forecast.func.__name__ == "chip_forecast"
     assert len(forecast.args) == 2, "bound with the config and the client only"
+
+
+def test_the_inbox_wires_ask_only_with_a_manager(monkeypatch, tmp_path):
+    # With a key the manager is on and the gaffer answers questions; with none
+    # (or AIGAFFER_MANAGER=0) there is nobody to ask, so ``ask`` stays None and
+    # a question gets the help, as it did before the gaffer existed.
+    monkeypatch.setenv("FPL_TEAM_ID", "99")
+    monkeypatch.setenv("AIGAFFER_INBOX_DIR", str(tmp_path / "inbox"))
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", TOKEN)
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", CHAT)
+    seen = []
+
+    def fake_run_inbox(*args, ask=None, **kwargs):
+        seen.append(ask)
+        return 0
+
+    monkeypatch.setattr(cli, "run_inbox", fake_run_inbox)
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    assert cli.main(["inbox"]) == 0
+    assert callable(seen[-1]), "a manager on: the gaffer answers"
+
+    monkeypatch.delenv("ANTHROPIC_API_KEY")
+    assert cli.main(["inbox"]) == 0
+    assert seen[-1] is None, "no key, no manager, no gaffer"
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    monkeypatch.setenv("AIGAFFER_MANAGER", "0")
+    assert cli.main(["inbox"]) == 0
+    assert seen[-1] is None, "the manager switched off, no gaffer"
 
 
 def test_the_inbox_directory_defaults_to_the_home_dot_directory(monkeypatch, tmp_path):
