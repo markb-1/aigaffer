@@ -1,7 +1,7 @@
 {
   "173": {
     "category": "nailed",
-    "checked_at": "2026-10-16T16:35:04.393394+00:00",
+    "checked_at": "2026-10-20T18:35:04.529168+00:00",
     "expected_minutes": 88.0,
     "fpl": {
       "chance_of_playing_next_round": null,
@@ -9,13 +9,13 @@
       "news_added": null,
       "status": "a"
     },
-    "gw": 7,
-    "note": "Carried from earlier run: nailed starter for Coventry.",
+    "gw": 8,
+    "note": "Has started all six of Coventry's top-flight games, and a preview of the Spurs match lists no issue with him.",
     "player_id": 173,
-    "quote_date": "2026-10-12",
+    "quote_date": "2026-10-19",
     "return_gw": null,
-    "run": "deadline",
-    "source": "earlier run (tier 2 report)",
+    "run": "early",
+    "source": "Tottenham vs Coventry team news preview",
     "tier": 2
   },
   "388": {
@@ -38,27 +38,27 @@
     "tier": 1
   },
   "411": {
-    "category": "rotation",
-    "checked_at": "2026-10-16T16:35:04.393394+00:00",
-    "expected_minutes": 78.0,
+    "category": "doubt",
+    "checked_at": "2026-10-20T18:35:04.529168+00:00",
+    "expected_minutes": 65.0,
     "fpl": {
-      "chance_of_playing_next_round": null,
+      "chance_of_playing_next_round": 100,
       "news": "",
-      "news_added": null,
+      "news_added": "2026-10-19T13:00:10.543876Z",
       "status": "a"
     },
-    "gw": 7,
-    "note": "Maresca pre-Ipswich presser (Fri 16 Oct): Haaland in the squad but 'at some point we probably need to give him rest'; 7 games in 22 days, AEK Athens 3 days later. Vague, so a modest cut rather than a benching.",
+    "gw": 8,
+    "note": "Limped off at full time v Ipswich on 17 Oct with a foot knock. On 19 Oct Maresca said he 'can be available. We will see', and he then missed training after the press conference. City host AEK Athens in the Champions League on Tue 20 Oct before GW8. He is a real doubt and could be rested.",
     "player_id": 411,
-    "quote_date": "2026-10-16",
+    "quote_date": "2026-10-19",
     "return_gw": null,
-    "run": "deadline",
-    "source": "Man City official site / Sports Mole",
+    "run": "early",
+    "source": "Maresca press conference via Sports Mole / Yahoo (Futbol Chronicle)",
     "tier": 1
   },
   "68": {
     "category": "nailed",
-    "checked_at": "2026-10-16T16:35:04.393394+00:00",
+    "checked_at": "2026-10-20T18:35:04.529168+00:00",
     "expected_minutes": 85.0,
     "fpl": {
       "chance_of_playing_next_round": null,
@@ -66,13 +66,13 @@
       "news_added": null,
       "status": "a"
     },
-    "gw": 7,
-    "note": "Fit; with Scott, Kroupi, Kluivert, Adli, Milosavljevic all out, predicted to lead Bournemouth's attack vs Sunderland.",
+    "gw": 8,
+    "note": "Started and scored the opener against Sunderland on 18 Oct. No injury news.",
     "player_id": 68,
-    "quote_date": "2026-10-15",
+    "quote_date": "2026-10-18",
     "return_gw": null,
-    "run": "deadline",
-    "source": "Bournemouth vs Sunderland predicted lineups preview",
-    "tier": 3
+    "run": "early",
+    "source": "NBC Sports match clip",
+    "tier": 2
   }
 }
