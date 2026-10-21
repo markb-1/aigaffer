@@ -91,13 +91,15 @@ CHIP_UNITS = (
     " priced over the whole horizon, because that is what a wildcard buys."
 )
 
-# What the shortlist says when the manager's own plan is not on it: he adjusted
-# somebody's minutes and solved again, and what came back was a fifteen this
-# list never reached.
-RESOLVED_ELSEWHERE = (
-    "The gaffer re-solved after his adjustments;"
-    " his pick above is not on this list."
-)
+# The two marks the shortlist puts on a re-solve. He adjusted somebody's
+# minutes and solved again, and the plan that came back is an object of its
+# own with its own numbers: it leads the list, marked as his and as re-solved,
+# so the report and the detailed report quote one net for one decision. A row
+# below with the same fifteen is the solver's first answer to the same moves,
+# priced on the minutes he then changed, and it says so rather than look like
+# a second recommendation or a rival to his.
+RESOLVED_PICK = "  <- recommended (re-solved on the gaffer's minutes)"
+BEFORE_HIS_CHANGES = "  (same moves, before his changes)"
 
 # What the shortlist says when the window was asked and had nothing to say. It
 # is printed only when the better engine was configured on and did not answer:
@@ -1580,50 +1582,59 @@ def _candidates(
     """Every plan the solver came back with, in the order it ranked them.
 
     Exactly one row carries the recommendation, and that has to hold however
-    the recommendation was arrived at. A manager who re-solved on his own
-    minutes finalizes a plan object the solver minted after this list was
-    drawn up, so the row is found by the squad it leaves behind and not by
-    identity — the same fifteen is the same plan, whatever the numbers beside
-    it were recomputed to.
+    the recommendation was arrived at. In the ordinary run — no manager, or a
+    manager who finalized a plan off this board — the choice is one of these
+    objects, the row is found by identity, and the section reads as it always
+    has.
 
-    ``decided`` says a manager chose. When his choice is genuinely not on this
-    list — a squad the original solve never reached — no row is flagged and
-    the section says why, because a list with no recommendation on it and a
-    recommendation above it with no list behind it is a report that has
-    stopped explaining itself.
+    ``decided`` says a manager chose. A manager who re-solved on his own
+    minutes finalizes a plan object the solver minted after this list was
+    drawn up, and its numbers are his: the projections it was costed on are
+    the ones he adjusted. That plan is printed first, with its own totals and
+    :data:`RESOLVED_PICK`. Matching it to a row by squad, which is what this
+    did before, put the recommendation beside the numbers from *before* his
+    changes — GW8 printed 258.0 net here while the detailed report said
+    256.81 for the same decision. A row with the same fifteen is still shown,
+    in its place, marked :data:`BEFORE_HIS_CHANGES`; a re-solve that reached
+    a fifteen no row holds leaves every row unmarked, since the pick is now on
+    the list either way.
 
     A board off the window is captioned, because its rows mix two stretches of
     time — see :data:`WINDOW_UNITS`, and :func:`hits_taken` for the one cell
-    that carries both. The caption is read off the rows rather than off the
-    recommendation, since it is the rows it is explaining: a single-week board
+    that carries both. The caption is read off the rows printed, his re-solve
+    included, since it is the rows it is explaining: a single-week board
     prints the section exactly as it printed before there was a window at all.
 
     ``fell_back`` says the window was asked and had nothing to say about the
-    plan being recommended, which in the ordinary run is a fact about this
-    whole list: the caller reads it off that plan, and that plan is one of
-    these. After a manager re-solve it need not be one of these, and then the
-    line is still true of the recommendation above and merely unproven of the
-    rows — which is the right way round, since the recommendation is what a
-    reader is being asked to trust. It goes under the list, above the note
-    about the recommendation.
+    plan being recommended — the caller reads it off that plan — and it goes
+    under the list.
     """
+    resolved = decided and not any(plan is choice for plan in plans)
     pick = _pick(plans, choice)
+    shown = [choice, *plans] if resolved else plans
     lines = ["## Candidate plans", ""]
-    if any(carries_a_path(plan) for plan in plans):
+    if any(carries_a_path(plan) for plan in shown):
         lines += [WINDOW_UNITS, ""]
+    if resolved:
+        lines.append(_candidate(choice) + RESOLVED_PICK)
     for index, plan in enumerate(plans):
-        recommended = "  <- recommended" if index == pick else ""
-        lines.append(
-            f"- {plural(len(plan.transfers_in), 'transfer')}"
-            f" | {hits_taken(plan)}"
-            f" | {plan.xp_total:.1f} xP"
-            f" | {plan.objective:.1f} net{recommended}"
-        )
+        mark = ""
+        if index == pick:
+            mark = BEFORE_HIS_CHANGES if resolved else "  <- recommended"
+        lines.append(_candidate(plan) + mark)
     if fell_back:
         lines += ["", SINGLE_WEEK]
-    if decided and pick is None:
-        lines += ["", RESOLVED_ELSEWHERE]
     return "\n".join(lines)
+
+
+def _candidate(plan: Plan) -> str:
+    """One row of the shortlist, unmarked: moves, hits, xP and net."""
+    return (
+        f"- {plural(len(plan.transfers_in), 'transfer')}"
+        f" | {hits_taken(plan)}"
+        f" | {plan.xp_total:.1f} xP"
+        f" | {plan.objective:.1f} net"
+    )
 
 
 def hits_taken(plan: Plan) -> str:
@@ -1667,12 +1678,13 @@ def carries_a_path(plan: Plan) -> bool:
 
 
 def _pick(plans: list[Plan], choice: Plan) -> int | None:
-    """Which row is the recommendation, if any of them is.
+    """Which row holds the recommendation's fifteen, if any of them does.
 
     Identity first, because in a run with no manager the choice is one of
     these objects and two plans could in principle field the same fifteen by
-    different routes. Then the squad, which is what makes a re-solved plan the
-    same plan as the one this list already has.
+    different routes. Then the squad, which finds the row a re-solved plan
+    shares its moves with — the row :func:`_candidates` marks as the same
+    moves before his changes.
     """
     for index, plan in enumerate(plans):
         if plan is choice:
