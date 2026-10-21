@@ -152,7 +152,21 @@ PHONE_BENCH_JOIN = " \u00b7 "
 WORKING_FROM = "Working from the squad you entered on {day}: {moves}."
 # A chip he has already entered, on the checklist where "PLAY" would be: it
 # is the week's chip, and the one thing he must not do is look for it again.
-CHIP_ENTERED = "{chip} already played — you entered it"
+# The chip and the verb are in capitals, as "PLAY BENCH BOOST" is, because it
+# is the first line of the checklist; the clause after the dash is an aside
+# and stays in the case an aside is written in.
+CHIP_ENTERED = "{chip} ALREADY PLAYED — you entered it"
+
+# The banner a chip week opens every document with, straight under the title
+# and before the deadline (see :func:`chip_banner`). The owner read a
+# bench-boost week and missed the chip: it was one line of the checklist,
+# under the sales. Telegram bolds heading lines and nothing else, so the banner
+# is a heading — the only way to make a line bold on the phone. The free hit
+# has its own words because what is peculiar to it is the thing to know before
+# entering anything: the team built for it is gone again next week.
+CHIP_BANNER = "## ⚡ {chip} THIS WEEK — play it in the app before the deadline"
+FREE_HIT_BANNER = "## ⚡ FREE HIT THIS WEEK — a temporary team; it reverts next week"
+CHIP_PLAYED_BANNER = "## ✅ {chip} PLAYED — you entered it"
 
 # The line under the path, every week. The gameweeks after this one are solved
 # on a projection of a projection and re-planned from scratch on the next run;
@@ -315,9 +329,11 @@ def render_report(
     chip_section = render_chip_calendar(
         calendar, event.id, planned_chips(choice, chip, event.id), choice
     )
+    # A draft has no checklist and no chip to play, so no banner either.
+    banner = None if _drafting(choice) else chip_banner(chip, entered)
 
     sections = [
-        _header(mode, event),
+        _header(mode, event, banner=banner),
         *([] if executed is None else [working_from(executed, players)]),
         *(
             []
@@ -419,7 +435,12 @@ def render_reminder(
             return []
         return [phone_lineup(lineup, players, heading, actions["chip"] == FREE_HIT)]
 
-    sections = [_header("reminder", event, standing, free_transfers)]
+    sections = [
+        _header(
+            "reminder", event, standing, free_transfers,
+            chip_banner(_operative(fresh, stored)["chip"], False),
+        )
+    ]
     if stored is None:
         sections += [block("## Do this", fresh)]
         sections += lineup_block(fresh_lineup, fresh, PHONE_HEADING)
@@ -478,8 +499,10 @@ def render_digest(
     clubs = {team.id: team.short_name for team in bootstrap.teams}
     chip = played_chip(choice, gaffer, executed)
     free_hit = _free_hitting(choice, chip, executed)
+    entered = executed is not None and executed.chip == chip != NO_CHIP
+    banner = None if _drafting(choice) else chip_banner(chip, entered)
 
-    sections = [_header(mode, event, standing, free_transfers)]
+    sections = [_header(mode, event, standing, free_transfers, banner)]
     # A draft holds no chips, so its calendar is None and there is no line.
     line = chip_line(calendar, choice, chip, event.id)
     if line is not None:
@@ -490,8 +513,7 @@ def render_digest(
         sections.append(
             _do_this(
                 event, choice, lineup, players, clubs, chip, free_hit,
-                free_transfers, selling_prices,
-                chip_entered=executed is not None and executed.chip == chip != NO_CHIP,
+                free_transfers, selling_prices, chip_entered=entered,
             )
         )
         sections.append(phone_lineup(lineup, players, free_hit=free_hit))
@@ -532,9 +554,11 @@ def render_withheld(
     clubs = {team.id: team.short_name for team in bootstrap.teams}
     chip = played_chip(choice, None, executed)
     free_hit = _free_hitting(choice, chip, executed)
+    entered = executed is not None and executed.chip == chip != NO_CHIP
+    banner = None if _drafting(choice) else chip_banner(chip, entered)
 
     sections = [
-        _header(mode, event, standing, free_transfers),
+        _header(mode, event, standing, free_transfers, banner),
         *([] if executed is None else [working_from(executed, players)]),
         WITHHELD_NOTICE.format(reason=reason, until=_utc(until), attempts=attempts),
     ]
@@ -542,12 +566,26 @@ def render_withheld(
         sections.append(
             _do_this(
                 event, choice, lineup, players, clubs, chip, free_hit,
-                free_transfers, selling_prices,
-                chip_entered=executed is not None and executed.chip == chip != NO_CHIP,
+                free_transfers, selling_prices, chip_entered=entered,
             )
         )
         sections.append(phone_lineup(lineup, players, free_hit=free_hit))
     return "\n\n".join(sections) + "\n"
+
+
+def _operative(fresh: dict, stored: dict | None) -> dict:
+    """The reminder's operative plan: the stored verdict, or the fresh solve
+    when there was no full report to store one.
+
+    The reminder has no ``played_chip``: it has no manager and no plan object,
+    only actions dicts, and each checklist prints its own dict's chip. The
+    banner follows the checklist that is the operative plan — the verdict
+    shown first, calm or changed, or the fresh block when it is the only one —
+    so the line above the checklist and the checklist itself name one chip.
+    A fresh solve that has dropped or swapped the chip is news, and says so
+    in the ⚠️ list; it does not get to retitle the alert.
+    """
+    return fresh if stored is None else stored
 
 
 def render_reminder_digest(
@@ -591,7 +629,10 @@ def render_reminder_digest(
     players = {player.id: player for player in bootstrap.elements}
     clubs = {team.id: team.short_name for team in bootstrap.teams}
     sections = [
-        _header("reminder", event, standing, free_transfers),
+        _header(
+            "reminder", event, standing, free_transfers,
+            chip_banner(_operative(fresh, stored)["chip"], False),
+        ),
         _actions_block("## Do this", event, stored, players, clubs, selling_prices),
         _changed(changes, players, clubs),
         *(
@@ -658,7 +699,10 @@ def render_entered_reminder(
         return _changed(changes, players, clubs, headline=NEWS_MOVED_ENTERED)
 
     sections = [
-        _header("reminder", event, standing, free_transfers),
+        _header(
+            "reminder", event, standing, free_transfers,
+            chip_banner(executed.chip, True),
+        ),
         working_from(executed, players),
     ]
     now = (
@@ -817,8 +861,8 @@ def _actions_block(
     """One plan as the ⏰ checklist, under ``heading``.
 
     The same shape as the full report's "Do this" block, drawn from an
-    actions dict instead of a plan: the deadline, a swap to a line, the chip
-    if one plays, the armbands, and — always, where the report only nudges
+    actions dict instead of a plan: the deadline, the chip if one plays —
+    first, in capitals — a swap to a line, the armbands, and — always, where the report only nudges
     when a signing starts — the formation, because a reminder with no team
     sheet under it has nowhere else to say the shape. A stored plan from
     before formations were kept simply drops the line.
@@ -829,24 +873,24 @@ def _actions_block(
     left to change. ``chip_entered`` is a fresh plan whose chip is the one
     he has already played: it reads as played, never as "PLAY".
     """
+    top = (
+        f"⏰ Deadline {deadline(event)} — GW{event.id}"
+        if entered
+        else f"⏰ Make these by {deadline(event)} — GW{event.id}"
+    )
+    lines = [heading, "", top]
+    # The chip leads, as it does on the report's checklist (:func:`_chip_order`).
+    if actions["chip"] != NO_CHIP:
+        lines.append(_chip_order(actions["chip"], entered or chip_entered))
     if entered:
-        lines = [
-            heading, "", f"⏰ Deadline {deadline(event)} — GW{event.id}", ENTERED_ALREADY
-        ]
-        if actions["chip"] != NO_CHIP:
-            lines.append(CHIP_ENTERED.format(chip=chip_label(actions["chip"])))
+        lines.append(ENTERED_ALREADY)
     else:
-        lines = [heading, "", f"⏰ Make these by {deadline(event)} — GW{event.id}"]
         if not actions["transfers"]:
             lines.append("No transfers — roll.")
         lines += [
             _swap(out, bought, players, clubs, selling_prices)
             for out, bought in actions["transfers"]
         ]
-        if actions["chip"] != NO_CHIP and chip_entered:
-            lines.append(CHIP_ENTERED.format(chip=chip_label(actions["chip"])))
-        elif actions["chip"] != NO_CHIP:
-            lines.append(f"PLAY {chip_label(actions['chip'])}")
     lines.append(
         f"CAPTAIN {_who(actions['captain'], players)}"
         f" · VICE {_who(actions['vice'], players)}"
@@ -947,6 +991,43 @@ def chip_label(chip: str) -> str:
     return chip.replace("_", " ").title()
 
 
+def chip_banner(chip: str, entered: bool) -> str | None:
+    """The heading a chip week opens with, or None on a week with no chip.
+
+    ``## ⚡ BENCH BOOST THIS WEEK — play it in the app before the deadline``.
+    One helper for all four documents — report, digest, reminder, withheld
+    alert — so a chip week cannot shout on the phone and whisper in the diary.
+    The caller decides the chip, by the rule that document already uses for
+    its checklist, and the banner only says it: the checklist and the line
+    above it can never name two different chips.
+
+    ``entered`` is a chip the owner has already played in the app: the banner
+    then says so and stops telling him to play it, which would send him
+    looking for a chip he has spent.
+    """
+    if chip == NO_CHIP:
+        return None
+    name = chip_label(chip).upper()
+    if entered:
+        return CHIP_PLAYED_BANNER.format(chip=name)
+    if chip == FREE_HIT:
+        return FREE_HIT_BANNER
+    return CHIP_BANNER.format(chip=name)
+
+
+def _chip_order(chip: str, entered: bool) -> str:
+    """The checklist's chip line: ``PLAY BENCH BOOST``, or that it is played.
+
+    In capitals and first under the ⏰ line, on every checklist that carries
+    one. It used to follow the sales, and a chip is the one decision on the
+    list that cannot be undone once the deadline passes and is easy to forget
+    because nothing in the app prompts for it: the line the eye lands on first
+    is the line nobody misses.
+    """
+    name = chip_label(chip).upper()
+    return CHIP_ENTERED.format(chip=name) if entered else f"PLAY {name}"
+
+
 def entered_moves(executed: "Executed", players: dict[int, Player]) -> str:
     """What the owner entered this gameweek, as one clause.
 
@@ -1004,14 +1085,22 @@ def _header(
     event: Event,
     standing: Standing | None = None,
     free_transfers: int | None = None,
+    banner: str | None = None,
 ) -> str:
     """The title, the deadline, and — given a standing — how the season is
     going, each a paragraph of its own so a markdown reader keeps them apart
     (the reminder alert is saved as one; see the module docstring). The
     standing sits under the deadline rather than in the heading because the
     heading is what the store and the diary are keyed by, and it must not
-    change week to week for a reason that is not the week."""
-    lines = [f"# AI Gaffer — GW{event.id} {mode}", "", f"Deadline: {deadline(event)}"]
+    change week to week for a reason that is not the week.
+
+    ``banner`` is the chip week's :func:`chip_banner`, and it goes between the
+    title and the deadline: the first thing read after which week this is.
+    None — every week with no chip — is the header as it always was."""
+    lines = [f"# AI Gaffer — GW{event.id} {mode}", ""]
+    if banner is not None:
+        lines += [banner, ""]
+    lines.append(f"Deadline: {deadline(event)}")
     if standing is not None:
         lines += ["", _standing_line(standing, free_transfers)]
     return "\n".join(lines)
@@ -1084,9 +1173,10 @@ def _do_this(
 
     The bot advises and never executes: the moves are made by hand, on a phone,
     against a deadline. So the top of the report is a short list of exactly what
-    to do, in the order the FPL app takes it — the deadline, the transfers, the
-    chip if there is one, the armbands, and a nudge to fix the lineup when a
-    signing has to start. Everything below it explains this; this is the part he
+    to do: the deadline, the chip if there is one, the transfers in the order
+    the FPL app takes them, the armbands, and a nudge to fix the lineup when a
+    signing has to start. The chip leads, in capitals, because it is the line
+    a reader skimming the sales once missed (:func:`_chip_order`). Everything below it explains this; this is the part he
     acts on, and it draws from the same decision without adding a fact to it.
 
     ``chip`` is the chip this week plays, ``"none"`` for most weeks. A free-hit
@@ -1106,13 +1196,11 @@ def _do_this(
     so instead of telling him to play it.
     """
     lines = ["## Do this", "", f"⏰ Make these by {deadline(event)} — GW{event.id}"]
-    chip_line_text = (
-        CHIP_ENTERED.format(chip=chip_label(chip))
-        if chip_entered
-        else f"PLAY {chip_label(chip)}"
-    )
+    # The chip is the first line under the deadline, in capitals: see
+    # :func:`_chip_order` for why it moved up from under the sales.
+    if chip != NO_CHIP:
+        lines.append(_chip_order(chip, chip_entered))
     if free_hit:
-        lines.append(chip_line_text)
         lines.append(
             f"{FREE_HIT_XI}: {_eleven(lineup, players)}"
             " — a temporary team; it reverts next week"
@@ -1124,8 +1212,6 @@ def _do_this(
         return "\n".join(lines)
 
     lines += _moves(choice, players, clubs, free_transfers, selling_prices, chip=chip)
-    if chip != NO_CHIP:
-        lines.append(chip_line_text)
     lines.append(
         f"CAPTAIN {_who(lineup.captain, players)} · VICE {_who(lineup.vice, players)}"
     )

@@ -387,3 +387,18 @@ def test_send_message_attaches_the_keyboard():
     send_message(TOKEN, CHAT_ID, "hello", http=http)
 
     assert [body["reply_markup"] for body in bodies] == [KEYBOARD]
+
+
+def test_a_chip_banner_arrives_as_a_bold_line():
+    # The banner is a heading precisely so that Telegram bolds it: the one
+    # thing a chip week must not be on a phone is easy to miss.
+    report = (
+        "# AI Gaffer — GW8 scout\n\n"
+        "## ⚡ BENCH BOOST THIS WEEK — play it in the app before the deadline\n\n"
+        "Deadline: Fri 17 Oct 2026 17:30 UTC"
+    )
+    assert texts(send(report)) == [
+        "<b>AI Gaffer — GW8 scout</b>\n\n"
+        "<b>⚡ BENCH BOOST THIS WEEK — play it in the app before the deadline</b>\n\n"
+        "Deadline: Fri 17 Oct 2026 17:30 UTC"
+    ]

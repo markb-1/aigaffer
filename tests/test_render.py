@@ -66,6 +66,7 @@ from aigaffer.report.render import (
     RECORDED_CALM,
     phone_lineup,
     REMINDER_UNCHANGED,
+    chip_banner,
     chip_line,
     CHIP_ENTERED,
     WORKING_FROM,
@@ -563,7 +564,7 @@ def test_a_roll_at_the_cap_says_rolling_adds_none():
 def test_a_chip_the_gaffer_plays_is_a_line_to_act_on():
     played = section(report(view=gaffer(chip="bench_boost", justification=GOOD_CHIP)), "Do this")
 
-    assert "PLAY Bench Boost" in played
+    assert "PLAY BENCH BOOST" in played
 
 
 def test_no_chip_prints_no_chip_line():
@@ -811,7 +812,7 @@ def test_a_chip_the_solver_plans_is_a_line_to_act_on_with_no_manager():
     # says so even with nobody in the manager's chair.
     played = section(report(choice=planning("bench_boost")), "Do this")
 
-    assert "PLAY Bench Boost" in played
+    assert "PLAY BENCH BOOST" in played
 
 
 def test_the_chip_panel_notes_a_planned_chip_as_planned():
@@ -875,7 +876,7 @@ def test_the_starting_xi_is_the_free_hit_team_labelled_as_temporary():
 def test_the_do_this_block_builds_the_free_hit_team_and_says_it_reverts():
     block = section(free_hit_report(), "Do this")
 
-    assert "PLAY Free Hit" in block
+    assert "PLAY FREE HIT" in block
     built = next(line for line in block if line.startswith(FREE_HIT_LABEL))
     assert "Tovey" in built and "Reid" in built
     assert "reverts next week" in built
@@ -1393,7 +1394,7 @@ def test_a_changed_plan_leads_with_the_warning_and_shows_both():
     verdict = alert.index(GAFFER_VERDICT)
     fresh = alert.index(FRESH_SOLVE)
     assert alert.index("⚠️") < verdict < fresh
-    assert "PLAY Bench Boost" in alert[verdict:fresh]
+    assert "PLAY BENCH BOOST" in alert[verdict:fresh]
     assert "CAPTAIN Moss" in alert[verdict:fresh]
     assert "CAPTAIN Hume" in alert[fresh:]
     assert HUMAN_JUDGES in alert
@@ -1692,8 +1693,8 @@ def test_a_recorded_chip_is_the_weeks_chip_and_reads_as_already_played():
     )
 
     assert "Working from the squad you entered on Tuesday: Wildcard played (1 transfer)." in text
-    assert CHIP_ENTERED.format(chip="Wildcard") in text
-    assert "PLAY Wildcard" not in text
+    assert CHIP_ENTERED.format(chip="WILDCARD") in text
+    assert "PLAY WILDCARD" not in text
 
 
 def test_the_recorded_chip_wins_over_the_gaffer_and_the_path():
@@ -1719,9 +1720,9 @@ def test_a_recorded_free_hit_fields_its_team_and_says_it_is_entered():
         free_transfers=1, executed=free_hit,
     )
 
-    assert CHIP_ENTERED.format(chip="Free Hit") in text
+    assert CHIP_ENTERED.format(chip="FREE HIT") in text
     assert "Free Hit XI (this week only)" in text
-    assert "PLAY Free Hit" not in text
+    assert "PLAY FREE HIT" not in text
 
 
 def test_working_from_is_one_sentence():
@@ -1793,13 +1794,13 @@ def test_a_recorded_chip_reads_as_already_played_on_the_entered_checklist():
         entered_actions(chip="wildcard"), {}, BOOTSTRAP,
     )
 
-    assert CHIP_ENTERED.format(chip="Wildcard") in text
-    assert "PLAY Wildcard" not in text
+    assert CHIP_ENTERED.format(chip="WILDCARD") in text
+    assert "PLAY WILDCARD" not in text
 
 
 def test_a_recorded_chip_reads_as_already_played_in_the_fresh_block_too():
     # The fresh solve on a wildcard week he entered plays the same wildcard:
-    # it is played already, and "PLAY Wildcard" in either block would send
+    # it is played already, and "PLAY WILDCARD" in either block would send
     # him looking for a chip he has spent.
     text = render_entered_reminder(
         EVENT, entered(chip="wildcard"), entered_actions(chip="wildcard"),
@@ -1808,8 +1809,8 @@ def test_a_recorded_chip_reads_as_already_played_in_the_fresh_block_too():
     )
 
     assert FRESH_SOLVE in text
-    assert text.count(CHIP_ENTERED.format(chip="Wildcard")) == 2
-    assert "PLAY Wildcard" not in text
+    assert text.count(CHIP_ENTERED.format(chip="WILDCARD")) == 2
+    assert "PLAY WILDCARD" not in text
 
 
 # --- the lineup every phone text carries --------------------------------------
@@ -2001,3 +2002,193 @@ def test_a_changed_entered_reminder_shows_lineup_now():
 
         assert fresh_block in text and PHONE_XI not in text
         assert text.index(NEWS_MOVED_ENTERED) < text.index(fresh_block)
+
+
+# --- a chip played this week is the first thing every text says -------------
+#
+# The owner read a bench-boost week and missed the chip: it was a "PLAY Bench
+# Boost" on the third line of the checklist, under the SELL lines. Telegram
+# bolds heading lines only, so the chip is a heading of its own straight under
+# the title — before the deadline — on the report, the digest, the reminder and
+# the withheld alert alike; and on the checklist it is the first line after the
+# ⏰ line, in capitals. Every banner is pinned whole here.
+
+BB_BANNER = "## ⚡ BENCH BOOST THIS WEEK — play it in the app before the deadline"
+TC_BANNER = "## ⚡ TRIPLE CAPTAIN THIS WEEK — play it in the app before the deadline"
+FH_BANNER = "## ⚡ FREE HIT THIS WEEK — a temporary team; it reverts next week"
+WC_PLAYED = "## ✅ WILDCARD PLAYED — you entered it"
+CHECKLIST_TOP = "⏰ Make these by Fri 22 Aug 2025 17:30 UTC — GW2"
+
+
+def opening(text: str) -> list[str]:
+    """The title, the banner and the deadline, as the first five lines say
+    them: three paragraphs, so a markdown reader keeps them apart."""
+    return text.splitlines()[:5]
+
+
+def test_chip_banner_says_each_chip_in_capitals():
+    assert chip_banner(BENCH_BOOST, False) == BB_BANNER
+    assert chip_banner(TRIPLE_CAPTAIN, False) == TC_BANNER
+    assert chip_banner(WILDCARD, False) == (
+        "## ⚡ WILDCARD THIS WEEK — play it in the app before the deadline"
+    )
+    # The free hit's banner says the one thing peculiar to it: the team reverts.
+    assert chip_banner(FREE_HIT, False) == FH_BANNER
+
+
+def test_a_chip_he_entered_is_bannered_as_played_whatever_the_chip():
+    assert chip_banner(WILDCARD, True) == WC_PLAYED
+    assert chip_banner(FREE_HIT, True) == "## ✅ FREE HIT PLAYED — you entered it"
+    assert chip_banner(BENCH_BOOST, True) == "## ✅ BENCH BOOST PLAYED — you entered it"
+
+
+def test_no_chip_is_no_banner():
+    assert chip_banner("none", False) is None
+    assert chip_banner("none", True) is None
+
+
+def test_the_report_opens_with_the_gaffers_chip():
+    text = report(view=gaffer(chip="bench_boost", justification=GOOD_CHIP))
+
+    assert opening(text) == [
+        "# AI Gaffer — GW2 scout", "", BB_BANNER, "", "Deadline: Fri 22 Aug 2025 17:30 UTC",
+    ]
+
+
+def test_the_chip_is_the_first_line_of_the_checklist_in_capitals():
+    # ONE sells Gale for Reid. Before, the chip came after that SELL line; now
+    # it leads, straight after the ⏰ line, and shouts.
+    block = section(report(view=gaffer(chip="bench_boost", justification=GOOD_CHIP)), "Do this")
+
+    assert block[:3] == [
+        CHECKLIST_TOP,
+        "PLAY BENCH BOOST",
+        "SELL Gale (DEF CRV £4.0m) → BUY Reid (FWD CRV £9.5m)",
+    ]
+    assert "PLAY Bench Boost" not in block, "the old title-case line is gone"
+
+
+def test_the_solvers_own_chip_opens_the_report_with_no_manager():
+    text = report(choice=planning("triple_captain"))
+
+    assert opening(text)[2] == TC_BANNER
+    assert section(text, "Do this")[1] == "PLAY TRIPLE CAPTAIN"
+
+
+def test_a_free_hit_week_opens_with_its_own_banner_and_checklist_line():
+    text = free_hit_report()
+
+    assert opening(text)[2] == FH_BANNER
+    block = section(text, "Do this")
+    assert block[:2] == [CHECKLIST_TOP, "PLAY FREE HIT"]
+    assert block[2].startswith(FREE_HIT_LABEL)
+
+
+def test_a_chip_he_entered_opens_the_report_as_played():
+    # The wildcard is entered (Executed.chip), so the banner and the checklist
+    # both say it is played — never PLAY, which would send him looking for it.
+    text = render_report(
+        "deadline", EVENT, PLANS, ROLL, LINEUP, CHIPS, BOOTSTRAP, XP,
+        free_transfers=1, executed=entered(chip="wildcard"),
+    )
+
+    assert opening(text)[:3] == ["# AI Gaffer — GW2 deadline", "", WC_PLAYED]
+    block = section(text, "Do this")
+    assert block[1] == "WILDCARD ALREADY PLAYED — you entered it"
+    assert block[1] == CHIP_ENTERED.format(chip="WILDCARD")
+
+
+def test_the_digest_opens_with_the_chip_too():
+    text = digest(view=gaffer(chip="bench_boost", justification=GOOD_CHIP))
+
+    assert opening(text) == [
+        "# AI Gaffer — GW2 deadline", "", BB_BANNER, "", "Deadline: Fri 22 Aug 2025 17:30 UTC",
+    ]
+    assert section(text, "Do this")[:2] == [CHECKLIST_TOP, "PLAY BENCH BOOST"]
+
+
+def test_the_withheld_alert_opens_with_the_solvers_chip():
+    # Withheld means no manager: the chip is the solver's own week-1 chip.
+    text = render_withheld(
+        "deadline", EVENT, planning("triple_captain"), LINEUP, BOOTSTRAP,
+        "RateLimitError", until=EVENT.deadline_time, attempts=12,
+    )
+
+    assert opening(text)[2] == TC_BANNER
+    assert section(text, "Do this")[:2] == [CHECKLIST_TOP, "PLAY TRIPLE CAPTAIN"]
+
+
+def test_the_reminder_opens_with_the_operative_plans_chip():
+    # The stored verdict is the operative plan, and its chip is the banner's —
+    # on a calm week, and on a changed week whose fresh solve dropped it.
+    calm = reminder(stored=actions(chip="bench_boost"))
+    changed = reminder(
+        stored=actions(chip="bench_boost"), fresh=actions(),
+        changes={"chip": ["bench_boost", "none"]},
+    )
+    buzz = reminder_digest(
+        stored=actions(chip="bench_boost"), fresh=actions(),
+        changes={"chip": ["bench_boost", "none"]},
+    )
+
+    for text in (calm, changed, buzz):
+        assert opening(text) == [
+            "# AI Gaffer — GW2 reminder", "", BB_BANNER, "",
+            "Deadline: Fri 22 Aug 2025 17:30 UTC",
+        ]
+    assert section(calm, "Do this")[:3] == [
+        CHECKLIST_TOP, "PLAY BENCH BOOST",
+        "SELL Gale (DEF CRV £4.0m) → BUY Reid (FWD CRV £9.5m)",
+    ]
+
+
+def test_a_reminder_with_no_full_report_opens_with_the_fresh_chip():
+    text = reminder(fresh=actions(chip="triple_captain"), stored=None)
+
+    assert opening(text)[2] == TC_BANNER
+
+
+def test_the_entered_reminder_opens_with_the_chip_as_played():
+    text = render_entered_reminder(
+        EVENT, entered(chip="wildcard"), entered_actions(chip="wildcard"),
+        entered_actions(chip="wildcard"), {}, BOOTSTRAP,
+    )
+
+    assert opening(text)[:3] == ["# AI Gaffer — GW2 reminder", "", WC_PLAYED]
+    assert section(text, "Do this")[:3] == [
+        "⏰ Deadline Fri 22 Aug 2025 17:30 UTC — GW2",
+        "WILDCARD ALREADY PLAYED — you entered it",
+        ENTERED_ALREADY,
+    ]
+
+
+def test_a_week_with_no_chip_has_no_banner_anywhere():
+    texts = [
+        report(),
+        report(view=gaffer()),
+        digest(view=gaffer()),
+        reminder(stored=actions()),
+        reminder(stored=None),
+        render_withheld(
+            "deadline", EVENT, ONE, LINEUP, BOOTSTRAP, "RateLimitError",
+            until=EVENT.deadline_time, attempts=12,
+        ),
+        entered_reminder(),
+    ]
+    for text in texts:
+        assert "⚡" not in text and "✅" not in text
+        assert text.splitlines()[2].startswith("Deadline:")
+
+
+def test_a_draft_has_no_banner():
+    # A draft buys fifteen from nothing and holds no chip; even a decision that
+    # names one prints no banner over a squad with no checklist under it.
+    text = report(choice=DRAFT, view=gaffer(chip="bench_boost", justification=GOOD_CHIP))
+    phone = render_digest(
+        "draft", EVENT, DRAFT, LINEUP, BOOTSTRAP,
+        gaffer(chip="bench_boost", justification=GOOD_CHIP), free_transfers=1,
+    )
+
+    for text in (text, phone):
+        assert "⚡" not in text
+        assert text.splitlines()[2].startswith("Deadline:")

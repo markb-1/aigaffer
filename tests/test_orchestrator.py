@@ -621,7 +621,7 @@ def test_a_free_hit_the_solver_plans_reaches_the_report_and_the_record(
     )
 
     assert "Free Hit XI (this week only)" in report
-    assert "PLAY Free Hit" in report
+    assert "PLAY FREE HIT" in report
     assert store.last_runs(1)[0]["decision"]["chip"] == "free_hit"
 
 
@@ -3940,7 +3940,7 @@ def test_a_recorded_free_hit_fields_the_entered_team_and_holds(tmp_path):
     )
     decision = store.decision(2, "deadline")
 
-    assert render.CHIP_ENTERED.format(chip="Free Hit") in report
+    assert render.CHIP_ENTERED.format(chip="FREE HIT") in report
     assert "Free Hit XI (this week only)" in report
     assert decision["chip"] == "free_hit"
     assert decision["solver_actions"]["chip"] == "free_hit", "the overlay reaches plan_actions"
@@ -3983,8 +3983,8 @@ def test_a_recorded_free_hit_with_no_team_on_record_fields_the_standing_eleven(
     )
     decision = store.decision(2, "deadline")
 
-    assert render.CHIP_ENTERED.format(chip="Free Hit") in report
-    assert "PLAY Free Hit" not in report
+    assert render.CHIP_ENTERED.format(chip="FREE HIT") in report
+    assert "PLAY FREE HIT" not in report
     assert render.FREE_HIT_XI not in report, "no temporary team to name"
     assert decision["chip"] == "free_hit"
     assert decision["freehit_squad"] is None and decision["freehit_xi"] is None
