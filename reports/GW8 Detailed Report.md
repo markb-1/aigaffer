@@ -1,8 +1,14 @@
 # GW8 Detailed Report
 
-Deadline: Fri 23 Oct 2026 17:30 UTC · Last updated: early run Tue 20 Oct 2026 18:35 UTC
+Deadline: Fri 23 Oct 2026 17:30 UTC · Last updated: scout run Wed 21 Oct 2026 05:35 UTC
 
 ## What changed
+
+**scout — Wed 21 Oct 2026 05:35 UTC**
+
+- Bench: Verbruggen, Muharemović, Guéhi, Lewis-Potter (was: Verbruggen, Haaland, Muharemović, Lewis-Potter)
+- Guéhi: xMins 90 → 80
+- Konsa: xMins 90 → 88
 
 **early — Tue 20 Oct 2026 18:35 UTC**
 
@@ -10,9 +16,9 @@ Deadline: Fri 23 Oct 2026 17:30 UTC · Last updated: early run Tue 20 Oct 2026 1
 
 ## The plan
 
-WHAT I DID Sold Vuskovic and bought Konsa (Arsenal, £4.6m) with the free transfer, which leaves £1.9m in the bank. I played the Bench Boost. Mbeumo is captain and Saka is vice. I took the armband off Haaland because of a foot knock.  WHAT I LEARNED - Haaland: limped off at full time against Ipswich on Saturday with a foot knock. On Monday 19 Oct Maresca said he "can be available. We will see." He then missed training after the press conference. City host AEK Athens in the Champions League tonight, Tuesday, before GW8. I cut his minutes from 88 to 65 and marked him a doubt. That is why Mbeumo is captain: he plays no European football and is projected 5.4. Saka is vice; Arsenal play at Bayern on Wednesday, but he has been starting every week. Semenyo is out for about eight weeks, which leaves City thin up front, so Haaland is likely to play if he is fit at all. - Tavernier: started and scored against Sunderland on 18 Oct. Minutes up from 79 to 85. - Thomas: has started all six of Coventry's games and no problem is reported. Minutes set to 88. - Konsa, the new signing: has played 6 times for Arsenal and is in the predicted XI for the Bayern game. That is a predicted line-up, not an official one. Arsenal play away in the Champions League on Wednesday, so there is some risk he is rested at the weekend. - Calvert-Lewin and Muharemović both played in the 1-1 draw with Man Utd. Calvert-Lewin scored and Muharemović set up the goal. Lewis-Potter has started every Brentford game. I found nothing new on João Pedro, Guéhi, Brighton or Hull. I left Guéhi on the model's 90 minutes; he is listed as rotation, but I found no fresh news either way. Still unsure: whether Haaland starts in GW8. If he doesn't, the bench boost means a substitute's points still count. I'm also unsure about Konsa being rotated after Bayern.  WHY THIS PLAN After my changes, the solver's pick (plan 5) is 1.5 points ahead of rolling the transfer (plan 6). That gap is small, but this is a free transfer, not a hit. Konsa is £0.5m cheaper than Vuskovic, projects 19.2 over six weeks against 16.8, and the solver keeps him in almost every route it plans. Plans 7 and 8 take hits to add Dewsbury-Hall and Tarkowski, and both come out behind rolling once the hits are paid. The solver plans to make those moves later with free transfers instead. The bench boost is explained in the chip field: +14.7 against a bar of 9.1, and every bench player is expected to start. Next week the solver plans a triple captain, so Haaland's foot needs checking before that.
+WHAT I DID One transfer: Vuskovic out, Konsa (Arsenal, £4.6m) in, no hit. I played the Bench Boost. Captain is Mbeumo, vice-captain Saka. I picked Mbeumo over Haaland because Haaland is a fitness doubt this week.  WHAT I LEARNED - Konsa (the player we're buying): he had a thigh/quad scare on England duty in early October. That has cleared. He started at the City Ground last weekend, and every preview of Wednesday's Bayern game has him at centre-back next to Gabriel. Saliba is out with a back injury, so Konsa is first choice. Arsenal list no doubts. I set him to 88 minutes (the model had 90). - Calafiori and Saka are both expected to start in Munich. One small worry for Calafiori: Hincapié is due back for the Everton game and could compete for left-back. - Guéhi: this was a re-check. He took City's press conference on 19 Oct and called himself fit and healthy. City are playing four games in ten days, so I kept him at 80 minutes for rotation (model had 90). - Haaland: he took a foot knock late against Ipswich. Maresca said he could be available, but he needed assessing and previews expected him to be rested on Tuesday. I left him at 65 minutes as a doubt (model had 88). That is why he isn't captain. - Saved from earlier runs, not searched again: Tavernier set to 85 minutes (model had 79), Thomas to 88 (model had 90). - Bench: no current injury news for Verbruggen, Muharemović or Lewis-Potter. João Pedro had a knee problem in early October and I found no update since. The model has him fit at 68 minutes, which is the one real risk to the boost. I ran out of searches before Brighton, Leeds, Brentford, Chelsea or Man Utd had held their GW8 press conferences, so any late news from Friday is not in this.  WHY THIS PLAN After my changes, the solver still picks this plan, and it beats rolling the transfer by about 0.8 net points. That's a small margin. I'm making the move because I checked Konsa is fit and starting, because Vuskovic was the weakest projection in the squad, and because the solver's path wants Konsa eventually anyway (the roll plan buys him next week). We still bank free transfers for next week's moves (Tarkowski in the path). I turned down the hit plans (6 and 7): taking a 4-point hit doesn't pay for itself on these numbers. The Bench Boost is worth +14.7 against a bar of 9.1, and its best later week is only +11.7 in GW16. I captained Mbeumo because he is projected around 5.4 and certain to play, while Haaland's projection drops with the doubt over his foot. Price note: Groß, Tavernier and Calafiori are rising, but none of that affected this plan.
 
-Expected points over the window: 256.34 xP; net 257.59 (after hits and charges, plus the credit for free transfers kept); 0 hits; bank £1.4m.
+Expected points over the window: 254.95 xP; net 256.81 (after hits and charges, plus the credit for free transfers kept); 0 hits; bank £1.4m.
 
 ## Transfers
 
@@ -21,77 +27,76 @@ Expected points over the window: 256.34 xP; net 257.59 (after hits and charges, 
 | | Player | Price | GW8 | GW9 | GW10 | GW11 | GW12 | GW13 | Total | Weighted |
 |---|---|---|---|---|---|---|---|---|---|---|
 | Out | Vuskovic (DEF, BHA) | £5.1m | liv(a) 3.80 | mci(a) 3.42 | BRE(h) 4.43 | hul(a) 4.34 | NEW(h) 4.58 | bou(a) 4.14 | 24.71 | 16.80 |
-| In | Konsa (DEF, ARS) | £4.6m | EVE(h) 5.14 | liv(a) 4.17 | HUL(h) 5.02 | new(a) 4.46 | MCI(h) 4.19 | bre(a) 4.36 | 27.34 | 19.17 |
+| In | Konsa (DEF, ARS) | £4.6m | EVE(h) 5.05 | liv(a) 4.17 | HUL(h) 5.02 | new(a) 4.46 | MCI(h) 4.19 | bre(a) 4.36 | 27.25 | 19.07 |
 
 Weighted counts later gameweeks for less, as the planner does; it is the total decisions are made on.
 
-Konsa over Vuskovic: +2.37 weighted (+2.63 plain) over the window. Konsa hosts Everton in GW8 for 5.14, where Vuskovic goes to Liverpool for 3.80. He also gets Hull at home for 5.02. Over the window he totals 27.34 against 24.71, or 19.17 weighted against 16.80, a gain of +2.37. He is £0.5m cheaper and uses the free transfer. The risk is that Arsenal rest him after Bayern.
+Konsa over Vuskovic: +2.27 weighted (+2.54 plain) over the window. Vuskovic had the weakest projection in the squad, starting with 3.80 away at Liverpool. Konsa gets 5.05 at home to Everton, and he is first-choice centre-back while Saliba is out. Over the window Konsa projects 27.25 to Vuskovic's 24.71, which is +2.27 weighted. He is also £0.5m cheaper, and I checked that he is fit and starting.
 
 ## Your squad
 
 | | Player | Price | GW8 | GW9 | GW10 | GW11 | GW12 | GW13 | Total | Weighted |
 |---|---|---|---|---|---|---|---|---|---|---|
 | XI | Tzolakis (GKP, HUL) | £4.7m | BRE(h) 4.42 | IPS(h) 4.86 | ars(a) 3.92 | BHA(h) 4.20 | cry(a) 4.60 | NFO(h) 4.81 | 26.81 | 18.50 |
-| XI | Konsa (DEF, ARS) | £4.6m | EVE(h) 5.14 | liv(a) 4.17 | HUL(h) 5.02 | new(a) 4.46 | MCI(h) 4.19 | bre(a) 4.36 | 27.34 | 19.17 |
-| XI | Guéhi (DEF, MCI) | £6.0m | avl(a) 4.45 | BHA(h) 4.45 | nfo(a) 4.64 | FUL(h) 5.17 | ars(a) 3.96 | LEE(h) 5.00 | 27.67 | 19.05 |
+| XI | Konsa (DEF, ARS) | £4.6m | EVE(h) 5.05 | liv(a) 4.17 | HUL(h) 5.02 | new(a) 4.46 | MCI(h) 4.19 | bre(a) 4.36 | 27.25 | 19.07 |
 | XI | Calafiori (DEF, ARS) | £6.0m | EVE(h) 5.09 | liv(a) 4.11 | HUL(h) 4.98 | new(a) 4.47 | MCI(h) 4.11 | bre(a) 4.32 | 27.08 | 18.98 |
 | XI | Thomas (DEF, COV) | £4.0m | FUL(h) 4.46 | SUN(h) 4.73 | eve(a) 4.17 | CRY(h) 4.63 | lee(a) 3.97 | IPS(h) 4.67 | 26.63 | 18.48 |
-| XI | Mbeumo (MID, MUN) | £7.8m | BOU(h) 5.44 | che(a) 5.00 | AVL(h) 5.37 | liv(a) 4.85 | BRE(h) 5.37 | new(a) 5.17 | 31.20 | 21.65 |
+| XI | Mbeumo (MID, MUN) | £7.8m | BOU(h) 5.44 | che(a) 5.01 | AVL(h) 5.37 | liv(a) 4.85 | BRE(h) 5.37 | new(a) 5.17 | 31.21 | 21.65 |
 | XI | Saka (MID, ARS) | £9.6m | EVE(h) 5.32 | liv(a) 4.93 | HUL(h) 5.32 | new(a) 5.24 | MCI(h) 4.85 | bre(a) 5.06 | 30.72 | 21.35 |
 | XI | Tavernier (MID, BOU) | £6.2m | mun(a) 5.00 | LEE(h) 4.96 | ips(a) 5.45 | NFO(h) 4.96 | ful(a) 4.78 | BHA(h) 4.83 | 29.98 | 20.85 |
 | XI | Groß (MID, BHA) | £6.2m | liv(a) 4.35 | mci(a) 4.13 | BRE(h) 4.68 | hul(a) 4.40 | NEW(h) 4.81 | bou(a) 4.48 | 26.85 | 18.44 |
+| XI | Haaland (FWD, MCI) | £15.7m | avl(a) 4.32 | BHA(h) 5.71 | nfo(a) 5.39 | FUL(h) 5.95 | ars(a) 4.99 | LEE(h) 5.80 | 32.16 | 21.90 |
 | XI | Calvert-Lewin (FWD, LEE) | £6.0m | sun(a) 4.58 | bou(a) 4.56 | TOT(h) 5.06 | che(a) 4.56 | COV(h) 5.27 | mci(a) 4.18 | 28.21 | 19.51 |
-| XI | João Pedro (FWD, CHE) | £7.9m | TOT(h) 4.33 | MUN(h) 4.10 | sun(a) 3.93 | LEE(h) 4.03 | nfo(a) 3.81 | CRY(h) 4.29 | 24.49 | 17.03 |
-| Bench 1 | Verbruggen (GKP, BHA) | £4.6m | liv(a) 3.14 | mci(a) 2.85 | BRE(h) 3.64 | hul(a) 3.71 | NEW(h) 3.73 | bou(a) 3.43 | 20.50 | 13.94 |
-| Bench 2 | Haaland (FWD, MCI) | £15.7m | avl(a) 4.32 | BHA(h) 5.71 | nfo(a) 5.39 | FUL(h) 5.95 | ars(a) 4.99 | LEE(h) 5.80 | 32.16 | 21.90 |
-| Bench 3 | Muharemović (DEF, LEE) | £5.0m | sun(a) 4.21 | bou(a) 3.67 | TOT(h) 4.40 | che(a) 3.43 | COV(h) 4.55 | mci(a) 2.99 | 23.25 | 16.31 |
+| XI | João Pedro (FWD, CHE) | £7.9m | TOT(h) 4.33 | MUN(h) 4.10 | sun(a) 3.93 | LEE(h) 4.04 | nfo(a) 3.81 | CRY(h) 4.29 | 24.50 | 17.03 |
+| Bench 1 | Verbruggen (GKP, BHA) | £4.6m | liv(a) 3.14 | mci(a) 2.85 | BRE(h) 3.64 | hul(a) 3.71 | NEW(h) 3.73 | bou(a) 3.43 | 20.50 | 13.93 |
+| Bench 2 | Muharemović (DEF, LEE) | £5.0m | sun(a) 4.21 | bou(a) 3.67 | TOT(h) 4.40 | che(a) 3.43 | COV(h) 4.55 | mci(a) 2.99 | 23.25 | 16.31 |
+| Bench 3 | Guéhi (DEF, MCI) | £6.0m | avl(a) 4.07 | BHA(h) 4.45 | nfo(a) 4.64 | FUL(h) 5.17 | ars(a) 3.96 | LEE(h) 5.00 | 27.29 | 18.66 |
 | Bench 4 | Lewis-Potter (MID, BRE) | £5.5m | hul(a) 3.50 | NFO(h) 3.71 | bha(a) 3.43 | EVE(h) 3.69 | mun(a) 3.52 | ARS(h) 3.36 | 21.21 | 14.72 |
 
 Weighted counts later gameweeks for less, as the planner does; it is the total decisions are made on.
 
 ## Captain and vice
 
-- **Captain: Mbeumo** (31.20 over the window) — I chose the armband on total points over the window. Mbeumo leads with 31.20, ahead of Tavernier on 29.98 and Calvert-Lewin on 28.21. The home game against Bournemouth decided it, worth 5.44 in GW8, and he plays no European football this week. Haaland's foot knock, and his Champions League game against AEK Athens on Tuesday, took him out of the reckoning. Saka is vice; he has started every week.
+- **Captain: Mbeumo** (31.21 over the window) — I gave the armband to Mbeumo on this week's fixture, not on his window total. His 31.21 is below Haaland's 32.16, though above Tavernier's 29.98. The game that decided it is Man Utd at home to Bournemouth, where Mbeumo projects 5.44 and is certain to play. Haaland projects only 4.32 away at Aston Villa because of his foot knock, so I have him at 65 minutes. Saka is vice-captain.
 - **Vice: Saka** (30.72 over the window)
-- Rivals (by total xP over the window): Tavernier (29.98), Calvert-Lewin (28.21)
+- Rivals (by total xP over the window): Haaland (32.16), Tavernier (29.98)
 
 ## Transfers skipped
 
 | Player | Instead of | Gap (weighted) | Price | Why not | Note |
 |---|---|---|---|---|---|
-| Raya | Verbruggen | +5.75 | +1.6m | unaffordable | Raya is worth +5.75 weighted over Verbruggen, but he costs £1.6m more and we have only £1.9m in the bank, so he is unaffordable. |
-| Suzuki | Verbruggen | +3.74 | +0.5m | would sit on the bench | Suzuki is worth +3.74 weighted, but as a second keeper he would sit on the bench. |
-| Trafford | Verbruggen | +3.62 | +0.5m | would sit on the bench | Trafford is worth +3.62 weighted, but as a second keeper he would sit on the bench. |
-| Gabriel | Muharemović | +4.06 | +2.9m | unaffordable | Gabriel is worth +4.06 weighted, but at £2.9m more he is unaffordable. |
-| Tarkowski | Muharemović | +3.44 | +1.2m | the plan does better without him | Tarkowski is worth +3.44 weighted, but he only came in under plan 8, which nets 250.00 after two hits. The plan does better without him this week. |
-| Hall | Muharemović | +1.31 | +0.3m | would sit on the bench | Hall is worth only +1.31 weighted, and he would sit on the bench. |
-| B.Fernandes | Lewis-Potter | +6.12 | +6.3m | unaffordable | B.Fernandes is worth +6.12 weighted, but at £6.3m more he is unaffordable. |
-| Palmer | Lewis-Potter | +4.29 | +4.2m | unaffordable | Palmer is worth +4.29 weighted, but at £4.2m more he is unaffordable. |
-| Dewsbury-Hall | Lewis-Potter | +4.24 | +1.1m | the plan does better without him | Dewsbury-Hall is worth +4.24 weighted. Bringing him in alongside Konsa costs a hit, and plan 7 nets 255.22, below rolling. He is better bought later with a free transfer. |
+| Raya | Verbruggen | +5.76 | +1.6m | unaffordable | Raya is +5.76 weighted over Verbruggen, but at £1.6m more he is unaffordable. |
+| Suzuki | Verbruggen | +3.75 | +0.5m | would sit on the bench | Suzuki is +3.75 weighted but would sit on the bench behind the starting keeper, so he is not worth a transfer. |
+| Trafford | Verbruggen | +3.63 | +0.5m | would sit on the bench | Trafford is +3.63 weighted but would sit on the bench behind the starting keeper. |
+| Gabriel | Muharemović | +4.06 | +2.9m | unaffordable | Gabriel is +4.06 weighted over Muharemović, but at £2.9m more he is unaffordable. |
+| Tarkowski | Muharemović | +3.44 | +1.2m | the plan does better without him | Tarkowski is +3.44 weighted, but the plan does better without him this week. He is in the path for a later move. |
+| Hall | Muharemović | +1.31 | +0.3m | would sit on the bench | Hall is only +1.31 weighted and would sit on the bench. |
+| B.Fernandes | Lewis-Potter | +6.12 | +6.3m | unaffordable | B.Fernandes is +6.12 weighted over Lewis-Potter, but at £6.3m more he is unaffordable. |
+| Palmer | Lewis-Potter | +4.29 | +4.2m | unaffordable | Palmer is +4.29 weighted, but at £4.2m more he is unaffordable. |
+| Dewsbury-Hall | Lewis-Potter | +4.24 | +1.1m | the plan does better without him | Dewsbury-Hall is +4.24 weighted, but bringing him in costs a hit, and the plan does better without him. |
 | Evanilson | João Pedro | +0.38 | -1.6m | not worth a transfer | Evanilson is only +0.38 weighted over João Pedro, which is not worth a transfer. |
-| Barry | João Pedro | +0.29 | -2.0m | not worth a transfer | Barry is only +0.29 weighted over João Pedro, which is not worth a transfer. Plan 4 netted 242.58. |
-| Justin | Muharemović | +1.23 | -0.5m | would sit on the bench | Justin is worth +1.23 weighted, but he would sit on the bench. |
+| Barry | João Pedro | +0.29 | -2.0m | not worth a transfer | Barry is only +0.29 weighted over João Pedro, which is not worth a transfer. |
+| Justin | Muharemović | +1.23 | -0.5m | would sit on the bench | Justin is +1.23 weighted but would sit on the bench. |
 
 ## The options weighed
 
 | Plan | In | Out | Hits | xP | Net | |
 |---|---|---|---|---|---|---|
 | 0 | Konsa | Vuskovic | 0 | 256.57 | 258.01 |  |
-| 1 | Dewsbury-Hall | Lewis-Potter | 0 | 256.08 | 257.94 |  |
-| 2 | none | none | 0 | 256.11 | 257.36 |  |
+| 1 | none | none | 0 | 256.11 | 257.36 |  |
+| 2 | Raya, Justin | Verbruggen, Vuskovic | 1 | 258.56 | 255.19 |  |
 | 3 | Konsa, Dewsbury-Hall, Justin | Lewis-Potter, Muharemović, Vuskovic | 2 | 259.05 | 252.09 |  |
-| 4 | Konsa, Barry | João Pedro, Vuskovic | 1 | 249.96 | 242.58 |  |
-| 5 | Konsa | Vuskovic | 0 | 256.34 | 257.59 | chosen, re-solved |
-| 6 | none | none | 0 | 254.24 | 256.11 | re-solved |
-| 7 | Konsa, Dewsbury-Hall | Lewis-Potter, Vuskovic | 1 | 257.55 | 255.22 | re-solved |
-| 8 | Konsa, Tarkowski, Dewsbury-Hall | Calafiori, Lewis-Potter, Vuskovic | 2 | 256.76 | 250.00 | re-solved |
+| 4 | Konsa | Vuskovic | 0 | 254.95 | 256.81 | chosen, re-solved |
+| 5 | none | none | 0 | 254.73 | 255.98 | re-solved |
+| 6 | Konsa, Dewsbury-Hall | Lewis-Potter, Vuskovic | 1 | 257.07 | 254.74 | re-solved |
+| 7 | Konsa, Tarkowski, Dewsbury-Hall | Lewis-Potter, Guéhi, Vuskovic | 2 | 256.15 | 249.61 | re-solved |
 
-Plan 5 nets 257.59, which is 1.5 points ahead of rolling the transfer in plan 6 at 256.11. The free transfer costs nothing, and Konsa turns up in almost every route. Plan 7 adds Dewsbury-Hall for a hit and falls to 255.22. Plan 8 also adds Tarkowski for two hits and falls to 250.00. Both of those moves are better made later with free transfers.
+Plan 4 brings in Konsa for free and nets 256.81. Rolling the transfer (Plan 5) nets 255.98, so this plan wins by about 0.8. The margin is small, but Konsa is verified as fit and starting, and the roll plan buys him next week anyway. We still bank free transfers for Tarkowski later. The hit plans, 6 at 254.74 and 7 at 249.61, lose to it because a 4-point hit does not pay for itself on these numbers.
 
 ## Chips
 
 Chip played: Bench Boost.
-The Bench Boost adds +14.65 this week, well over the bar of 9.1. Its best later week is GW16 at +11.7, so waiting would lose about 3 points. Every bench player is expected to start: Verbruggen, Calvert-Lewin, Muharemović, Lewis-Potter and João Pedro. If Haaland plays only part of the game, or doesn't play, the bench points still count. The cost is that the Bench Boost and the GW9 Triple Captain come in back-to-back weeks.
+The Bench Boost adds +14.65 this week, well above its bar of 9.1. Its best week past the window is GW16 at +11.7, so playing it now gains about 3 points. The Triple Captain is planned for GW9, so the boost could not go there. All four bench players project real minutes. João Pedro, at 68 minutes, is the one risk, and the boost clears its bar even if he blanks.
 
 Points each chip would add this week:
 - Bench Boost: +14.65

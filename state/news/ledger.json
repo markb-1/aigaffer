@@ -1,7 +1,7 @@
 {
   "173": {
     "category": "nailed",
-    "checked_at": "2026-10-20T18:35:04.529168+00:00",
+    "checked_at": "2026-10-21T05:35:04.656192+00:00",
     "expected_minutes": 88.0,
     "fpl": {
       "chance_of_playing_next_round": null,
@@ -10,17 +10,36 @@
       "status": "a"
     },
     "gw": 8,
-    "note": "Has started all six of Coventry's top-flight games, and a preview of the Spurs match lists no issue with him.",
+    "note": "Carried fresh entry: nailed starter for Coventry.",
     "player_id": 173,
     "quote_date": "2026-10-19",
     "return_gw": null,
-    "run": "early",
-    "source": "Tottenham vs Coventry team news preview",
+    "run": "scout",
+    "source": "earlier run (club reporter)",
+    "tier": 2
+  },
+  "31": {
+    "category": "nailed",
+    "checked_at": "2026-10-21T05:35:04.656192+00:00",
+    "expected_minutes": 88.0,
+    "fpl": {
+      "chance_of_playing_next_round": 100,
+      "news": "",
+      "news_added": "2026-10-05T09:30:09.853316Z",
+      "status": "a"
+    },
+    "gw": 8,
+    "note": "Plan target verified: the early-October thigh/quad scare from England duty has cleared. He started at the City Ground last weekend and every preview of Wednesday's Bayern game has him starting at CB next to Gabriel. Arsenal list only Saliba (back), Hincapi\u00e9 and Tzolis as out, with no doubts, so Konsa is first choice while Saliba is out.",
+    "player_id": 31,
+    "quote_date": "2026-10-21",
+    "return_gw": null,
+    "run": "scout",
+    "source": "Sports Mole / 90min / Yahoo previews of Bayern v Arsenal, 21 Oct",
     "tier": 2
   },
   "388": {
     "category": "rotation",
-    "checked_at": "2026-10-16T16:35:04.393394+00:00",
+    "checked_at": "2026-10-21T05:35:04.656192+00:00",
     "expected_minutes": 80.0,
     "fpl": {
       "chance_of_playing_next_round": null,
@@ -28,18 +47,18 @@
       "news_added": null,
       "status": "a"
     },
-    "gw": 7,
-    "note": "Maresca named Gu\u00e9hi among players (with Haaland, Dias, Enzo, Anderson) who will need rest during a 7-games-in-22-days stretch. Squad fully fit; small rotation risk vs Ipswich.",
+    "gw": 8,
+    "note": "Re-checked: Gu\u00e9hi fronted City's pre-AEK presser on 19 Oct, said he is 'fit and healthy', no injury. Predicted to start vs AEK on Tue; City playing 4th game in 10 days so some rotation risk remains. Kept at 80.",
     "player_id": 388,
-    "quote_date": "2026-10-16",
+    "quote_date": "2026-10-19",
     "return_gw": null,
-    "run": "deadline",
-    "source": "Man City official site",
+    "run": "scout",
+    "source": "Gu\u00e9hi press conference 19 Oct (AFP/Yahoo, Football Italia-style reports)",
     "tier": 1
   },
   "411": {
     "category": "doubt",
-    "checked_at": "2026-10-20T18:35:04.529168+00:00",
+    "checked_at": "2026-10-21T05:35:04.656192+00:00",
     "expected_minutes": 65.0,
     "fpl": {
       "chance_of_playing_next_round": 100,
@@ -48,17 +67,17 @@
       "status": "a"
     },
     "gw": 8,
-    "note": "Limped off at full time v Ipswich on 17 Oct with a foot knock. On 19 Oct Maresca said he 'can be available. We will see', and he then missed training after the press conference. City host AEK Athens in the Champions League on Tue 20 Oct before GW8. He is a real doubt and could be rested.",
+    "note": "Carried fresh entry: foot knock late vs Ipswich (17 Oct); Maresca said he could be available but needed assessing/late fitness test before AEK; previews expected him rested midweek. Doubt for GW8.",
     "player_id": 411,
     "quote_date": "2026-10-19",
     "return_gw": null,
-    "run": "early",
-    "source": "Maresca press conference via Sports Mole / Yahoo (Futbol Chronicle)",
+    "run": "scout",
+    "source": "Maresca press conference via Sports Mole/ESPN",
     "tier": 1
   },
   "68": {
     "category": "nailed",
-    "checked_at": "2026-10-20T18:35:04.529168+00:00",
+    "checked_at": "2026-10-21T05:35:04.656192+00:00",
     "expected_minutes": 85.0,
     "fpl": {
       "chance_of_playing_next_round": null,
@@ -67,12 +86,12 @@
       "status": "a"
     },
     "gw": 8,
-    "note": "Started and scored the opener against Sunderland on 18 Oct. No injury news.",
+    "note": "Carried fresh entry: nailed starter for Bournemouth.",
     "player_id": 68,
     "quote_date": "2026-10-18",
     "return_gw": null,
-    "run": "early",
-    "source": "NBC Sports match clip",
+    "run": "scout",
+    "source": "earlier run (club reporter)",
     "tier": 2
   }
 }
