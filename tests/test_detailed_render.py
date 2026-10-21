@@ -455,3 +455,101 @@ def test_an_unpairable_move_is_noted_not_dropped_silently():
     section = _section(render_detailed([cur], "d"), "Transfers")
 
     assert "Note: a move could not be paired by position and is not shown." in section
+
+
+# --- the gaffer's view keeps its shape ---------------------------------------
+#
+# The rationale is written under three shouted labels with bullets beneath
+# them. The GW8 report flattened all of it into one paragraph, because the
+# table-cell cleaner turns newlines into spaces. A paragraph of its own keeps
+# its lines: each label is a bold line of its own, a bullet stays a bullet,
+# and the only things changed are the ones that would fake our own structure.
+
+SHAPED = (
+    "WHAT I DID\n"
+    "One transfer: Justin out, Cucurella in.\n"
+    "\n"
+    "WHAT I LEARNED\n"
+    "- Cucurella starts; Chelsea list no doubts.\n"
+    "- Justin is on the bench | rotation risk.\n"
+    "WHY THIS PLAN\n"
+    "It beats the roll by two points."
+)
+
+
+def _shaped(text=SHAPED, **reasons):
+    return snap(
+        decision={**snap()["decision"], "rationale": text},
+        reasons=reasons or None,
+    )
+
+
+def test_the_rationale_keeps_its_labels_lines_and_bullets():
+    section = _section(render_detailed([_shaped()], "d"), "The plan")
+
+    # Each label a bold paragraph of its own (a blank line either side, so a
+    # markdown reader cannot run it into the text under it or into the list
+    # above it); the bullets as bullets; the pipe in a bullet escaped.
+    assert section.startswith(
+        "\n"
+        "**WHAT I DID**\n"
+        "\n"
+        "One transfer: Justin out, Cucurella in.\n"
+        "\n"
+        "**WHAT I LEARNED**\n"
+        "\n"
+        "- Cucurella starts; Chelsea list no doubts.\n"
+        "- Justin is on the bench \\| rotation risk.\n"
+        "\n"
+        "**WHY THIS PLAN**\n"
+        "\n"
+        "It beats the roll by two points.\n"
+        "\n"
+        "Expected points over the window: 20.00 xP;"
+    )
+
+
+def test_a_label_written_with_a_colon_is_still_a_label():
+    section = _section(render_detailed([_shaped("WHAT I DID:\nRolled.")], "d"), "The plan")
+
+    assert "**WHAT I DID**\n\nRolled.\n" in section
+    assert "WHAT I DID:" not in section
+
+
+def test_a_shaped_rationale_breaks_no_table_and_forges_no_heading():
+    # A line opening with a hash would be a heading of ours; one opening with a
+    # pipe, the first row of a table; a line of dashes under a sentence, a
+    # setext heading. All three are escaped and read as the text they are.
+    forged = SHAPED + "\n## Chips\n| Plan | In |\nA sentence\n---"
+    text = render_detailed([_shaped(forged)], "d")
+    section = _section(text, "The plan")
+
+    assert "\\## Chips" in section
+    assert "\\| Plan \\| In \\|" in section
+    assert "A sentence\n\\---" in section
+    headings = [line for line in text.splitlines() if line.startswith("#")]
+    assert headings.count("## Chips") == 1
+    assert assert_tables_well_formed(text) == 4  # transfer, squad, skipped, options
+
+
+def test_the_plan_and_chip_reasons_keep_their_lines_too():
+    # Both are paragraphs of their own, not table cells, so they keep their
+    # line breaks; the skipped note in its table cell is still flattened.
+    chip = _shaped(
+        plan="Beats the roll.\n- by two points",
+        chips="WHY THIS PLAN\nThe double.",
+        skipped=[{"id": 3, "reason": "too dear\nby far"}],
+    )
+    chip["decision"]["chip"] = "bench_boost"
+    text = render_detailed([chip], "d")
+
+    assert _section(text, "The options weighed").endswith(
+        "\nBeats the roll.\n- by two points\n"
+    )
+    assert "Chip played: Bench Boost.\n\n**WHY THIS PLAN**\n\nThe double.\n" in text
+    assert "| too dear by far |" in text
+    assert assert_tables_well_formed(text) == 4
+
+
+def test_an_empty_rationale_still_says_why_there_are_no_words():
+    assert REASON_UNAVAILABLE in _section(render_detailed([_shaped("")], "d"), "The plan")

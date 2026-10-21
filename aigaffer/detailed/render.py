@@ -38,6 +38,11 @@ WEIGHTED_CAPTION = (
     " it is the total decisions are made on."
 )
 
+# The three labels the manager is asked to write his rationale under
+# (aigaffer.manager.tools). A line that is one of them, alone, is printed bold
+# on a line of its own; nothing else about his text is reshaped.
+RATIONALE_LABELS = ("WHAT I DID", "WHAT I LEARNED", "WHY THIS PLAN")
+
 _ATTACKERS = ("MID", "FWD")
 _POSITION_ORDER = {"GKP": 0, "DEF": 1, "MID": 2, "FWD": 3}
 RIVALS = 2
@@ -197,7 +202,7 @@ def _plan_section(cur: dict) -> list[str]:
     plan = cur["plans"][cur["chosen"]]
     decision = cur["decision"]
     return [
-        _clean(decision.get("rationale")) or _fallback(cur),
+        _prose(decision.get("rationale")) or _fallback(cur),
         "",
         f"Expected points over the window: {plan['xp']:.2f} xP;"
         f" net {plan['net']:.2f} (after hits and charges, plus the credit for"
@@ -349,7 +354,7 @@ def _options(cur: dict) -> list[str]:
             f"| {pid} | {_names(cur, plan['in'])} | {_names(cur, plan['out'])}"
             f" | {plan['hits']} | {plan['xp']:.2f} | {plan['net']:.2f} | {', '.join(marks)} |"
         )
-    return [*out, "", _clean(_reasons(cur).get("plan")) or _fallback(cur)]
+    return [*out, "", _prose(_reasons(cur).get("plan")) or _fallback(cur)]
 
 
 def _chips(cur: dict) -> list[str]:
@@ -357,10 +362,12 @@ def _chips(cur: dict) -> list[str]:
     chip = _chip(cur)
     out = [f"Chip played: {chip_label(chip)}." if chip != "none" else "No chip this week."]
     if chip != "none":
-        out.append(
-            _clean(_reasons(cur).get("chips") or decision.get("chip_justification"))
-            or _fallback(cur)
-        )
+        # A paragraph of its own, so the words keep their lines (see _prose).
+        out += [
+            "",
+            _prose(_reasons(cur).get("chips") or decision.get("chip_justification"))
+            or _fallback(cur),
+        ]
     out += ["", "Points each chip would add this week:"]
     for name, value in cur["chip_evs"].items():
         # The wildcard is priced over the whole horizon, and says so, as the
@@ -415,8 +422,60 @@ def _names(snapshot: dict, pids: list[int]) -> str:
 def _clean(text: str | None) -> str:
     """Free text made safe for a table cell or a one-line bullet: newlines
     become spaces and a pipe is escaped, since the gaffer's words and the API's
-    news are not ours to keep from breaking the table around them."""
+    news are not ours to keep from breaking the table around them. A slot that
+    is a paragraph of its own takes :func:`_prose` instead, which keeps lines."""
     return (text or "").replace("\r", " ").replace("\n", " ").replace("|", "\\|")
+
+
+def _prose(text: str | None) -> str:
+    """The gaffer's words as a block of markdown of their own, lines kept.
+
+    For the slots that are paragraphs and not table cells: the rationale, the
+    reason under the options, the reason for a chip. His rationale is written
+    under three labels with bullets beneath them, and :func:`_clean` — right
+    for a cell, where a newline would end the row — flattened the GW8 one into
+    a single paragraph nobody could read. Here the line breaks stay, a ``- ``
+    bullet stays a bullet, and each of the :data:`RATIONALE_LABELS` on a line
+    of its own becomes a bold line with a blank either side: without the
+    blanks a markdown reader runs a label into the text under it, and a label
+    straight after a bullet into that bullet.
+
+    The text is otherwise his, and is kept from faking our structure the way
+    the gameweek report's "The Gaffer's view" keeps it (``_prose`` in
+    :mod:`aigaffer.report.render`): a hash opening a line is escaped, so it
+    cannot open a section of ours. This document has tables beside its prose,
+    so every pipe is escaped too — a pipe at a line's start is a table row,
+    and one mid-line can be the header of one — and so is a line of only
+    dashes or equals signs, which would turn the sentence above it into a
+    heading. On GitHub each escape renders as the character it escapes.
+
+    Runs of blank lines collapse to one, and blanks at either end are
+    dropped, so the block sits in the slot the caller gives it.
+    """
+    out: list[str] = []
+    for line in (text or "").replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+        label = line.strip().rstrip(":").strip()
+        if label in RATIONALE_LABELS:
+            out += ["", f"**{label}**", ""]
+        else:
+            out.append(_unforged(line))
+    block: list[str] = []
+    for line in out:
+        if line.strip() or (block and block[-1].strip()):
+            block.append(line if line.strip() else "")
+    while block and not block[-1].strip():
+        block.pop()
+    return "\n".join(block)
+
+
+def _unforged(line: str) -> str:
+    """One line of his, unable to open a heading or a table of ours."""
+    line = line.replace("|", "\\|")
+    body = line.lstrip()
+    indent = line[: len(line) - len(body)]
+    if body.startswith("#") or (body and set(body.rstrip()) in ({"-"}, {"="})):
+        return f"{indent}\\{body}"
+    return line
 
 
 def _reasons(cur: dict) -> dict:
