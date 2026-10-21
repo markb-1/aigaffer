@@ -436,23 +436,35 @@ def test_every_candidate_plan_gets_a_row_and_the_choice_is_flagged():
     ]
 
 
-def test_the_gaffers_pick_is_flagged_on_the_row_that_holds_his_squad():
-    # He finalized a plan the solver had already reached, but a re-solve minted
-    # a fresh object for it with fresh numbers on it. Flagging by identity
-    # would flag nothing and quietly break the section's one invariant.
-    same = replace(ONE, xp_total=256.9, objective=256.9)
+RESOLVED_MARK = "  <- recommended (re-solved on the gaffer's minutes)"
+BEFORE_HIS_CHANGES = "  (same moves, before his changes)"
+
+
+def test_a_re_solved_pick_is_the_first_row_with_its_own_numbers():
+    # GW8 live: he re-solved on his own minutes and the solver came back with
+    # the same move as plan 0, now at 254.96 xP / 256.81 net (255.0 and 256.8
+    # to one place). The row the old code flagged by squad was plan 0's, with
+    # the numbers from before his changes (255.5 / 255.5), so this report and
+    # the detailed one disagreed. Now his plan is its own first row, and plan 0
+    # says what it is.
+    same = replace(ONE, xp_total=254.96, objective=256.81)
     resolved = report(choice=same, view=replace(gaffer(), plan=same))
-    rows = bullets(resolved, "Candidate plans")
 
-    assert sum("recommended" in row for row in rows) == 1
-    assert rows[0].endswith("<- recommended")
-    assert "re-solved" not in resolved
+    assert bullets(resolved, "Candidate plans") == [
+        "- 1 transfer | 0 hits | 255.0 xP | 256.8 net" + RESOLVED_MARK,
+        "- 1 transfer | 0 hits | 255.5 xP | 255.5 net" + BEFORE_HIS_CHANGES,
+        "- 2 transfers | 1 hit | 259.0 xP | 255.0 net",
+        "- 0 transfers | 0 hits | 252.0 xP | 252.0 net",
+    ]
+    # Still exactly one recommendation on the list.
+    assert sum("<- recommended" in row for row in bullets(resolved, "Candidate plans")) == 1
 
 
-def test_a_pick_the_shortlist_never_had_says_where_it_came_from():
-    # The plan he chose was solved on his own minutes and is not among the
-    # four below. Saying nothing would leave a list with no recommendation on
-    # it and a recommendation above with no list behind it.
+def test_a_re_solved_pick_the_shortlist_never_had_leads_the_list():
+    # The plan he chose was solved on his own minutes and sells Fenn (6) for
+    # Quinn (17) — a fifteen no row below holds. It is printed first with its
+    # own numbers, no row below is marked, and the old line saying his pick
+    # was missing from the list is gone, because now it is on it.
     fresh = Plan(
         squad=[pid for pid in SQUAD if pid != 6] + [17],
         xi=LINEUP.xi,
@@ -465,11 +477,38 @@ def test_a_pick_the_shortlist_never_had_says_where_it_came_from():
 
     elsewhere = report(choice=fresh, view=replace(gaffer(), plan=fresh))
 
-    assert not any("recommended" in row for row in bullets(elsewhere, "Candidate plans"))
-    assert section(elsewhere, "Candidate plans")[-1] == (
-        "The gaffer re-solved after his adjustments;"
-        " his pick above is not on this list."
+    assert section(elsewhere, "Candidate plans") == [
+        "- 1 transfer | 0 hits | 257.0 xP | 257.0 net" + RESOLVED_MARK,
+        "- 1 transfer | 0 hits | 255.5 xP | 255.5 net",
+        "- 2 transfers | 1 hit | 259.0 xP | 255.0 net",
+        "- 0 transfers | 0 hits | 252.0 xP | 252.0 net",
+    ]
+    assert "not on this list" not in elsewhere
+
+
+def test_a_pick_off_the_board_itself_reads_exactly_as_it_did():
+    # He finalized plan 1 (TWO) without re-solving: the very object on the
+    # board, so its row is flagged where it stands and nothing is added.
+    picked = report(choice=TWO, view=replace(gaffer(), plan=TWO))
+    plain = report(view=gaffer())
+
+    assert "\n".join(section(picked, "Candidate plans")) == (
+        "- 1 transfer | 0 hits | 255.5 xP | 255.5 net\n"
+        "- 2 transfers | 1 hit | 259.0 xP | 255.0 net  <- recommended\n"
+        "- 0 transfers | 0 hits | 252.0 xP | 252.0 net"
     )
+    assert section(plain, "Candidate plans") == section(report(), "Candidate plans")
+    assert "re-solved" not in picked and "re-solved" not in plain
+    assert "before his changes" not in picked
+
+
+def test_a_re_solved_pick_off_the_window_is_captioned_with_the_board():
+    # His re-solve came off the window and carries a path; the caption that
+    # explains a window row is read off every row printed, his included.
+    ahead = replace(AHEAD, xp_total=256.0, objective=256.0)
+    text = report(choice=ahead, view=replace(gaffer(), plan=ahead))
+
+    assert section(text, "Candidate plans")[0] == WINDOW_UNITS
 
 
 def test_a_report_with_no_manager_never_explains_a_re_solve():
