@@ -1,7 +1,26 @@
 {
+  "12": {
+    "category": "injured",
+    "checked_at": "2026-10-22T23:35:04.582571+00:00",
+    "expected_minutes": 0.0,
+    "fpl": {
+      "chance_of_playing_next_round": 50,
+      "news": "Thigh injury - 50% chance of playing",
+      "news_added": "2026-10-21T20:30:09.540957Z",
+      "status": "d"
+    },
+    "gw": 8,
+    "note": "Limped off in 10th minute vs Bayern (21 Oct) with a thigh/quad injury; Arteta said it 'doesn't look good at all', medical staff concerned, reports expect a spell on the sidelines.",
+    "player_id": 12,
+    "quote_date": "2026-10-21",
+    "return_gw": null,
+    "run": "deadline",
+    "source": "Arteta post-match press conference via AFP / Sky Sports, 22 Oct 2026",
+    "tier": 1
+  },
   "173": {
     "category": "nailed",
-    "checked_at": "2026-10-21T05:35:04.656192+00:00",
+    "checked_at": "2026-10-22T23:35:04.582571+00:00",
     "expected_minutes": 88.0,
     "fpl": {
       "chance_of_playing_next_round": null,
@@ -10,17 +29,17 @@
       "status": "a"
     },
     "gw": 8,
-    "note": "Carried fresh entry: nailed starter for Coventry.",
+    "note": "Carried fresh entry: nailed, 88 mins.",
     "player_id": 173,
     "quote_date": "2026-10-19",
     "return_gw": null,
-    "run": "scout",
-    "source": "earlier run (club reporter)",
+    "run": "deadline",
+    "source": "earlier run",
     "tier": 2
   },
   "31": {
     "category": "nailed",
-    "checked_at": "2026-10-21T05:35:04.656192+00:00",
+    "checked_at": "2026-10-22T23:35:04.582571+00:00",
     "expected_minutes": 88.0,
     "fpl": {
       "chance_of_playing_next_round": 100,
@@ -29,18 +48,18 @@
       "status": "a"
     },
     "gw": 8,
-    "note": "Plan target verified: the early-October thigh/quad scare from England duty has cleared. He started at the City Ground last weekend and every preview of Wednesday's Bayern game has him starting at CB next to Gabriel. Arsenal list only Saliba (back), Hincapi\u00e9 and Tzolis as out, with no doubts, so Konsa is first choice while Saliba is out.",
+    "note": "Carried fresh entry: nailed, 88 mins.",
     "player_id": 31,
     "quote_date": "2026-10-21",
     "return_gw": null,
-    "run": "scout",
-    "source": "Sports Mole / 90min / Yahoo previews of Bayern v Arsenal, 21 Oct",
+    "run": "deadline",
+    "source": "earlier run",
     "tier": 2
   },
   "388": {
-    "category": "rotation",
-    "checked_at": "2026-10-21T05:35:04.656192+00:00",
-    "expected_minutes": 80.0,
+    "category": "nailed",
+    "checked_at": "2026-10-22T23:35:04.582571+00:00",
+    "expected_minutes": 88.0,
     "fpl": {
       "chance_of_playing_next_round": null,
       "news": "",
@@ -48,18 +67,18 @@
       "status": "a"
     },
     "gw": 8,
-    "note": "Re-checked: Gu\u00e9hi fronted City's pre-AEK presser on 19 Oct, said he is 'fit and healthy', no injury. Predicted to start vs AEK on Tue; City playing 4th game in 10 days so some rotation risk remains. Kept at 80.",
+    "note": "Rested for AEK Athens midweek; City expected to name near full-strength side at Villa, Gu\u00e9hi set to return.",
     "player_id": 388,
-    "quote_date": "2026-10-19",
+    "quote_date": "2026-10-22",
     "return_gw": null,
-    "run": "scout",
-    "source": "Gu\u00e9hi press conference 19 Oct (AFP/Yahoo, Football Italia-style reports)",
-    "tier": 1
+    "run": "deadline",
+    "source": "AOL/Standard Man City team news vs Villa, 22 Oct 2026",
+    "tier": 2
   },
   "411": {
-    "category": "doubt",
-    "checked_at": "2026-10-21T05:35:04.656192+00:00",
-    "expected_minutes": 65.0,
+    "category": "nailed",
+    "checked_at": "2026-10-22T23:35:04.582571+00:00",
+    "expected_minutes": 85.0,
     "fpl": {
       "chance_of_playing_next_round": 100,
       "news": "",
@@ -67,17 +86,17 @@
       "status": "a"
     },
     "gw": 8,
-    "note": "Carried fresh entry: foot knock late vs Ipswich (17 Oct); Maresca said he could be available but needed assessing/late fitness test before AEK; previews expected him rested midweek. Doubt for GW8.",
+    "note": "Maresca confirmed after AEK game Haaland fit for Villa; was an unused sub midweek (rested). Knock from Ipswich cleared.",
     "player_id": 411,
-    "quote_date": "2026-10-19",
+    "quote_date": "2026-10-21",
     "return_gw": null,
-    "run": "scout",
-    "source": "Maresca press conference via Sports Mole/ESPN",
+    "run": "deadline",
+    "source": "Maresca via Yahoo Sports / Brit Brief, 21-22 Oct 2026",
     "tier": 1
   },
   "68": {
     "category": "nailed",
-    "checked_at": "2026-10-21T05:35:04.656192+00:00",
+    "checked_at": "2026-10-22T23:35:04.582571+00:00",
     "expected_minutes": 85.0,
     "fpl": {
       "chance_of_playing_next_round": null,
@@ -86,12 +105,12 @@
       "status": "a"
     },
     "gw": 8,
-    "note": "Carried fresh entry: nailed starter for Bournemouth.",
+    "note": "Carried fresh entry: nailed, 85 mins.",
     "player_id": 68,
     "quote_date": "2026-10-18",
     "return_gw": null,
-    "run": "scout",
-    "source": "earlier run (club reporter)",
+    "run": "deadline",
+    "source": "earlier run",
     "tier": 2
   }
 }
