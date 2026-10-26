@@ -18,28 +18,47 @@
     "source": "Arteta post-match press conference via AFP / Sky Sports, 22 Oct 2026",
     "tier": 1
   },
-  "173": {
-    "category": "nailed",
-    "checked_at": "2026-10-22T23:35:04.582571+00:00",
-    "expected_minutes": 88.0,
+  "165": {
+    "category": "injured",
+    "checked_at": "2026-10-26T18:35:03.605298+00:00",
+    "expected_minutes": 10.0,
     "fpl": {
-      "chance_of_playing_next_round": null,
-      "news": "",
-      "news_added": null,
-      "status": "a"
+      "chance_of_playing_next_round": 75,
+      "news": "Unspecified injury - 75% chance of playing",
+      "news_added": "2026-10-24T16:30:09.687729Z",
+      "status": "d"
     },
-    "gw": 8,
-    "note": "Carried fresh entry: nailed, 88 mins.",
-    "player_id": 173,
-    "quote_date": "2026-10-19",
+    "gw": 9,
+    "note": "Injured in training 23 Oct, missed Spurs game; Alonso: swelling ('a lot of fluid'), return unknown. Chelsea play Liverpool midweek, then Man Utd. Very unlikely to feature meaningfully in GW9.",
+    "player_id": 165,
+    "quote_date": "2026-10-24",
     "return_gw": null,
-    "run": "deadline",
-    "source": "earlier run",
-    "tier": 2
+    "run": "early",
+    "source": "Xabi Alonso post-match via Yahoo Sports / Evening Standard",
+    "tier": 1
+  },
+  "173": {
+    "category": "doubt",
+    "checked_at": "2026-10-26T18:35:03.605298+00:00",
+    "expected_minutes": 40.0,
+    "fpl": {
+      "chance_of_playing_next_round": 75,
+      "news": "Unspecified injury - 75% chance of playing",
+      "news_added": "2026-10-24T17:00:09.115906Z",
+      "status": "d"
+    },
+    "gw": 9,
+    "note": "Limped off 59' v Fulham with lower-leg issue (iced below knee); Lampard could not give an update post-match. FPL flag 75%.",
+    "player_id": 173,
+    "quote_date": "2026-10-24",
+    "return_gw": null,
+    "run": "early",
+    "source": "Lampard via CoventryLive",
+    "tier": 1
   },
   "31": {
     "category": "nailed",
-    "checked_at": "2026-10-22T23:35:04.582571+00:00",
+    "checked_at": "2026-10-26T18:35:03.605298+00:00",
     "expected_minutes": 88.0,
     "fpl": {
       "chance_of_playing_next_round": 100,
@@ -47,18 +66,37 @@
       "news_added": "2026-10-05T09:30:09.853316Z",
       "status": "a"
     },
-    "gw": 8,
-    "note": "Carried fresh entry: nailed, 88 mins.",
+    "gw": 9,
+    "note": "Started and scored v Everton; first-choice CB alongside Gabriel.",
     "player_id": 31,
-    "quote_date": "2026-10-21",
+    "quote_date": "2026-10-24",
     "return_gw": null,
-    "run": "deadline",
-    "source": "earlier run",
+    "run": "early",
+    "source": "AOL / azat.tv match reports",
     "tier": 2
   },
   "388": {
+    "category": "rotation",
+    "checked_at": "2026-10-26T18:35:03.605298+00:00",
+    "expected_minutes": 72.0,
+    "fpl": {
+      "chance_of_playing_next_round": null,
+      "news": "",
+      "news_added": null,
+      "status": "a"
+    },
+    "gw": 9,
+    "note": "Started at Villa 24 Oct but reportedly hooked at half-time after errors; Maresca says form doesn't worry him, but rotation risk with Gvardiol/Ait-Nouri available.",
+    "player_id": 388,
+    "quote_date": "2026-10-24",
+    "return_gw": null,
+    "run": "early",
+    "source": "Goal ratings / ESPN",
+    "tier": 2
+  },
+  "4": {
     "category": "nailed",
-    "checked_at": "2026-10-22T23:35:04.582571+00:00",
+    "checked_at": "2026-10-26T18:35:03.605298+00:00",
     "expected_minutes": 88.0,
     "fpl": {
       "chance_of_playing_next_round": null,
@@ -66,18 +104,18 @@
       "news_added": null,
       "status": "a"
     },
-    "gw": 8,
-    "note": "Rested for AEK Athens midweek; City expected to name near full-strength side at Villa, Gu\u00e9hi set to return.",
-    "player_id": 388,
-    "quote_date": "2026-10-22",
+    "gw": 9,
+    "note": "Knee scare v Everton but carried on and scored; no reported issue since.",
+    "player_id": 4,
+    "quote_date": "2026-10-24",
     "return_gw": null,
-    "run": "deadline",
-    "source": "AOL/Standard Man City team news vs Villa, 22 Oct 2026",
+    "run": "early",
+    "source": "azat.tv match report",
     "tier": 2
   },
   "411": {
     "category": "nailed",
-    "checked_at": "2026-10-22T23:35:04.582571+00:00",
+    "checked_at": "2026-10-26T18:35:03.605298+00:00",
     "expected_minutes": 85.0,
     "fpl": {
       "chance_of_playing_next_round": 100,
@@ -85,18 +123,18 @@
       "news_added": "2026-10-19T13:00:10.543876Z",
       "status": "a"
     },
-    "gw": 8,
-    "note": "Maresca confirmed after AEK game Haaland fit for Villa; was an unused sub midweek (rested). Knock from Ipswich cleared.",
+    "gw": 9,
+    "note": "Started and scored at Villa 24 Oct after limping off in GW7 and sitting out the AEK game; Maresca has said he needs rest 'at some point'.",
     "player_id": 411,
-    "quote_date": "2026-10-21",
+    "quote_date": "2026-10-24",
     "return_gw": null,
-    "run": "deadline",
-    "source": "Maresca via Yahoo Sports / Brit Brief, 21-22 Oct 2026",
-    "tier": 1
+    "run": "early",
+    "source": "Fantasy Football Scout / Man City site",
+    "tier": 2
   },
   "68": {
     "category": "nailed",
-    "checked_at": "2026-10-22T23:35:04.582571+00:00",
+    "checked_at": "2026-10-26T18:35:03.605298+00:00",
     "expected_minutes": 85.0,
     "fpl": {
       "chance_of_playing_next_round": null,
@@ -104,13 +142,32 @@
       "news_added": null,
       "status": "a"
     },
-    "gw": 8,
-    "note": "Carried fresh entry: nailed, 85 mins.",
+    "gw": 9,
+    "note": "Started and scored in 3-0 win at Man Utd 25 Oct; Bournemouth's top scorer and set-piece taker.",
     "player_id": 68,
-    "quote_date": "2026-10-18",
+    "quote_date": "2026-10-25",
     "return_gw": null,
-    "run": "deadline",
-    "source": "earlier run",
+    "run": "early",
+    "source": "Sky Sports",
     "tier": 2
+  },
+  "8": {
+    "category": "doubt",
+    "checked_at": "2026-10-26T18:35:03.605298+00:00",
+    "expected_minutes": 25.0,
+    "fpl": {
+      "chance_of_playing_next_round": 75,
+      "news": "Hip injury - 75% chance of playing",
+      "news_added": "2026-10-24T18:30:08.735545Z",
+      "status": "d"
+    },
+    "gw": 9,
+    "note": "Benched for Arsenal v Everton (Lewis-Skelly started at LB), came on and picked up a 'slight issue' late; Arteta: small but unknown. Doubt for Carabao Cup Tue and Liverpool Sun.",
+    "player_id": 8,
+    "quote_date": "2026-10-24",
+    "return_gw": null,
+    "run": "early",
+    "source": "Arteta post-match via Yahoo Sports / AOL",
+    "tier": 1
   }
 }
