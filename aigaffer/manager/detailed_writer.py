@@ -50,7 +50,7 @@ from typing import Any
 import anthropic
 
 from aigaffer.config import Config
-from aigaffer.detailed.render import _name, _pairs, _window, captain_rivals
+from aigaffer.detailed.render import name, _pairs, window, captain_rivals
 from aigaffer.manager.agent import EFFORT, MAX_RESUMPTIONS, MAX_TOKENS, _cached, _result, _rolling, _text
 
 # Bound at module scope, not imported inside the function as the review
@@ -209,7 +209,7 @@ def _prose(value: Any, label: str, limit: int) -> str:
 
 
 def _move(snapshot: dict, out: int, came: int) -> str:
-    return f"out {out} {_name(snapshot, out)}, in {came} {_name(snapshot, came)}"
+    return f"out {out} {name(snapshot, out)}, in {came} {name(snapshot, came)}"
 
 
 def _transfers(items: Any, snapshot: dict) -> list[dict]:
@@ -237,7 +237,7 @@ def _transfers(items: Any, snapshot: dict) -> list[dict]:
 
 
 def _transfer_reason(value: Any, snapshot: dict, out: int, came: int) -> str:
-    label = f"the reason for {_name(snapshot, out)} → {_name(snapshot, came)}"
+    label = f"the reason for {name(snapshot, out)} → {name(snapshot, came)}"
     text = _prose(value, label, TRANSFER_WORDS)
     opponents = _opponents(snapshot, (out, came))
     # Both men without a game all window has no opponent to name; the check
@@ -340,7 +340,7 @@ def reasons_briefing(snapshot: dict) -> str:
     ]
     for adjustment in decision.get("adjustments") or []:
         lines.append(
-            f"- {_name(snapshot, adjustment.get('player_id'))}:"
+            f"- {name(snapshot, adjustment.get('player_id'))}:"
             f" {adjustment.get('expected_minutes', 0):g} expected minutes"
             f" ({adjustment.get('reason', '')})"
         )
@@ -353,8 +353,8 @@ def reasons_briefing(snapshot: dict) -> str:
     captain, vice = snapshot.get("captain"), snapshot.get("vice")
     if captain is not None:
         lines.append(
-            f"Captain: {_name(snapshot, captain)} ({_window(snapshot, captain):.2f} over the window);"
-            f" vice: {_name(snapshot, vice)}"
+            f"Captain: {name(snapshot, captain)} ({window(snapshot, captain):.2f} over the window);"
+            f" vice: {name(snapshot, vice)}"
         )
 
     lines += ["", f"## The transfers (one reason each, by these ids; {TRANSFER_WORDS} words at most)"]
@@ -363,9 +363,9 @@ def reasons_briefing(snapshot: dict) -> str:
     for out, came in pairs:
         players = snapshot["players"]
         gap = players[came]["t"] - players[out]["t"]
-        plain = _window(snapshot, came) - _window(snapshot, out)
+        plain = window(snapshot, came) - window(snapshot, out)
         lines.append(
-            f"- out {out} {_name(snapshot, out)} → in {came} {_name(snapshot, came)}:"
+            f"- out {out} {name(snapshot, out)} → in {came} {name(snapshot, came)}:"
             f" {gap:+.2f} weighted ({plain:+.2f} plain) over the window"
         )
 
@@ -385,7 +385,7 @@ def reasons_briefing(snapshot: dict) -> str:
 
     lines += ["", "## The captain's rivals (by total xP over the window)"]
     lines.append(
-        ", ".join(f"{_name(snapshot, p)} ({_window(snapshot, p):.2f})" for p in rivals) or "None."
+        ", ".join(f"{name(snapshot, p)} ({window(snapshot, p):.2f})" for p in rivals) or "None."
     )
 
     lines += ["", f"## Transfers skipped (one line each, by id; {SKIPPED_WORDS} words at most)"]
@@ -394,8 +394,8 @@ def reasons_briefing(snapshot: dict) -> str:
         lines.append("None: give skipped as an empty list.")
     for row in rows:
         lines.append(
-            f"- id {row['id']} {_name(snapshot, row['id'])} ({row['pos']}) instead of"
-            f" {_name(snapshot, row['replaces'])}: {row['gap']:+.2f} weighted,"
+            f"- id {row['id']} {name(snapshot, row['id'])} ({row['pos']}) instead of"
+            f" {name(snapshot, row['replaces'])}: {row['gap']:+.2f} weighted,"
             f" {row['price_diff'] / 10:+.1f}m, {row['tag']}"
         )
 
@@ -409,8 +409,8 @@ def reasons_briefing(snapshot: dict) -> str:
         )
 
     lines += ["", "## Chips", "Points each chip would add this week:"]
-    for name, value in (snapshot.get("chip_evs") or {}).items():
-        label = chip_label(name) + (" (over the window)" if name == "wildcard" else "")
+    for kind, value in (snapshot.get("chip_evs") or {}).items():
+        label = chip_label(kind) + (" (over the window)" if kind == "wildcard" else "")
         lines.append(f"- {label}: {value:+.2f}")
     if snapshot.get("calendar"):
         lines.append("Calendar:")
@@ -419,7 +419,7 @@ def reasons_briefing(snapshot: dict) -> str:
 
 
 def _names(snapshot: dict, pids: list[int]) -> str:
-    return ", ".join(_name(snapshot, p) for p in pids) or "none"
+    return ", ".join(name(snapshot, p) for p in pids) or "none"
 
 
 def _player_line(snapshot: dict, pid: int) -> str:
@@ -443,7 +443,7 @@ def _player_line(snapshot: dict, pid: int) -> str:
     line = (
         f"- {pid} {row['n']} ({row['p']}, {row['c']}) {price(row['pr'])}, xMins {row['xm']:g}: "
         + "; ".join(cells)
-        + f"; plain {_window(snapshot, pid):.2f}, weighted {row['t']:.2f}"
+        + f"; plain {window(snapshot, pid):.2f}, weighted {row['t']:.2f}"
     )
     if row.get("nw"):
         line += f"; news: {row['nw']}"

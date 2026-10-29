@@ -337,10 +337,10 @@ def send_with_keyboard(text: str, statuses: list[int], **kwargs) -> list[dict]:
     return bodies
 
 
-def test_the_keyboard_is_the_five_commands_in_three_rows():
+def test_the_keyboard_is_the_six_commands_in_three_rows():
     assert KEYBOARD == {
         "keyboard": [
-            [{"text": "Transfers made"}],
+            [{"text": "Transfers made"}, {"text": "Week plan"}],
             [{"text": "Wildcard?"}, {"text": "Free hit?"}],
             [{"text": "Chip forecast"}, {"text": "Help"}],
         ],

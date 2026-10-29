@@ -45,7 +45,7 @@ import httpx
 BASE_URL = "https://api.telegram.org"
 MAX_CHARS = 4000
 
-# The owner's five commands as buttons under his message box: a Telegram
+# The owner's six commands as buttons under his message box: a Telegram
 # *reply keyboard*, kept on screen (``is_persistent``) and sized to its labels
 # (``resize_keyboard``). Tapping a button sends its label as an ordinary text
 # message, which is exactly what the inbox already reads — so there is no
@@ -53,7 +53,7 @@ MAX_CHARS = 4000
 # the inbox's dispatcher understands.
 KEYBOARD: dict = {
     "keyboard": [
-        [{"text": "Transfers made"}],
+        [{"text": "Transfers made"}, {"text": "Week plan"}],
         [{"text": "Wildcard?"}, {"text": "Free hit?"}],
         [{"text": "Chip forecast"}, {"text": "Help"}],
     ],
