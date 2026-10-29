@@ -4831,6 +4831,14 @@ def test_a_saved_run_writes_the_snapshot_and_the_detailed_report(scout_run):
     assert snapshot["bank"] == 28  # PICKS_15_JSON's, in tenths
     assert set(PICKS_15_IDS) <= set(snapshot["players"])
     assert snapshot["decision"]["source"] == "solver"
+    # The action block is the report's own checklist, built by the same
+    # function and not cut out of the rendered text: a week with no chip and
+    # nothing entered is exactly the "Do this" block, and the long read opens
+    # with it right under the deadline line.
+    assert snapshot["do_this"].startswith("## Do this\n")
+    assert snapshot["do_this"] in scout_run.report
+    assert f"\n\n{snapshot['do_this']}\n\n## What changed" in report
+    assert "## The road ahead" in report
 
 
 def test_the_snapshot_keeps_its_deadline_text(scout_run):

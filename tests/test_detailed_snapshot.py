@@ -150,7 +150,8 @@ SWAP = Plan(
     objective=57.9012,
     path=PlannedPath(
         moves=[
-            PlannedMove(event=9, transfers_in=[], transfers_out=[], hits=0, chip="bench_boost")
+            PlannedMove(event=9, transfers_in=[], transfers_out=[], hits=0, chip="bench_boost"),
+            PlannedMove(event=10, transfers_in=[3], transfers_out=[1], hits=1, chip="none"),
         ],
         objective=57.9012,
         weekly_xp={8: 20.0, 9: 25.0, 10: 13.0},
@@ -307,7 +308,10 @@ def test_a_plan_carries_its_moves_its_numbers_and_its_path():
         "hits": 0,
         "xp": 58.25,
         "net": 57.9,
-        "path": [{"gw": 9, "in": [], "out": [], "chip": "bench_boost"}],
+        "path": [
+            {"gw": 9, "in": [], "out": [], "chip": "bench_boost", "hits": 0},
+            {"gw": 10, "in": [3], "out": [1], "chip": "none", "hits": 1},
+        ],
         "ft_kept": 2,
         "ft_credit": 1.23,
         "transfer_cost": 0.2,
@@ -382,6 +386,28 @@ def test_a_run_with_no_gaffer_is_the_solvers():
         "chip_justification": "",
         "source": "solver",
     }
+
+
+def test_the_gaffers_unapplied_minutes_and_search_count_are_kept():
+    unapplied = [{"player_id": 4, "expected_minutes": 30.0, "reason": "rotation"}]
+    decision = {**DECISION, "unapplied": unapplied, "searches": 8}
+    kept = snapshot(decision=decision)["decision"]
+
+    assert kept["unapplied"] == unapplied
+    assert kept["searches"] == 8
+    # A copy, not the run's own list.
+    assert kept["unapplied"] is not unapplied
+
+
+def test_a_run_with_no_gaffer_keeps_neither_unapplied_nor_searches():
+    kept = snapshot()["decision"]
+
+    assert "unapplied" not in kept and "searches" not in kept
+
+
+def test_the_action_block_is_kept_as_given_and_none_for_a_draft():
+    assert snapshot(do_this="## Do this\n\n1. SELL Justin")["do_this"] == "## Do this\n\n1. SELL Justin"
+    assert snapshot()["do_this"] is None
 
 
 def test_a_free_hit_week_fields_the_temporary_eleven():
