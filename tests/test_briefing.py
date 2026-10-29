@@ -56,7 +56,7 @@ from datetime import date, datetime, timedelta, timezone
 import pytest
 
 from aigaffer.chips import held_by_rules
-from aigaffer.data.models import Bootstrap, ChipRule, Event, Pick, Player, Squad
+from aigaffer.data.models import Bootstrap, ChipRule, Event, Fixture, Pick, Player, Squad
 from aigaffer.executed import Executed
 from aigaffer.manager.briefing import (
     EARLY_SEASON_GWS,
@@ -1351,3 +1351,119 @@ def test_a_recorded_chip_weeks_calendar_says_it_is_played_this_week():
         "- Bench Boost (GW1–19): played this week (bar 6.0);"
         " its best week past the window would have been GW17 (+9.0)"
     ]
+
+
+# ---------------------------------------------------------------------------
+# Fixtures: the gaffer is told whom his players face, and where.
+# ---------------------------------------------------------------------------
+
+# The window is GW2-GW7 (the projections' own). By hand, with ASH/BRW/CRV:
+#   GW2: f1 ASH(h) v CRV, kicks off first; f2 CRV(h) v ASH, later.
+#        ASH: CRV(h)+crv(a)   CRV: ash(a)+ASH(h)   BRW: blank
+#   GW3: f3 BRW(h) v ASH.
+#        ASH: brw(a)   BRW: ASH(h)   CRV: blank
+#   GW4-GW7: nobody plays.
+SCHEDULE = [
+    Fixture(id=1, event=2, team_h=ASH, team_a=CRV, kickoff_time="2025-08-23T11:30:00Z"),
+    Fixture(id=2, event=2, team_h=CRV, team_a=ASH, kickoff_time="2025-08-26T19:00:00Z"),
+    Fixture(id=3, event=3, team_h=BRW, team_a=ASH, kickoff_time="2025-08-30T15:00:00Z"),
+]
+
+
+def fixture_briefing() -> str:
+    return briefing(inputs=replace(pipeline_inputs(), fixtures=SCHEDULE))
+
+
+def test_a_players_line_names_the_coming_fixture_after_who_he_is():
+    text = fixture_briefing()
+
+    # Home first then away, a double joined with +, the away side in lower case.
+    assert squad_line(1, text) == (
+        "- Alvez (id 1, GKP, ASH, £5.5m) | v CRV(h)+crv(a) | 4.0 xP GW2 | 20.0 xP6 | fit"
+    )
+    # BRW have no game in GW2: a blank.
+    assert squad_line(2, text) == (
+        "- Byrne (id 2, GKP, BRW, £4.5m) | v — | 1.6 xP GW2 | 8.0 xP6 | fit"
+    )
+    # CRV: away at ASH first, then home to them.
+    assert "| v ash(a)+ASH(h) |" in squad_line(4, text)
+
+
+def test_the_fixture_precedes_the_minutes_so_the_line_reads_who_against_whom_for_how_long():
+    line = squad_line(1, briefing(inputs=replace(pipeline_inputs(), fixtures=SCHEDULE), xmins=XMINS))
+
+    assert "| v CRV(h)+crv(a) | xMins 89 | 4.0 xP GW2 |" in line
+
+
+def test_the_fixtures_section_lists_each_club_once_for_the_whole_window():
+    text = fixture_briefing()
+    lines = section(text, "Fixtures")
+
+    assert [line for line in text.splitlines() if line.startswith("## Fixtures")] == [
+        "## Fixtures (GW2–GW7)"
+    ]
+    # Legend first, then one line per club, in club-name order.
+    assert lines[0].startswith("Opponent and venue")
+    assert lines[1:] == [
+        "ASH: CRV(h)+crv(a) brw(a) — — — —",
+        "BRW: — ASH(h) — — — —",
+        "CRV: ash(a)+ASH(h) — — — — —",
+    ]
+
+
+def test_the_fixtures_section_sits_after_the_situation_and_before_the_squad():
+    found = headings(fixture_briefing())
+
+    assert found[:3] == [
+        "# AI Gaffer — manager briefing: GW2",
+        "## Fixtures (GW2–GW7)",
+        "## Current squad",
+    ]
+
+
+def test_home_and_away_are_the_right_way_round():
+    # Fixture 3 is BRW at home to ASH: BRW's entry says (h), ASH's says (a).
+    only_gw3 = replace(
+        pipeline_inputs(), fixtures=[f for f in SCHEDULE if f.id == 3]
+    )
+    text = briefing(inputs=only_gw3)
+
+    brw = next(line for line in section(text, "Fixtures") if line.startswith("BRW:"))
+    ash = next(line for line in section(text, "Fixtures") if line.startswith("ASH:"))
+    assert brw.split()[1:3] == ["—", "ASH(h)"]
+    assert ash.split()[1:3] == ["—", "brw(a)"]
+
+
+def test_only_clubs_the_briefing_is_about_appear_in_the_fixtures():
+    # Everyone in the universe is a club of the three, so cut the field: a
+    # briefing whose every player is ASH or BRW has no reason to list CRV.
+    # Here CRV is in the squad, so it is listed; a club absent from every
+    # section is not. Prove the negative with a team nobody holds.
+    teams = FIXTURE.teams + [FIXTURE.teams[0].model_copy(update={"id": 99, "short_name": "ZZZ"})]
+    inputs = replace(
+        pipeline_inputs(),
+        bootstrap=BOOTSTRAP.model_copy(update={"teams": teams}),
+        fixtures=SCHEDULE + [Fixture(id=9, event=2, team_h=99, team_a=1)],
+    )
+
+    text = briefing(inputs=inputs)
+
+    assert not any(line.startswith("ZZZ:") for line in section(text, "Fixtures"))
+
+
+def test_no_fixture_list_means_no_fixture_segment_and_no_section():
+    text = briefing()
+
+    assert "## Fixtures" not in text
+    assert " | v " not in text
+
+
+def test_a_club_named_like_a_section_cannot_forge_one_through_the_fixtures():
+    teams = [team.model_copy(update={"short_name": FORGERY}) for team in FIXTURE.teams]
+    inputs = replace(
+        pipeline_inputs(),
+        bootstrap=BOOTSTRAP.model_copy(update={"teams": teams}),
+        fixtures=SCHEDULE,
+    )
+
+    assert headings(briefing(inputs=inputs)) == HEADINGS[:1] + ["## Fixtures (GW2–GW7)"] + HEADINGS[1:]

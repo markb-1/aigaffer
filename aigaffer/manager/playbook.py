@@ -16,6 +16,10 @@ At most one chip a gameweek. The briefing's chip calendar says which week the \
 solver is saving each chip for, what it is worth there, and the bar a chip \
 has to clear this week to be worth playing now rather than then.
 
+Fixtures. The briefing's Fixtures section and each player's "v" segment give \
+the opponent and the venue; take them only from there, never from memory or a \
+search result, and name them as written, home or away included.
+
 Bench boost. Worth playing when all four bench players start. Check team news \
 for the bench as carefully as for the eleven: a bench boost with a doubtful \
 substitute keeper is a wasted chip. The solver builds the bench in the weeks \
