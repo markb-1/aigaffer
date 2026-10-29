@@ -35,6 +35,7 @@ import pytest
 
 from aigaffer import weekplan
 from aigaffer.detailed import render as detailed
+from aigaffer.detailed.skipped import BENCH
 from aigaffer.detailed.snapshot import load_snapshots, write_snapshot
 from aigaffer.executed import Executed
 from aigaffer.report.telegram import send_message
@@ -458,6 +459,19 @@ def test_only_the_three_highest_gain_skipped_transfers_are_shown():
     ]
 
 
+def test_a_transfer_skipped_only_for_the_bench_gives_way_to_one_the_plan_beat():
+    # The benched forward has the biggest gap, but the plan never weighed him;
+    # the defender it weighed and beat is the one worth explaining.
+    board = snap(skipped=[
+        {"id": 3, "pos": "FWD", "replaces": 4, "gap": 17.0, "price_diff": 0, "tag": BENCH},
+        {"id": 3, "pos": "DEF", "replaces": 4, "gap": 8.0, "price_diff": 0, "tag": "beaten"},
+    ])
+
+    third = texts(board)[2]
+
+    assert third.index("(+8.0)") < third.index("(+17.0)")
+
+
 def test_triggers_are_printed_when_reasons_carry_them_and_not_otherwise():
     asked = snap(reasons={"triggers": ["If Saka is ruled out on Friday: Saka → Xhaka now"]})
 
@@ -505,7 +519,7 @@ def test_the_chips_are_the_calendar_and_this_weeks_values():
 
 def test_the_squads_week_by_week_total_is_the_elevens():
     # GW8: 4.12 + 5.00 + 6.00 + 3.00 + 3.00 = 21.12; GW9: 7.30 + 0 + 3.00 + 0 + 3.00 = 13.30.
-    assert "XI projected: GW8 21.1 · GW9 13.3" in texts(snap())[4]
+    assert "XI projected, before the armband: GW8 21.1 · GW9 13.3" in texts(snap())[4]
 
 
 def test_each_man_has_a_compact_strip_home_upper_away_lower_blank_dash_double_plus():

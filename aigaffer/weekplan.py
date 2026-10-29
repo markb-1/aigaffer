@@ -60,6 +60,7 @@ from aigaffer.detailed.render import (
     what_changed,
     window,
 )
+from aigaffer.detailed.skipped import BENCH
 from aigaffer.detailed.snapshot import latest_snapshot, load_snapshots
 from aigaffer.executed import Executed
 from aigaffer.inbox import Reply
@@ -367,7 +368,12 @@ def _why(cur: dict) -> str:
         lines += ["", runner]
     lines += ["", *_armbands(cur)]
 
-    skipped = sorted(cur.get("skipped") or [], key=lambda item: -item["gap"])[:MAX_SKIPPED]
+    # A man passed over only because he would sit on the bench is a big number
+    # nobody asks about; the ones the plan weighed and beat are the questions.
+    # So the benched go last, and the rest lead by gain.
+    skipped = sorted(
+        cur.get("skipped") or [], key=lambda item: (item["tag"] == BENCH, -item["gap"])
+    )[:MAX_SKIPPED]
     if skipped:
         notes = {item.get("id"): item.get("reason") for item in reasons.get("skipped") or []}
         lines += ["", "Passed over:"]
@@ -498,7 +504,7 @@ def _fixtures(cur: dict) -> str:
     lines = [
         f"5/{TEXTS} · 📅 Upcoming gameweeks",
         "",
-        "XI projected: " + " · ".join(f"GW{gw} {total[gw]:.1f}" for gw in events),
+        "XI projected, before the armband: " + " · ".join(f"GW{gw} {total[gw]:.1f}" for gw in events),
     ]
     if len(events) > SOFTER_FROM:
         softer = events[SOFTER_FROM:]
