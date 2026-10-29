@@ -132,6 +132,7 @@ from aigaffer.model.minutes import expected_minutes, season_prior
 from aigaffer.model.strength import TeamStrengths, build_team_strengths
 from aigaffer.model.xp import PlayerProjection, project_all, projected_events
 from aigaffer.report.render import (
+    action_block,
     # ``agent.MANAGER``, reached without importing the manager package at
     # module scope; renamed because this module's own DECIDED is a log line.
     DECIDED as BY_MANAGER,
@@ -819,6 +820,14 @@ def run_pipeline(
                         cfg, mode, clock, inputs, effective, solved, gaffer,
                         choice, costed, xmins, prices, calendar, chip, decision,
                         freehit_squad, freehit_xi,
+                        # The gameweek report's own opening, from the same
+                        # arguments render_report was given above, so the
+                        # long read opens with what the phone was told.
+                        action_block(
+                            event, choice, lineup, effective.bootstrap, gaffer,
+                            free_transfers=effective.free_transfers,
+                            selling_prices=prices, executed=executed,
+                        ).text(),
                     ),
                 )
                 detailed = True
@@ -2591,6 +2600,7 @@ def _run_snapshot(
     decision: dict,
     freehit_squad: list[int] | None,
     freehit_xi: list[int] | None,
+    do_this: str | None = None,
 ) -> dict:
     """The run as :func:`~aigaffer.detailed.snapshot.build_snapshot` keeps it.
 
@@ -2600,6 +2610,8 @@ def _run_snapshot(
     - ``costed``, the gaffer's projections when he re-solved, and the minutes
       that go with them (:func:`_costed_minutes`), so the xP and the xMins
       beside a player are the ones the plan was chosen on;
+    - ``do_this``, the gameweek report's action block as text, built by the
+      caller from the arguments the report was rendered with;
     - the plans he could have finalized, under the ids he saw them by — his
       registry, or the solver's shortlist numbered the way the briefing
       numbers it (:func:`~aigaffer.manager.briefing.initial_plan_ids`) when
@@ -2653,6 +2665,7 @@ def _run_snapshot(
         # re-solve's, which is how the snapshot marks a plan "resolved".
         shortlist=len(solved.plans),
         decay=cfg.decay,
+        do_this=do_this,
     )
 
 

@@ -36,7 +36,7 @@ beside a total for several.
 
 from collections import defaultdict
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from aigaffer.chips import BENCH_BOOST, FREE_HIT, TRIPLE_CAPTAIN, WILDCARD
 from aigaffer.data.free_transfers import MAX_FREE_TRANSFERS, after_roll
@@ -327,26 +327,20 @@ def render_report(
     # a different thing about the same decision.
     chip = played_chip(choice, gaffer, executed)
     free_hit = _free_hitting(choice, chip, executed)
-    entered = executed is not None and executed.chip == chip != NO_CHIP
     chip_section = render_chip_calendar(
         calendar, event.id, planned_chips(choice, chip, event.id), choice
     )
-    # A draft has no checklist and no chip to play, so no banner either.
-    banner = None if _drafting(choice) else chip_banner(chip, entered)
+    # The banner, the "working from" block and the checklist are the action
+    # block, built once by the function the detailed report also calls.
+    action = action_block(
+        event, choice, lineup, bootstrap, gaffer,
+        free_transfers=free_transfers, selling_prices=selling_prices, executed=executed,
+    )
 
     sections = [
-        _header(mode, event, banner=banner),
-        *([] if executed is None else [working_from(executed, players)]),
-        *(
-            []
-            if _drafting(choice)
-            else [
-                _do_this(
-                    event, choice, lineup, players, clubs, chip, free_hit,
-                    free_transfers, selling_prices, chip_entered=entered,
-                )
-            ]
-        ),
+        _header(mode, event, banner=action.banner),
+        *([] if action.working_from is None else [action.working_from]),
+        *([] if action.do_this is None else [action.do_this]),
         _recommendation(choice, players, clubs),
         *([] if gaffer is None else [_gaffer(gaffer, players)]),
         _team_sheet(lineup, players, projections, free_hit),
@@ -362,6 +356,62 @@ def render_report(
         _watchlist(choice.squad, players, clubs, projections),
     ]
     return "\n\n".join(sections) + "\n"
+
+
+class ActionBlock(NamedTuple):
+    """What a report opens with once its title is down: the three parts of
+    "what to do", kept apart because the gameweek report seats them in two
+    places (the banner inside the header, between title and deadline) and the
+    detailed report in one. Each is None where the week has none."""
+
+    banner: str | None
+    working_from: str | None
+    do_this: str | None
+
+    def text(self) -> str | None:
+        """The parts as one block, in reading order, blank line between; None
+        when there is nothing to say (a draft with no entered week)."""
+        parts = [part for part in self if part is not None]
+        return "\n\n".join(parts) if parts else None
+
+
+def action_block(
+    event: Event,
+    choice: Plan,
+    lineup: Lineup,
+    bootstrap: Bootstrap,
+    gaffer: "ManagerDecision | None" = None,
+    *,
+    free_transfers: int | None = None,
+    selling_prices: dict[int, int] | None = None,
+    executed: "Executed | None" = None,
+) -> ActionBlock:
+    """The chip banner, the executed week's "working from" block and the
+    "Do this" checklist, from the arguments :func:`render_report` is given.
+
+    This is the one place that decides them. The gameweek report calls it, and
+    so does the run that writes the detailed report's snapshot, so the long
+    read opens with exactly the words the phone got and the two cannot drift
+    apart. ``lineup`` is the one fielded (a free hit's temporary team on a
+    free-hit week). A draft has no checklist and no banner, being the one
+    report whose whole squad is the action.
+    """
+    players = {player.id: player for player in bootstrap.elements}
+    clubs = {team.id: team.short_name for team in bootstrap.teams}
+    chip = played_chip(choice, gaffer, executed)
+    free_hit = _free_hitting(choice, chip, executed)
+    entered = executed is not None and executed.chip == chip != NO_CHIP
+    drafting = _drafting(choice)
+    return ActionBlock(
+        banner=None if drafting else chip_banner(chip, entered),
+        working_from=None if executed is None else working_from(executed, players),
+        do_this=None
+        if drafting
+        else _do_this(
+            event, choice, lineup, players, clubs, chip, free_hit,
+            free_transfers, selling_prices, chip_entered=entered,
+        ),
+    )
 
 
 def render_reminder(
@@ -753,7 +803,7 @@ def _gaffer_digest(gaffer: "ManagerDecision") -> str:
     is dropped only when it is a heading and not a sentence.
     """
     lines = ["## The Gaffer's view", "", _prose(_opening(gaffer.rationale))]
-    lines += ["", f"{_searches(gaffer.searches)}. {_source(gaffer.source)}"]
+    lines += ["", f"{searches_line(gaffer.searches)}. {source_line(gaffer.source)}"]
     return "\n".join(lines)
 
 
@@ -1412,7 +1462,7 @@ def _gaffer(gaffer: "ManagerDecision", players: dict[int, Player]) -> str:
         spoken = gaffer.chip.replace("_", " ")
         lines += ["", f"Playing the {spoken}. {_prose(gaffer.chip_justification)}"]
 
-    applied = _settled(gaffer.adjustments)
+    applied = settled(gaffer.adjustments)
     if applied:
         lines += ["", OVERRULED, ""]
         lines += [
@@ -1422,28 +1472,28 @@ def _gaffer(gaffer: "ManagerDecision", players: dict[int, Player]) -> str:
             for record in applied
         ]
 
-    noted = _noted(gaffer.unapplied, applied)
-    if noted:
+    unspent = noted(gaffer.unapplied, applied)
+    if unspent:
         lines += ["", NOT_APPLIED, ""]
         lines += [
             f"- {_who(record['player_id'], players)}"
             f" at {record['expected_minutes']:.0f} mins"
             f" — {_one_line(record['reason'])}"
-            for record in noted
+            for record in unspent
         ]
 
-    lines += ["", f"{_searches(gaffer.searches)}. {_source(gaffer.source)}"]
+    lines += ["", f"{searches_line(gaffer.searches)}. {source_line(gaffer.source)}"]
     return "\n".join(lines)
 
 
-def _searches(count: int) -> str:
+def searches_line(count: int) -> str:
     """``1 web search``, ``3 web searches``. The house :func:`plural` adds an
     s and would make it "web searchs"; a noun that pluralizes differently is
     spelled out where it is used rather than taught to the vocabulary."""
     return f"{count} web search" if count == 1 else f"{count} web searches"
 
 
-def _noted(unapplied: list[dict], applied: list[dict]) -> list[dict]:
+def noted(unapplied: list[dict], applied: list[dict]) -> list[dict]:
     """The minutes that changed nothing, one line per player.
 
     A player who was adjusted, re-solved on, and then adjusted again is not a
@@ -1452,15 +1502,15 @@ def _noted(unapplied: list[dict], applied: list[dict]) -> list[dict]:
     is left here is the players whose latest number never reached a re-solve at
     all, which is the only thing the heading claims.
     """
-    settled = {record["player_id"] for record in applied}
+    spoken = {record["player_id"] for record in applied}
     return [
         record
-        for record in _settled(unapplied)
-        if record["player_id"] not in settled
+        for record in settled(unapplied)
+        if record["player_id"] not in spoken
     ]
 
 
-def _settled(adjustments: list[dict]) -> list[dict]:
+def settled(adjustments: list[dict]) -> list[dict]:
     """One entry per player: the last thing he said about each of them.
 
     The manager's record keeps every adjustment he made, in the order he made
@@ -1483,7 +1533,7 @@ def _who(pid: int, players: dict[int, Player]) -> str:
     return player.web_name if player is not None else f"player {pid}"
 
 
-def _source(source: str) -> str:
+def source_line(source: str) -> str:
     """Whose pick this is, said plainly.
 
     ``source`` is ``manager`` or ``solver-fallback: <reason>``, and the reason

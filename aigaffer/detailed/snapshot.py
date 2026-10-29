@@ -74,6 +74,7 @@ def build_snapshot(
     bank: int,
     shortlist: int,
     decay: float = 0.85,
+    do_this: str | None = None,
 ) -> dict:
     """The run, as one JSON-ready dict.
 
@@ -88,6 +89,11 @@ def build_snapshot(
     ``decay`` is the window's per-gameweek discount, the run's ``cfg.decay``
     (the default is the configured 0.85); the skipped-transfer pass needs it to
     price a lost free-transfer step the way the solver does.
+
+    ``do_this`` is the gameweek report's action block (chip banner, "working
+    from", the "Do this" checklist) as text, built by the same function the
+    report calls, so the detailed report opens with exactly what the phone was
+    told. None for a draft, which has no checklist.
 
     ``decision`` is the run's decision record, read for what it settled: this
     week's free transfers, the armbands, the bench in substitution order, the
@@ -177,9 +183,19 @@ def build_snapshot(
         "vice": decision.get("vice"),
         "plans": {pid: _plan(plan, pid >= shortlist) for pid, plan in sorted(plans.items())},
         "chosen": chosen_id,
+        "do_this": do_this,
         "decision": {
             "rationale": decision.get("rationale", ""),
             "adjustments": list(decision.get("adjustments", [])),
+            # The minutes he only wrote down, and how many searches it took:
+            # both are the gaffer's alone, so a solver-only run carries
+            # neither and the long read prints neither.
+            **(
+                {"unapplied": list(decision["unapplied"])}
+                if "unapplied" in decision
+                else {}
+            ),
+            **({"searches": decision["searches"]} if "searches" in decision else {}),
             "chip": decision.get("chip"),
             "chip_justification": decision.get("chip_justification", ""),
             "source": decision.get("decision_source", SOLVER),
@@ -297,6 +313,9 @@ def _plan(plan: Plan, resolved: bool) -> dict:
                     "in": list(move.transfers_in),
                     "out": list(move.transfers_out),
                     "chip": move.chip,
+                    # What the move spends beyond the free transfers, for the
+                    # road ahead's "1 FT, no hit".
+                    "hits": move.hits,
                 }
                 for move in path.moves
             ]
