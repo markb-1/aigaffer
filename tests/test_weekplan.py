@@ -409,6 +409,18 @@ def test_a_long_first_sentence_is_cut_at_a_word_with_an_ellipsis():
     assert set(out.rstrip("…").split()) == {"justify"}
 
 
+def test_a_short_first_sentence_does_not_shrink_the_reason_to_a_fragment():
+    # "Out." then a 250-character sentence: keeping whole sentences would
+    # leave four characters, so the reason is cut at a word instead.
+    long = " ".join(["hamstring"] * 25) + "."
+
+    out = weekplan._short("Out. " + long)
+
+    assert out.startswith("Out. hamstring")
+    assert out.endswith("…")
+    assert len(out) > weekplan.MAX_REASON // 2
+
+
 def test_no_cut_ever_lands_inside_a_word():
     # Words of every length from 3 to 12, so the limit falls inside a word at
     # some offset whatever the starting point.
@@ -476,6 +488,15 @@ def test_a_rival_that_buys_the_same_men_but_sells_another_names_the_sale():
     board = snap(plans={0: plan([7], [4]), 2: plan([7], [2], net=17.5)})
 
     assert "Next best: -Salah, 1.5 behind" in texts(board)[2]
+
+
+def test_a_rival_that_buys_only_some_of_the_chosen_men_says_only():
+    # Chosen buys Cucurella and Haaland; plan 2 buys Cucurella alone and nets
+    # 17.0, 2.0 behind. "+Cucurella" alone would read as a signing the chosen
+    # plan lacks, so it is marked "only".
+    board = snap(plans={0: plan([7, 3], [4, 2]), 2: plan([7], [4], net=17.0)})
+
+    assert "Next best: only +Cucurella, 2.0 behind" in texts(board)[2]
 
 
 def test_a_rival_with_the_same_moves_says_only_its_road_ahead_differs():

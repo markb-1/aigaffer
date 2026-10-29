@@ -364,9 +364,12 @@ def _short(text: str | None) -> str:
         if len(joined) > MAX_REASON:
             break
         kept = joined
-    if kept:
+    # Whole sentences only when they say a fair share of it: a short first
+    # sentence ("Out.") before a long second one would otherwise shrink the
+    # reason to the fragment, which says less than a cut at a word would.
+    if len(kept) >= MAX_REASON // 2:
         return kept
-    # One long first sentence: leave room for the ellipsis, then back up to a
+    # A long first sentence: leave room for the ellipsis, then back up to a
     # space so that no word is split. A single unbroken word longer than the
     # limit has no space to back up to, and is cut where it stands.
     room = flat[: MAX_REASON - 1]
@@ -458,10 +461,12 @@ def _describe(cur: dict, plan: dict, chosen: dict) -> str:
     naming a man the chosen plan already has.
     """
     extra = [pid for pid in plan["in"] if pid not in chosen["in"]]
-    if not extra and set(plan["in"]) != set(chosen["in"]):
-        extra = plan["in"]  # it buys only some of his men: say which
     if extra:
         bought = ", ".join(f"+{name(cur, pid)}" for pid in extra)
+    elif plan["in"] and set(plan["in"]) != set(chosen["in"]):
+        # It buys only some of his men: say which, marked so it does not read
+        # as a signing the chosen plan lacks.
+        bought = "only " + ", ".join(f"+{name(cur, pid)}" for pid in plan["in"])
     else:
         sold = [pid for pid in plan["out"] if pid not in chosen["out"]]
         if not sold and set(plan["out"]) != set(chosen["out"]):
