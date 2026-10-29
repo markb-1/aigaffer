@@ -27,7 +27,7 @@ Five consequences worth stating, so nobody files them as bugs:
   faces about ρ^Δ × its saved-for value plus the 2.0 floor, so it waits for a
   week clearly better than the saved-for one. The bench boost keeps the old
   "lean towards now": with PROXY_SCALE 0.7 and ρ^9 ≈ 0.76 a gain equal to its
-  proxy faces a bar of about 0.65 × that gain, so the window plays it as early
+  proxy faces a bar of about 0.53 × that gain, so the window plays it as early
   as GW6. That is the owner's "lean towards now", taken as the principal's
   decision. The free hit is held by its option floor until a week clearly
   beats it or expiry nears; the wildcard is held by its ramp.
