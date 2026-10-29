@@ -50,7 +50,7 @@ from typing import Any
 import anthropic
 
 from aigaffer.config import Config
-from aigaffer.detailed.render import name, _pairs, window, captain_rivals
+from aigaffer.detailed.render import _pairs, captain_rivals, name, window
 from aigaffer.manager.agent import EFFORT, MAX_RESUMPTIONS, MAX_TOKENS, _cached, _result, _rolling, _text
 
 # Bound at module scope, not imported inside the function as the review
