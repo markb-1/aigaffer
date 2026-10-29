@@ -28,10 +28,10 @@ on the way in, so a snapshot read from disk is the snapshot that was built.
 import json
 import os
 import re
-from collections import defaultdict
 from pathlib import Path
 
 from aigaffer.data.models import Bootstrap, Event, Fixture
+from aigaffer.data.schedule import opponents as club_opponents
 from aigaffer.detailed.skipped import skipped_transfers
 from aigaffer.model.xp import PlayerProjection, projected_events
 from aigaffer.report.render import POSITIONS
@@ -122,7 +122,7 @@ def build_snapshot(
     events = projected_events(projections)
     clubs = {team.id: team for team in bootstrap.teams}
     elements = {element.id: element for element in bootstrap.elements}
-    opponents = _opponents(fixtures, clubs, set(events))
+    opponents = club_opponents(fixtures, clubs, set(events))
     prices = selling_prices or {}
 
     players = {}
@@ -267,27 +267,6 @@ def latest_snapshot(state_dir: Path) -> dict | None:
         return None
     _, _, newest = max(found)
     return _revive(json.loads(newest.read_text(encoding="utf-8")))
-
-
-def _opponents(
-    fixtures: list[Fixture], clubs: dict, window: set[int]
-) -> dict[tuple[int, int], list[tuple[str, str]]]:
-    """Each club's opponents in each window gameweek, as ``(short name, h|a)``.
-
-    A fixture with no gameweek (``event`` None) has not been scheduled and is
-    no one's game yet; one outside the window is not this run's. Kick-off
-    order within a gameweek, then fixture id, so a double reads in the order
-    it is played.
-    """
-    schedule: dict[tuple[int, int], list[tuple[str, str]]] = defaultdict(list)
-    ordered = sorted(
-        (f for f in fixtures if f.event is not None and f.event in window),
-        key=lambda f: (f.kickoff_time or "", f.id),
-    )
-    for fixture in ordered:
-        schedule[(fixture.event, fixture.team_h)].append((clubs[fixture.team_a].short_name, "h"))
-        schedule[(fixture.event, fixture.team_a)].append((clubs[fixture.team_h].short_name, "a"))
-    return schedule
 
 
 def _plan(plan: Plan, resolved: bool) -> dict:

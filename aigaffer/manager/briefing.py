@@ -36,6 +36,7 @@ never come to disagree about what £4.0m or a naive deadline means.
 """
 
 from collections import defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date
 from typing import TYPE_CHECKING
@@ -44,7 +45,8 @@ from aigaffer.chips import CHIP_ORDER, held_by_rules, held_for
 from aigaffer.config import EARLY_SEASON_GWS
 from aigaffer.data.free_transfers import MAX_FREE_TRANSFERS, after_roll
 from aigaffer.data.models import Event, Player
-from aigaffer.model.xp import PlayerProjection
+from aigaffer.data.schedule import games_text, opponents
+from aigaffer.model.xp import PlayerProjection, projected_events
 from aigaffer.report.render import (
     NO_CHIP,
     POSITIONS,
@@ -283,6 +285,13 @@ class _Board:
     projections: dict[int, PlayerProjection]
     horizon: int
     xmins: dict[int, float] | None = None
+    # Each club's opponents in each window gameweek, as the schedule lookup
+    # returns them (names already made safe). None, or empty, when the fetch
+    # carried no fixture list: then the briefing has no fixture segment and
+    # no Fixtures section, rather than a table of blanks that would read as
+    # "nobody plays" to a model that cannot tell the two apart.
+    fixtures: dict[tuple[int, int], list[tuple[str, str]]] | None = None
+    window: tuple[int, ...] = ()
 
 
 def build_briefing(
@@ -331,6 +340,8 @@ def build_briefing(
         projections=projections,
         horizon=horizon_of(projections),
         xmins=xmins,
+        fixtures=_club_fixtures(inputs, projections),
+        window=tuple(projected_events(projections)),
     )
     # A draft has no squad to list, so it lists the fifteen it just drafted.
     held = solve.choice.squad if inputs.squad is None else inputs.squad.player_ids
@@ -348,6 +359,7 @@ def build_briefing(
             solve.draft_mode,
             budget,
         ),
+        *_fixtures(held, solve, board, event),
         _squad(held, board, event, solve.draft_mode),
         _team_sheet(solve.lineup, board, event, pick),
         _candidates(numbered, board, pick),
@@ -622,6 +634,75 @@ def _early_season_note(events: list[Event]) -> str:
     return EARLY_SEASON_NOTE.format(played=plural(played, "gameweek"))
 
 
+def _club_fixtures(
+    inputs: "PipelineInputs", projections: dict[int, PlayerProjection]
+) -> dict[tuple[int, int], list[tuple[str, str]]]:
+    """The window's schedule with every club name made safe to print.
+
+    The window is the projections' own, so the fixtures cover exactly the
+    gameweeks the numbers do. The names pass through :func:`_safe` like every
+    other club name in the briefing: they come off the API and sit on lines the
+    manager reads as structure.
+    """
+    clubs = {team.id: team for team in inputs.bootstrap.teams}
+    found = opponents(inputs.fixtures, clubs, set(projected_events(projections)))
+    return {
+        key: [(_safe(name), where) for name, where in games]
+        for key, games in found.items()
+    }
+
+
+def _fixtures(
+    held: list[int], solve: "SolveResult", board: _Board, event: int
+) -> list[str]:
+    """The ``## Fixtures`` section, as a one-item list (or none).
+
+    The playbook asks the gaffer to judge by the fixture, and in the GW9 scout
+    run he wrote that Haaland was away at Brighton when Man City were at home:
+    the briefing held no fixtures, so he guessed. One line per club, covering
+    the whole window, is the cheapest way to hand him the truth: the clubs are
+    fewer than the players, and a player's own line carries only the coming
+    gameweek. A club with no entry for a gameweek is a blank (``—``).
+
+    Which clubs: every one the briefing mentions a player of: the squad, the
+    plans' squads and transfers, the paths' signings and the watchlist.
+    """
+    pids = {*held, *relevant_players(solve), *_watchlist_ids(held, board)}
+    for plan in solve.plans:
+        if plan.path is not None:
+            for move in plan.path.moves:
+                pids.update(move.transfers_in, move.transfers_out)
+    return _fixtures_for(pids, board)
+
+
+def _fixtures_for(pids: Iterable[int], board: _Board) -> list[str]:
+    """The ``## Fixtures`` section for the clubs of ``pids``, or none at all.
+
+    Split from :func:`_fixtures` so the chip what-if's briefing
+    (:mod:`aigaffer.manager.chip_opinion`) hands its gaffer the same table for
+    the players it is about: a wildcard or a free hit is judged on fixtures
+    more than any other call he makes.
+    """
+    if not board.fixtures or not board.window:
+        return []
+    clubs = sorted({board.players[pid].team for pid in pids if pid in board.players},
+                   key=lambda team: (board.clubs[team], team))
+    first, last = board.window[0], board.window[-1]
+    lines = [
+        f"## Fixtures (GW{first}–GW{last})",
+        "",
+        "Opponent and venue by gameweek, in order; (h) home, (a) away and in"
+        " lower case, + joins a double, — is a blank. Take fixtures from here.",
+        "",
+    ]
+    for team in clubs:
+        cells = " ".join(
+            games_text(board.fixtures.get((gw, team), [])) for gw in board.window
+        )
+        lines.append(f"{_safe(board.clubs[team])}: {cells}")
+    return ["\n".join(lines)]
+
+
 def _squad(held: list[int], board: _Board, event: int, drafting: bool) -> str:
     """The fifteen, a line each, by position and then by next gameweek.
 
@@ -807,6 +888,23 @@ def _watchlist(held: list[int], board: _Board, event: int) -> str:
     reached — but the answer to "is the shortlist above drawn from a sane
     field", which is a question worth him being able to ask.
     """
+    shown = _watchlist_ids(held, board)
+    # The count is what was listed, not what was asked for: a briefing that
+    # announces ten and prints six has told the reader something untrue about
+    # the size of the field, which is the one thing this section is for.
+    lines = [
+        "## Watchlist",
+        "",
+        f"The {plural(len(shown), 'best projection')} we do not hold."
+        " Context only: a player here is buyable only if a plan above buys him.",
+        "",
+    ]
+    lines += [f"- {_player_line(pid, board, event)}" for pid in shown]
+    return "\n".join(lines)
+
+
+def _watchlist_ids(held: list[int], board: _Board) -> list[int]:
+    """The players the watchlist shows, best projection first, ties by name."""
     owned = set(held)
     field = [pid for pid in board.players if pid not in owned]
     ranked = sorted(
@@ -817,19 +915,7 @@ def _watchlist(held: list[int], board: _Board, event: int) -> str:
             pid,
         ),
     )
-    # The count is what was listed, not what was asked for: a briefing that
-    # announces ten and prints six has told the reader something untrue about
-    # the size of the field, which is the one thing this section is for.
-    shown = ranked[:WATCHLIST_SIZE]
-    lines = [
-        "## Watchlist",
-        "",
-        f"The {plural(len(shown), 'best projection')} we do not hold."
-        " Context only: a player here is buyable only if a plan above buys him.",
-        "",
-    ]
-    lines += [f"- {_player_line(pid, board, event)}" for pid in shown]
-    return "\n".join(lines)
+    return ranked[:WATCHLIST_SIZE]
 
 
 def _relevant(solve: "SolveResult", board: _Board) -> str:
@@ -894,20 +980,33 @@ def _price_watch(solve: "SolveResult", board: _Board) -> str | None:
 
 
 def _player_line(pid: int, board: _Board, event: int) -> str:
-    """``Alvez (id 1, GKP, ASH, £5.5m) | xMins 89 | 4.0 xP GW2 | 20.0 xP6 | fit``.
+    """``Alvez (id 1, GKP, ASH, £5.5m) | v BHA(h) | xMins 89 | 4.0 xP GW2 | 20.0 xP6 | fit``.
 
-    The minutes come between who he is and what he is worth, because they are
-    the assumption the worth was computed from: read left to right, the line
-    says who, for how long, to what end, and whether any of it is in doubt.
+    The coming fixture follows who he is, and the minutes follow the fixture:
+    read left to right, the line says who, against whom, for how long, to what
+    end, and whether any of it is in doubt. The fixture is the coming
+    gameweek's alone (``v CRV(h)+crv(a)`` for a double, ``v —`` for a blank);
+    the club table in the Fixtures section carries the rest of the window.
+    Without a fixture list the segment is absent.
     """
     minutes = _minutes(pid, board)
     return (
         f"{_described(pid, board)}"
+        f"{_coming(pid, board, event)}"
         f"{f' | {minutes}' if minutes else ''}"
         f" | {_next_gw(pid, board, event):.1f} xP GW{event}"
         f" | {projected_points(board.projections, pid):.1f} xP{board.horizon}"
         f" | {_flag(board.players[pid])}"
     )
+
+
+def _coming(pid: int, board: _Board, event: int) -> str:
+    """`` | v BHA(h)``: his club's fixture in the coming gameweek, or nothing
+    when the board has no fixture list."""
+    if not board.fixtures:
+        return ""
+    games = board.fixtures.get((event, board.players[pid].team), [])
+    return f" | v {games_text(games)}"
 
 
 def _moves(plan: Plan, board: _Board) -> str:
