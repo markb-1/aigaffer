@@ -19,7 +19,6 @@ from aigaffer.model.xp import (
     CLUB_CHANGE_FACTOR,
     CS_PTS,
     DEFCON90_PRIOR,
-    FORM_FADE,
     PRIOR_SEASON_DISCOUNT,
     SAVES_PRIOR_DISCOUNT,
     GOAL_PTS,
@@ -620,9 +619,6 @@ def test_a_player_expected_to_play_no_minutes_projects_zero():
         per_gw={2: 0.0, 3: 0.0},
         total=0.0,
         attacking_per_gw={2: 0.0, 3: 0.0},
-        # The fixture is a fact about the week, not about his minutes; a week
-        # with no fixture reads as an average one.
-        fixture_per_gw={2: 1.2, 3: 1.0},
     )
 
 
@@ -951,52 +947,3 @@ def test_the_stingy_defence_projects_the_cleaner_sheet():
         universe, [fixture], {1: 90.0, 2: 90.0}, start_event=2, strengths=fit
     )
     assert projections[1].per_gw[2] > projections[2].per_gw[2]
-
-
-# The triple captain's valuation: the attacking slice tilted again by the
-# fixture and by form, the floor left alone.
-
-
-def test_a_neutral_fixture_and_form_leave_the_triple_captain_at_his_points():
-    projection = PlayerProjection(
-        player_id=1, per_gw={2: 8.0}, total=8.0, attacking_per_gw={2: 5.0}
-    )
-    assert projection.tc_points(2) == approx(8.0)
-
-
-def test_the_fixture_tilts_only_the_attacking_slice_of_the_triple_captain():
-    # 8.0 of which 5.0 is goals and assists: an away day at a 0.8 defence
-    # takes a fifth of the 5.0 off again, a 1.25 home tie adds a quarter.
-    projection = PlayerProjection(
-        player_id=1,
-        per_gw={2: 8.0, 3: 8.0},
-        total=16.0,
-        attacking_per_gw={2: 5.0, 3: 5.0},
-        fixture_per_gw={2: 0.8, 3: 1.25},
-    )
-    assert projection.tc_points(2) == approx(8.0 - 1.0)
-    assert projection.tc_points(3) == approx(8.0 + 1.25)
-
-
-def test_form_fades_from_the_coming_week():
-    # Form 1.2 is the whole 0.2 in the coming week and 0.7 of it a week on.
-    projection = PlayerProjection(
-        player_id=1,
-        per_gw={2: 8.0, 3: 8.0},
-        total=16.0,
-        attacking_per_gw={2: 5.0, 3: 5.0},
-        form=1.2,
-    )
-    assert projection.tc_points(2) == approx(8.0 + 5.0 * 0.2)
-    assert projection.tc_points(3) == approx(8.0 + 5.0 * 0.2 * FORM_FADE)
-
-
-def test_the_projection_records_each_weeks_fixture():
-    # Lions at home to Bears is 1.2; a week with no fixture reads as average,
-    # and a double is the mean of its two.
-    projection = project(player(id=10), [HOME_FIXTURE], horizon=2)
-    assert projection.fixture_per_gw == {2: approx(1.2), 3: 1.0}
-    away = Fixture(id=3, event=2, team_h=2, team_a=1)
-    away_only = project(player(id=10), [away], horizon=1).fixture_per_gw[2]
-    double = project(player(id=10), [HOME_FIXTURE, away], horizon=1)
-    assert double.fixture_per_gw[2] == approx((1.2 + away_only) / 2)

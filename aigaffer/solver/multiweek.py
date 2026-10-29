@@ -578,12 +578,6 @@ def optimize_path(
     points = {
         (p, w): _projected(projections, p, events[w - 1]) for p in pool for w in weeks
     }
-    # What the third armband is worth: the week's points with the attacking
-    # slice tilted again by fixture and form (PlayerProjection.tc_points). It
-    # decides the chip and nothing else — weekly_xp still reports the points.
-    tc_points = {
-        (p, w): _tc_projected(projections, p, events[w - 1]) for p in pool for w in weeks
-    }
     owned = {p: 1 if p in current else 0 for p in pool}
     # The signings a bench costs: bought in the window and priced above an
     # enabler (optimizer.charged_buys). Sorted, so the same board always
@@ -914,7 +908,7 @@ def optimize_path(
         objective += pulp.lpSum(
             decay ** (w - 1)
             * (
-                pulp.lpSum(tc_points[p, w] * z_tc[w][p] for p in pool)
+                pulp.lpSum(points[p, w] * z_tc[w][p] for p in pool)
                 - bars_paid(TRIPLE_CAPTAIN, w)
             )
             for w in chip_weeks[TRIPLE_CAPTAIN]
@@ -1270,8 +1264,7 @@ def optimize_path(
             )
         if tc_on:
             week_xp += armband
-            tripled = sum(tc_points[p, w] * (captain[w][p].value() or 0.0) for p in pool)
-            week_score += tripled - bar(played_here, w)
+            week_score += armband - bar(played_here, w)
         if wc_on:
             week_score -= bar(played_here, w)
         if fh_on:
@@ -1396,15 +1389,6 @@ def _projected(
     """
     projection = projections.get(player_id)
     return projection.per_gw.get(event, 0.0) if projection else 0.0
-
-
-def _tc_projected(
-    projections: dict[int, PlayerProjection], player_id: int, event: int
-) -> float:
-    """What a triple captain on a player is worth in one gameweek, undecayed:
-    :meth:`PlayerProjection.tc_points`, or nothing without a projection."""
-    projection = projections.get(player_id)
-    return projection.tc_points(event) if projection else 0.0
 
 
 def _bench_term(

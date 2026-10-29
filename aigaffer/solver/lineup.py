@@ -195,13 +195,7 @@ def chip_evs(
 
     return ChipEvs(
         bench_boost=sum(gw_xp.get(pid, 0.0) for pid in lineup.bench),
-        # Priced as the window and the calendar price it, fixture and form in,
-        # so the panel and the bar it is read against are the same unit.
-        triple_captain=(
-            xp[lineup.captain].tc_points(next_event)
-            if lineup.captain in xp
-            else gw_xp.get(lineup.captain, 0.0)
-        ),
+        triple_captain=gw_xp.get(lineup.captain, 0.0),
         free_hit=free_hit.xp_total - fielded if free_hit else 0.0,
         wildcard=wildcard.xp_total - current_plan.xp_total if wildcard else 0.0,
     )

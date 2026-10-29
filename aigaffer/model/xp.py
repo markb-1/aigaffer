@@ -52,14 +52,6 @@ LEAGUE_AVG_GOALS = 1.4
 MIN_FACTOR = 0.7
 MAX_FACTOR = 1.3
 
-# How many more times a triple captain feels the fixture than the projection
-# does (PlayerProjection.tc_points): one, so the haul the chip is bought for
-# scales with the square of the fixture, as a brace's chance does.
-TC_FIXTURE_POWER = 1.0
-# How much of a player's form multiplier is left a gameweek further on: a
-# third of it by the third week, near nothing by the window's end.
-FORM_FADE = 0.7
-
 GOALKEEPER = 1
 DEFENDER = 2
 MIDFIELDER = 3
@@ -140,36 +132,6 @@ class PlayerProjection:
     per_gw: dict[int, float]
     total: float
     attacking_per_gw: dict[int, float] = field(default_factory=dict)
-    # The week's fixture as the attacking returns saw it: the mean att_factor
-    # over his club's fixtures that gameweek, 1.0 an average one. Empty — a
-    # hand-built projection — reads as average everywhere.
-    fixture_per_gw: dict[int, float] = field(default_factory=dict)
-    # Recent attacking form against his own season rate (aigaffer.model.form),
-    # 1.0 neutral. Set by the caller that has the history; nothing else does.
-    form: float = 1.0
-
-    def tc_points(self, gw: int) -> float:
-        """What a triple captain on him is worth in ``gw``: the week's points,
-        with the attacking slice tilted once more by the fixture and by form.
-
-        A triple captain pays off on a haul, and a haul is a brace, whose
-        chance grows with the square of the expected goals, not linearly. The
-        projection already carries the fixture once; the chip carries it a
-        second time, so an away day at a top-three defence costs the armband
-        what it really costs it, and a home tie against a leaky one gains it.
-        Form rides on the same slice and fades toward neutral week by week
-        (:data:`FORM_FADE`), because a hot run is evidence about Saturday and
-        much less about December. The floor — appearance, bonus, clean sheet —
-        is not a haul and is left as it was.
-        """
-        points = self.per_gw.get(gw, 0.0)
-        attacking = self.attacking_per_gw.get(gw, 0.0)
-        if not attacking:
-            return points
-        fixture = self.fixture_per_gw.get(gw, 1.0) ** TC_FIXTURE_POWER
-        start = min(self.per_gw) if self.per_gw else gw
-        form = 1.0 + (self.form - 1.0) * FORM_FADE ** max(0, gw - start)
-        return points + attacking * (fixture * form - 1.0)
 
 
 @dataclass(frozen=True)
@@ -471,12 +433,10 @@ def project_all(
         prior = priors.get(player.code) if player.code else None
         per_gw = {}
         attacking_per_gw = {}
-        fixture_per_gw = {}
         for gw in gameweeks:
             minutes = coming if gw == start_event else base
             points = 0.0
             attacking = 0.0
-            factors = []
             for opponent_id, opponent_at_home in schedule.get((gw, player.team), ()):
                 if strengths is not None:
                     att_factor, lam = strengths.factors(
@@ -492,16 +452,13 @@ def project_all(
                     )
                 points += fixture_points(player, minutes, att_factor, lam, prior)
                 attacking += attacking_points(player, minutes, att_factor, prior)
-                factors.append(att_factor)
             per_gw[gw] = points
             attacking_per_gw[gw] = attacking
-            fixture_per_gw[gw] = sum(factors) / len(factors) if factors else 1.0
         projections[player.id] = PlayerProjection(
             player_id=player.id,
             per_gw=per_gw,
             total=decayed_total(per_gw, decay),
             attacking_per_gw=attacking_per_gw,
-            fixture_per_gw=fixture_per_gw,
         )
     return projections
 

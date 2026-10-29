@@ -16,7 +16,7 @@ from types import SimpleNamespace
 import pytest
 
 from aigaffer import whatif
-from aigaffer.chips import BENCH_BOOST, FREE_HIT, WILDCARD, HeldChip
+from aigaffer.chips import BENCH_BOOST, FREE_HIT, TRIPLE_CAPTAIN, WILDCARD, HeldChip
 from aigaffer.model.xp import PlayerProjection
 from aigaffer.manager.chip_opinion import build_chip_briefing
 from aigaffer.orchestrator import PreparedWeek, prepare_week
@@ -439,6 +439,25 @@ def test_a_free_hit_held_past_the_window_names_the_calendar_week(monkeypatch, he
 
     assert result.band == HOLD
     assert result.hold_week == whatif.HoldWeek(event=12, value=14.0, source="calendar", provisional=True)
+
+
+def test_a_triple_captain_hold_value_is_the_calendar_week_not_the_floored_bar():
+    # The window's bar for the chip carries the 2.0 option floor (here 24.0,
+    # a floored number), but the value to hold for is the saved-for week's own
+    # 14.0: _hold_week must report that, as it does for the free hit. Called
+    # directly, since the what-if's margins cover no triple captain yet.
+    tc = HeldChip(TRIPLE_CAPTAIN, 1, 19)
+    calendar = ChipCalendar(
+        entries=(CalendarEntry(held=tc, saved_for=12, value=14.0, bars={6: 24.0}),),
+        discount=0.97, proxy_scale={}, horizon_end=19,
+    )
+    off = SimpleNamespace(chips={})   # the off path plays no chip in the window
+
+    hold = whatif._hold_week(
+        TRIPLE_CAPTAIN, tc, -10.0, off, WINDOW, _week(calendar=calendar)
+    )
+
+    assert hold == whatif.HoldWeek(event=12, value=14.0, source="calendar", provisional=True)
 
 
 def test_a_wildcard_held_past_the_window_invents_no_week(monkeypatch, held):
