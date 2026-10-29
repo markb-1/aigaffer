@@ -128,7 +128,9 @@ from aigaffer.news_ledger import (
     read_ledger,
     write_ledger,
 )
+from aigaffer.model.form import attacking_form
 from aigaffer.model.minutes import expected_minutes, season_prior
+from aigaffer.model.priors import prior_rates
 from aigaffer.model.strength import TeamStrengths, build_team_strengths
 from aigaffer.model.xp import PlayerProjection, project_all, projected_events
 from aigaffer.report.render import (
@@ -1757,6 +1759,15 @@ def build_projections(
         strengths=strengths,
         overrides=overrides,
     )
+    # Form is read off the same histories the minutes were: the one place a
+    # run has them. It only moves the triple captain (tc_points).
+    priors = prior_rates()
+    for pid, history in inputs.histories.items():
+        player = inputs.players[pid]
+        if pid in projections:
+            projections[pid].form = attacking_form(
+                player, history, priors.get(player.code) if player.code else None
+            )
     return {**xmins, **overrides}, projections
 
 

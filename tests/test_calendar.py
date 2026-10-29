@@ -564,3 +564,32 @@ def test_the_bench_boost_gain_is_the_full_bench_less_the_ordered_bench(board_bey
     expected = PROXY_SCALE[BENCH_BOOST] * (10.4 - bench_score(WINDOW_SETTINGS, [0.5], [3.9, 3.0, 3.0]))
     assert expected == pytest.approx(6.377, abs=1e-9)
     assert values == {w: pytest.approx(expected, abs=1e-6) for w in (8, 9, 10)}
+
+
+def test_the_triple_captain_is_saved_for_his_best_fixture_not_his_raw_best_week(board_beyond_window):
+    # 20 projects 10.0 in GW9 and 8.0 either side, 6.0 and 4.0 of it
+    # attacking. Give GW9 an away day at a 0.7 defence and GW10 a 1.3 home
+    # tie: tilted, GW9 is 10 - 1.8 = 8.2 and GW10 is 8 + 1.2 = 9.2, so the
+    # chip is now saved for GW10 and priced there. Held alone, so the free
+    # hit's claim on GW10 does not decide it.
+    b = board_beyond_window
+    striker = b.projections[20]
+    b.projections[20] = PlayerProjection(
+        player_id=20,
+        per_gw=striker.per_gw,
+        total=striker.total,
+        attacking_per_gw=striker.attacking_per_gw,
+        fixture_per_gw={9: 0.7, 10: 1.3},
+    )
+    by_id = {e.held.id: e for e in _build(b, held=(TC10,)).entries}
+    assert by_id["triple_captain@10"].saved_for == 10
+    assert by_id["triple_captain@10"].value == pytest.approx(PROXY_SCALE[TRIPLE_CAPTAIN] * 9.2)
+
+
+def test_a_triple_captain_already_owned_is_not_haircut(board_beyond_window):
+    # Put 20 in the squad in place of 15: he is the man the window would
+    # triple, so his weeks are priced in full, not at 0.85.
+    b = board_beyond_window
+    owned = [pid for pid in b.squad if pid != 15] + [20]
+    values = _values(TRIPLE_CAPTAIN, [8, 9, 10], b.players, b.projections, b.xmins, owned, b.bank, None)
+    assert values == {w: pytest.approx(b.striker_points[w]) for w in (8, 9, 10)}

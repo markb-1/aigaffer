@@ -21,7 +21,8 @@ Four consequences worth stating, so nobody files them as bugs:
   later than pure decay would. Accepted — it offsets δ's early tilt.
 * The values are proxies, haircut by :data:`PROXY_SCALE`: they price a bench
   bought for the week, a captain bought in, and a free hit against today's
-  squad, while the window's gain is what the reachable squad earns.
+  squad, while the window's gain is what the reachable squad earns. A triple
+  captain already in the squad is no proxy and is not haircut.
 * On a flat board the triple captain and the bench boost may go as early as
   GW6. With PROXY_SCALE ≤ 0.85 and ρ^9 ≈ 0.76, a chip whose in-window gain
   equals its proxy faces a bar of about 0.65 × that gain, so the window plays
@@ -217,8 +218,15 @@ def _values(
         for w in weeks:
             if not starters:
                 break
-            pick = max(starters, key=lambda pid: (projections[pid].attacking_per_gw.get(w, 0.0), -pid))
-            values[w] = scale * _projected(projections, pick, w)
+            # Picked and priced as the window prices the third armband: on
+            # the fixture-and-form tilted points, so a week is saved for the
+            # fixture the chip wants and not just the next one on the list.
+            pick = max(starters, key=lambda pid: (_tilted_ceiling(projections[pid], w), -pid))
+            # The haircut prices a captain who has to be bought in; one
+            # already in the squad is the same man the window would triple,
+            # and haircutting him tilts every comparison toward playing now.
+            owned = 1.0 if pick in current_squad else scale
+            values[w] = owned * projections[pick].tc_points(w)
         return values
     if chip == BENCH_BOOST:
         priced = best_one_week_squads(
@@ -261,6 +269,13 @@ def _values(
             continue
         values[w] = scale * (answer[0] - held_score)
     return values
+
+
+def _tilted_ceiling(projection: PlayerProjection, w: int) -> float:
+    """His goals and assists in ``w`` as the triple captain tilts them: the
+    ceiling the armband is chosen on, fixture and form in."""
+    tilt = projection.tc_points(w) - projection.per_gw.get(w, 0.0)
+    return projection.attacking_per_gw.get(w, 0.0) + tilt
 
 
 def build_calendar(

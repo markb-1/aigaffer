@@ -280,6 +280,11 @@ class GwHistory(BaseModel):
     a payload without it is judged on its round instead of silently kept.
 
     ``value`` is his price that gameweek, in tenths, when the payload carries it.
+
+    ``expected_goals`` and ``expected_assists`` are the match's own, which the
+    API serves as decimal strings ("0.45"); they are what recent attacking
+    form is read from (:mod:`aigaffer.model.form`). A payload without them
+    reads as 0.0, which the form reader treats as no evidence.
     """
 
     round: int
@@ -287,6 +292,8 @@ class GwHistory(BaseModel):
     total_points: int
     fixture: int = 0
     value: int | None = None
+    expected_goals: float = 0.0
+    expected_assists: float = 0.0
 
 
 class PastSeason(BaseModel):

@@ -4014,3 +4014,40 @@ def test_a_marginal_swap_taken_under_legacy_waits_under_window():
     assert path.moves == []
     assert path.ft_kept == 3
     assert window.objective == pytest.approx(117.375, abs=1e-6)
+
+
+def test_triple_captain_waits_for_the_fixture_not_the_first_equal_week():
+    # The captain (12) projects 25.0 in both weeks, 20.0 of it goals and
+    # assists, so on points alone the chip goes in GW10, the undecayed week.
+    # But GW10 is away at a 0.8 defence and GW11 a 1.25 home tie: tilted, the
+    # third armband is 25 - 4 = 21.0 in GW10 (3.0 over the 18.0 bar) and
+    # 25 + 5 = 30.0 in GW11 (12.0 over, 10.2 decayed). So it waits for GW11 —
+    # and GW11's weekly xP still reports the real 25.0 armband, not the tilt.
+    players, projections = spine([10, 11])
+    projections[12] = PlayerProjection(
+        player_id=12,
+        per_gw={10: 25.0, 11: 25.0},
+        total=decayed_total({10: 25.0, 11: 25.0}, DECAY),
+        attacking_per_gw={10: 20.0, 11: 20.0},
+        fixture_per_gw={10: 0.8, 11: 1.25},
+    )
+    untilted = dict(projections)
+    untilted[12] = PlayerProjection(
+        player_id=12, per_gw={10: 25.0, 11: 25.0},
+        total=decayed_total({10: 25.0, 11: 25.0}, DECAY),
+        attacking_per_gw={10: 20.0, 11: 20.0},
+    )
+
+    plan, path = optimize_path(
+        players, projections, SQUAD, bank=0, free_transfers=1, events=[10, 11],
+        decay=DECAY, held_chips=whole_season(TRIPLE_CAPTAIN),
+    )
+    _, flat_path = optimize_path(
+        players, untilted, SQUAD, bank=0, free_transfers=1, events=[10, 11],
+        decay=DECAY, held_chips=whole_season(TRIPLE_CAPTAIN),
+    )
+
+    assert flat_path.week1_chip == TRIPLE_CAPTAIN
+    assert chips_played([10, 11], path) == {10: "none", 11: TRIPLE_CAPTAIN}
+    assert path.weekly_xp[11] == pytest.approx(flat_path.weekly_xp[10], abs=1e-4)
+    assert_legal_path(players, SQUAD, 0, 1, [10, 11], plan, path)
