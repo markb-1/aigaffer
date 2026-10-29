@@ -18,6 +18,7 @@ id  name      pos  price  fixtures                     xP (GW8, GW9)
 Window totals: Saka 11.42, Salah 5.00, Haaland 9.00, Justin 3.00, Xhaka 6.00.
 """
 
+from aigaffer.report.render import ADVISORY, NOT_APPLIED, OVERRULED
 from aigaffer.detailed.render import (
     NO_GAFFER,
     REASON_UNAVAILABLE,
@@ -94,6 +95,7 @@ def test_the_sections_appear_in_order():
         "## Captain and vice",
         "## Transfers skipped",
         "## The options weighed",
+        "## The road ahead",
         "## Chips",
     ]
     assert "Deadline: Sat 18 Oct 11:00 · Last updated: deadline run 2026-10-17T10:00Z" in text
@@ -553,3 +555,144 @@ def test_the_plan_and_chip_reasons_keep_their_lines_too():
 
 def test_an_empty_rationale_still_says_why_there_are_no_words():
     assert REASON_UNAVAILABLE in _section(render_detailed([_shaped("")], "d"), "The plan")
+
+
+# --- the action block, the road ahead, the plan's extras --------------------
+
+
+def _with_path(path, **over):
+    chosen = {**plan(0, [7], [4]), "path": path}
+    return snap(plans={0: chosen, 1: plan(1, [], [])}, **over)
+
+
+def test_do_this_prints_verbatim_after_the_deadline_line_before_what_changed():
+    block = "## Do this\n\n⏰ Make these by Sat 18 Oct 11:00 — GW8\n\n1. SELL Justin"
+    text = render_detailed([snap(do_this=block)], "Sat 18 Oct 11:00")
+
+    deadline = "Deadline: Sat 18 Oct 11:00 · Last updated: deadline run 2026-10-17T10:00Z"
+    assert f"{deadline}\n\n{block}\n\n## What changed" in text
+
+
+def test_a_snapshot_without_do_this_prints_nothing_there():
+    for shot in (snap(), snap(do_this=None)):
+        text = render_detailed([shot], "d")
+        assert "## Do this" not in text
+        assert "Last updated: deadline run 2026-10-17T10:00Z\n\n## What changed" in text
+
+
+def test_the_road_ahead_reads_like_the_gameweek_reports_with_spend_and_chip():
+    # GW9: Justin (4.6) out, Cucurella (6.1) in, no hits: 1 move, 1 free, no hit.
+    # GW10: Salah (12.9) out, Haaland (14.0) in, one hit: 1 - 1 = 0 free, -4 pts,
+    # and a bench boost that gameweek.
+    path = [
+        {"gw": 9, "in": [7], "out": [4], "chip": "none", "hits": 0},
+        {"gw": 10, "in": [3], "out": [2], "chip": "bench_boost", "hits": 1},
+    ]
+    section = _section(render_detailed([_with_path(path)], "d"), "The road ahead")
+
+    assert section.splitlines() == [
+        "",
+        "- GW9: out Justin (£4.6m), in Cucurella (£6.1m) — 1 FT, no hit",
+        "- GW10: out Salah (£12.9m), in Haaland (£14.0m) — 0 FTs, -4 pts in hits — Bench Boost",
+        "",
+        ADVISORY,
+    ]
+
+
+def test_the_road_ahead_without_hits_omits_the_spend_clause():
+    # An older snapshot: the moves carry no hits, and none is guessed.
+    path = [{"gw": 9, "in": [7], "out": [4], "chip": "none"}]
+    section = _section(render_detailed([_with_path(path)], "d"), "The road ahead")
+
+    assert "- GW9: out Justin (£4.6m), in Cucurella (£6.1m)\n" in section + "\n"
+    assert "FT" not in section and "hit" not in section.replace("Advisory", "")
+
+
+def test_a_chip_only_week_on_the_road_is_the_chip_alone():
+    path = [{"gw": 9, "in": [], "out": [], "chip": "bench_boost", "hits": 0}]
+    section = _section(render_detailed([_with_path(path)], "d"), "The road ahead")
+
+    assert "- GW9: Bench Boost\n" in section + "\n"
+
+
+def test_a_path_player_with_no_row_is_named_by_id_and_given_no_price():
+    path = [{"gw": 9, "in": [99], "out": [4], "chip": "none", "hits": 0}]
+    section = _section(render_detailed([_with_path(path)], "d"), "The road ahead")
+
+    assert "- GW9: out Justin (£4.6m), in #99 — 1 FT, no hit" in section
+
+
+def test_an_empty_path_says_nothing_is_planned_and_gives_no_advisory():
+    section = _section(render_detailed([snap()], "d"), "The road ahead")
+
+    assert section.strip() == "No moves planned after this week."
+    assert ADVISORY not in section
+
+
+def _minutes(adjustments=None, unapplied=None, **extra):
+    decision = {**snap()["decision"], **extra}
+    if adjustments is not None:
+        decision["adjustments"] = adjustments
+    if unapplied is not None:
+        decision["unapplied"] = unapplied
+    return snap(decision=decision)
+
+
+def test_overruled_minutes_are_listed_last_word_per_player():
+    # Saka was set to 60 then 75: only 75 stands. Order is first appearance.
+    adjustments = [
+        {"player_id": 1, "expected_minutes": 60.0, "reason": "knock"},
+        {"player_id": 4, "expected_minutes": 0.0, "reason": "suspended"},
+        {"player_id": 1, "expected_minutes": 75.0, "reason": "trained Friday"},
+    ]
+    section = _section(render_detailed([_minutes(adjustments)], "d"), "The plan")
+
+    assert f"\n{OVERRULED}\n\n- Set Saka to 75 mins — trained Friday\n- Set Justin to 0 mins — suspended" in section
+    assert "60 mins" not in section
+
+
+def test_minutes_he_only_noted_are_listed_unless_the_player_was_applied():
+    # Saka was applied (above) and noted later: listed once, as overruled.
+    # Xhaka (5) was only ever written down.
+    adjustments = [{"player_id": 1, "expected_minutes": 70.0, "reason": "knock"}]
+    unapplied = [
+        {"player_id": 1, "expected_minutes": 20.0, "reason": "late thought"},
+        {"player_id": 5, "expected_minutes": 30.0, "reason": "rotation risk"},
+    ]
+    section = _section(render_detailed([_minutes(adjustments, unapplied)], "d"), "The plan")
+
+    assert f"{NOT_APPLIED}\n\n- Xhaka at 30 mins — rotation risk" in section
+    assert "late thought" not in section
+
+
+def test_a_gaffer_run_prints_its_provenance_line():
+    section = _section(render_detailed([_minutes(searches=8)], "d"), "The plan")
+
+    assert section.rstrip().endswith("8 web searches. Decided by the gaffer.")
+    one = _section(render_detailed([_minutes(searches=1)], "d"), "The plan")
+    assert one.rstrip().endswith("1 web search. Decided by the gaffer.")
+
+
+def test_a_fallback_run_names_why_in_its_provenance():
+    shot = _minutes(searches=3, source="solver-fallback: Timeout")
+    section = _section(render_detailed([shot], "d"), "The plan")
+
+    assert section.rstrip().endswith(
+        "3 web searches. The gaffer was unavailable (Timeout); this is the solver's pick."
+    )
+
+
+def test_a_solver_only_run_prints_no_provenance_even_with_a_stray_count():
+    section = _section(render_detailed([_minutes(source="solver", searches=0)], "d"), "The plan")
+
+    assert "web search" not in section and "Decided by" not in section
+
+
+def test_old_snapshots_without_the_new_keys_still_render():
+    old = snap()
+    for key in ("unapplied", "searches"):
+        assert key not in old["decision"]
+    section = _section(render_detailed([old], "d"), "The plan")
+
+    assert OVERRULED not in section and NOT_APPLIED not in section
+    assert "web search" not in section

@@ -54,6 +54,7 @@ from aigaffer.executed import Executed
 from aigaffer.manager.agent import ManagerDecision
 from aigaffer.model.xp import PlayerProjection
 from aigaffer.report.render import (
+    action_block,
     ENTERED_ALREADY,
     ENTERED_STANDS,
     ENTERED_VERDICT,
@@ -2105,6 +2106,33 @@ def test_the_chip_is_the_first_line_of_the_checklist_in_capitals():
         "SELL Gale (DEF CRV £4.0m) → BUY Reid (FWD CRV £9.5m)",
     ]
     assert "PLAY Bench Boost" not in block, "the old title-case line is gone"
+
+
+def test_the_action_block_is_exactly_what_the_report_opens_with():
+    # The detailed report's snapshot is given this block, so it must be the
+    # very words render_report seats: the banner inside the header, then the
+    # checklist. A chip week and an ordinary one.
+    for choice, view in ((planning("triple_captain"), None), (ONE, gaffer(chip="bench_boost", justification=GOOD_CHIP))):
+        text = report(choice=choice, view=view)
+        block = action_block(
+            EVENT, choice, LINEUP, BOOTSTRAP, view, free_transfers=1
+        )
+
+        assert block.banner is not None and block.banner in text
+        assert block.working_from is None
+        assert block.do_this in text
+        assert block.text() == f"{block.banner}\n\n{block.do_this}"
+    plain = action_block(EVENT, ONE, LINEUP, BOOTSTRAP, free_transfers=1)
+    assert plain.banner is None and plain.text() == plain.do_this
+    assert plain.do_this in report()
+
+
+def test_a_draft_has_no_action_block():
+    drafting = replace(ONE, transfers_out=[])
+    block = action_block(EVENT, drafting, LINEUP, BOOTSTRAP)
+
+    assert tuple(block) == (None, None, None)
+    assert block.text() is None
 
 
 def test_the_solvers_own_chip_opens_the_report_with_no_manager():

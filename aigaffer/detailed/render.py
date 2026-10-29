@@ -23,7 +23,21 @@ solver's pick when no gaffer ran, "reason unavailable" when one did and left
 no words.
 """
 
-from aigaffer.report.render import chip_label, plural, price
+from aigaffer.detailed.snapshot import SOLVER
+from aigaffer.report.render import (
+    ADVISORY,
+    HIT_POINTS,
+    NO_CHIP,
+    NOT_APPLIED,
+    OVERRULED,
+    chip_label,
+    noted,
+    plural,
+    price,
+    searches_line,
+    settled,
+    source_line,
+)
 
 NO_GAFFER = "Solver's pick — no gaffer this run"
 REASON_UNAVAILABLE = "Reason unavailable this run"
@@ -58,6 +72,9 @@ def render_detailed(snapshots: list[dict], deadline_text: str) -> str:
         "",
         f"Deadline: {deadline_text} · Last updated: {cur['mode']} run {cur['ts']}",
         "",
+        # The gameweek report's own opening: banner, working-from, checklist.
+        # A snapshot from before it was kept has none and prints nothing.
+        *([cur["do_this"], ""] if cur.get("do_this") else []),
         "## What changed",
         "",
         *_history(snapshots),
@@ -83,6 +100,10 @@ def render_detailed(snapshots: list[dict], deadline_text: str) -> str:
         "## The options weighed",
         "",
         *_options(cur),
+        "",
+        "## The road ahead",
+        "",
+        *_road_ahead(cur),
         "",
         "## Chips",
         "",
@@ -201,13 +222,97 @@ def _minutes(value: float) -> str:
 def _plan_section(cur: dict) -> list[str]:
     plan = cur["plans"][cur["chosen"]]
     decision = cur["decision"]
-    return [
+    out = [
         _prose(decision.get("rationale")) or _fallback(cur),
         "",
         f"Expected points over the window: {plan['xp']:.2f} xP;"
         f" net {plan['net']:.2f} (after hits and charges, plus the credit for"
         f" free transfers kept); {plural(plan['hits'], 'hit')}; bank {price(cur['bank'])}.",
     ]
+    return out + _minutes_notes(cur) + _provenance(cur)
+
+
+def _minutes_notes(cur: dict) -> list[str]:
+    """The minutes the gaffer overruled, and those he only noted.
+
+    The same two lists, in the same words, as the gameweek report's "The
+    Gaffer's view": the last number he set for each player (``settled``), then
+    the players whose latest number never reached a re-solve, under the
+    heading that says so. A snapshot from before the unapplied list was kept
+    prints only the first; one with neither prints nothing.
+    """
+    decision = cur["decision"]
+    applied = settled(decision.get("adjustments") or [])
+    # A player re-solved on and then adjusted once more is listed once, above.
+    unspent = noted(decision.get("unapplied") or [], applied)
+    out: list[str] = []
+    if applied:
+        out += ["", OVERRULED, ""]
+        out += [
+            f"- Set {_name(cur, record['player_id'])}"
+            f" to {record['expected_minutes']:.0f} mins — {_clean(record['reason'])}"
+            for record in applied
+        ]
+    if unspent:
+        out += ["", NOT_APPLIED, ""]
+        out += [
+            f"- {_name(cur, record['player_id'])}"
+            f" at {record['expected_minutes']:.0f} mins — {_clean(record['reason'])}"
+            for record in unspent
+        ]
+    return out
+
+
+def _provenance(cur: dict) -> list[str]:
+    """``8 web searches. Decided by the gaffer.`` — whose pick this is.
+
+    Said only when a gaffer ran: a solver-only run has nothing to attribute, and
+    a snapshot from before the count was kept cannot say it."""
+    decision = cur["decision"]
+    source = decision.get("source") or SOLVER
+    if source == SOLVER or decision.get("searches") is None:
+        return []
+    return ["", f"{searches_line(decision['searches'])}. {source_line(source)}"]
+
+
+def _road_ahead(cur: dict) -> list[str]:
+    """The chosen plan's later gameweeks, as the gameweek report prints them.
+
+    One line per move, ``GW10: out Thomas (£4.0m), in Konsa (£4.7m) — 1 FT, no
+    hit``, with the chip appended when the move plays one, and closed with the
+    same advisory. A player on the path with no row is named by his id and
+    given no price; a move without ``hits`` (a snapshot from before they were
+    kept) leaves the spend clause off rather than guess it.
+    """
+    path = cur["plans"][cur["chosen"]].get("path") or []
+    if not path:
+        return ["No moves planned after this week."]
+    return [*(f"- GW{move['gw']}: {_planned(cur, move)}" for move in path), "", ADVISORY]
+
+
+def _planned(cur: dict, move: dict) -> str:
+    parts = []
+    if move["out"]:
+        parts.append("out " + _priced(cur, move["out"]))
+    if move["in"]:
+        parts.append("in " + _priced(cur, move["in"]))
+    moved = ", ".join(parts)
+    if moved and "hits" in move:
+        hits = move["hits"]
+        free = max(0, len(move["in"]) - hits)
+        cost = f"-{hits * HIT_POINTS} pts in hits" if hits else "no hit"
+        moved += f" — {plural(free, 'FT')}, {cost}"
+    chip = chip_label(move["chip"]) if move.get("chip") not in (None, NO_CHIP) else ""
+    if moved and chip:
+        return f"{moved} — {chip}"
+    return moved or chip
+
+
+def _priced(cur: dict, pids: list[int]) -> str:
+    return ", ".join(
+        f"{row['n']} ({price(row['pr'])})" if (row := cur["players"].get(pid)) else _name(cur, pid)
+        for pid in pids
+    )
 
 
 def _table_head(cur: dict) -> list[str]:
