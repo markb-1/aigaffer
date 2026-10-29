@@ -83,6 +83,7 @@ from aigaffer.report.telegram import send_report
 from aigaffer.review import REVIEW_MODE, ReviewUnavailable, review_target, review_tick, run_review
 from aigaffer.statesync import STATE_LOCK, GitStateSync
 from aigaffer.store import DB_NAME, EXECUTED_DIR, Store
+from aigaffer.weekplan import week_plan
 from aigaffer.whatif_handler import chip_whatif
 from aigaffer.whatif_log import LOG_FILE, WhatIfLog
 
@@ -466,7 +467,9 @@ def _inbox(client: FplClient) -> int:
     its log live, and the same lock, which it takes only to copy the store.
     Questions go to the gaffer (:mod:`aigaffer.ask`) when the manager is on.
     The chip forecast needs only the configuration and the client: it reads
-    the store without the lock, a few rows and nothing written.
+    the store without the lock, a few rows and nothing written. The week plan
+    needs neither client nor gaffer: the configuration and the lock it reads
+    the saved snapshots under.
     """
     cfg = Config.from_env()
     directory = inbox_dir()
@@ -481,13 +484,16 @@ def _inbox(client: FplClient) -> int:
     )
     whatif = partial(chip_whatif, cfg, client, directory, directory / STATE_LOCK)
     forecast = partial(chip_forecast, cfg, client)
+    # The week plan reads the saved snapshots under the lock and makes no
+    # request, so it needs no client; it replies for itself, five texts.
+    plan = partial(week_plan, cfg, directory / STATE_LOCK)
     # The gaffer answers questions only where there is a manager to answer
     # them; without one a question gets the help, as before. The client is
     # built on the first question, so a box that is never asked builds none.
     ask = make_ask(cfg, directory) if cfg.manager_enabled else None
     return run_inbox(
         cfg.telegram_token, cfg.telegram_chat_id, directory, handler, whatif,
-        forecast, ask=ask,
+        forecast, ask=ask, week_plan=plan,
     )
 
 

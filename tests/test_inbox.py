@@ -25,6 +25,9 @@ from aigaffer.inbox import (
     CHIP_KINDS,
     FORECAST_WRONG,
     HELP,
+    WEEK_PLAN_OFF,
+    WEEK_PLAN_WORDS,
+    WEEK_PLAN_WRONG,
     NOT_CONFIGURED,
     SOMETHING_WRONG,
     WHATIF_WRONG,
@@ -442,11 +445,11 @@ def test_the_cli_inbox_reads_the_inbox_directory(monkeypatch, tmp_path):
 
     def fake_run_inbox(
         token, chat_id, directory, handler, chip_whatif=None, chip_forecast=None,
-        ask=None,
+        ask=None, week_plan=None,
     ):
         seen.update(token=token, chat_id=chat_id, directory=directory,
                     handler=handler, chip_whatif=chip_whatif,
-                    chip_forecast=chip_forecast, ask=ask)
+                    chip_forecast=chip_forecast, ask=ask, week_plan=week_plan)
         return 0
 
     monkeypatch.setattr(cli, "run_inbox", fake_run_inbox)
@@ -466,6 +469,9 @@ def test_the_cli_inbox_reads_the_inbox_directory(monkeypatch, tmp_path):
     forecast = seen["chip_forecast"]
     assert forecast.func.__name__ == "chip_forecast"
     assert len(forecast.args) == 2, "bound with the config and the client only"
+    plan = seen["week_plan"]
+    assert plan.func.__name__ == "week_plan"
+    assert plan.args[1] == tmp_path / "inbox" / "state.lock", "read under the tick's lock"
 
 
 def test_the_inbox_wires_ask_only_with_a_manager(monkeypatch, tmp_path):
@@ -505,7 +511,7 @@ def test_the_inbox_directory_defaults_to_the_home_dot_directory(monkeypatch, tmp
     assert inbox.inbox_dir() == tmp_path / ".aigaffer"
 
 
-# The four buttons of the persistent keyboard send their labels as plain text,
+# The six buttons of the persistent keyboard send their labels as plain text,
 # so each must normalise to the command the dispatcher already acts on.
 @pytest.mark.parametrize(
     ("label", "expected"),
@@ -514,25 +520,30 @@ def test_the_inbox_directory_defaults_to_the_home_dot_directory(monkeypatch, tmp
         ("Wildcard?", f"what-if {WILDCARD}"),
         ("Free hit?", f"what-if {FREE_HIT}"),
         ("Chip forecast", "the chip forecast ran"),
+        ("Week plan", None),
         ("Help", HELP),
     ],
 )
 def test_each_keyboard_button_reaches_its_command(label, expected):
+    ran = []
     reply = dispatch(
         normalise(label), 7, datetime.now(UTC), no_reply,
         lambda sent_at: "the transfers-made handler ran",
         lambda kind, uid, sent_at, reply: f"what-if {kind}",
         lambda sent_at: "the chip forecast ran",
+        week_plan=lambda sent_at, reply: ran.append("the week plan ran"),
     )
 
     assert reply == expected
+    assert ran == (["the week plan ran"] if label == "Week plan" else [])
 
 
 def test_the_keyboard_labels_are_exactly_the_buttons_tested_above():
     labels = [button["text"] for row in KEYBOARD["keyboard"] for button in row]
 
     assert labels == [
-        "Transfers made", "Wildcard?", "Free hit?", "Chip forecast", "Help",
+        "Transfers made", "Week plan", "Wildcard?", "Free hit?", "Chip forecast",
+        "Help",
     ]
 
 
@@ -706,3 +717,101 @@ def test_a_transfers_made_failure_keeps_its_apology_even_with_a_mark(tmp_path):
         get=phone.get, send=phone.send, ask=AskStub(),
     )
     assert phone.sent == [SOMETHING_WRONG]
+
+
+# --- The Week plan button ----------------------------------------------------
+
+
+class WeekPlanStub:
+    """The week plan handler, faked: records the time it was handed, replies
+    through ``reply`` and returns None, as the real one does."""
+
+    def __init__(self, texts: tuple[str, ...] = ("one", "two")) -> None:
+        self.calls: list[datetime] = []
+        self.texts = texts
+
+    def __call__(self, sent_at, reply):
+        self.calls.append(sent_at)
+        for text in self.texts:
+            reply(text)
+
+
+def run_planning(tmp_path, phone: Phone, week_plan, ask=None) -> int:
+    return run_inbox(
+        TOKEN, CHAT, tmp_path, recorded, get=phone.get, send=phone.send,
+        ask=ask, week_plan=week_plan,
+    )
+
+
+def test_the_week_plan_words_are_exactly_two():
+    assert WEEK_PLAN_WORDS == {"week plan", "plan"}
+
+
+@pytest.mark.parametrize("text", ["Week plan", "week plan", "Week  plan!", "plan", "Plan"])
+def test_week_plan_and_plan_reach_the_handler_and_send_its_texts(tmp_path, text):
+    stub = WeekPlanStub()
+    phone = Phone([update(10, text)])
+
+    run_planning(tmp_path, phone, stub)
+
+    assert stub.calls == [datetime.fromtimestamp(DATE, UTC)]
+    assert phone.sent == ["one", "two"], "the handler's own texts, and no extra help"
+    assert (tmp_path / "offset").read_text() == "10"
+
+
+def test_plan_with_a_question_mark_is_the_week_plan_not_a_question(tmp_path):
+    # ``normalise`` strips the "?", and the command is tried before
+    # ``is_question``, so "plan?" never reaches the gaffer.
+    stub, ask = WeekPlanStub(), AskStub()
+    phone = Phone([update(10, "plan?")])
+
+    run_planning(tmp_path, phone, stub, ask=ask)
+
+    assert len(stub.calls) == 1
+    assert ask.calls == []
+
+
+def test_a_multi_word_question_with_plan_still_goes_to_the_gaffer(tmp_path):
+    stub, ask = WeekPlanStub(), AskStub()
+    phone = Phone([update(10, "Why this plan?")])
+
+    run_planning(tmp_path, phone, stub, ask=ask)
+
+    assert stub.calls == []
+    assert [c[0] for c in ask.calls] == ["Why this plan?"]
+
+
+def test_the_week_plan_without_a_handler_says_so_and_never_the_help():
+    assert (
+        dispatch("week plan", 7, datetime.now(UTC), no_reply, recorded)
+        == WEEK_PLAN_OFF
+        == "Week plan is not configured."
+    )
+
+
+def test_a_week_plan_that_raises_gets_its_own_apology(tmp_path):
+    def broken(sent_at, reply):
+        raise RuntimeError("snapshot unreadable")
+
+    phone = Phone([update(10, "Week plan")])
+
+    run_planning(tmp_path, phone, broken)
+
+    # Not the recording's apology and not the ask apology; and the first
+    # failure leaves the offset, so the next minute tries once more.
+    assert phone.sent == [WEEK_PLAN_WRONG]
+    assert WEEK_PLAN_WRONG not in (SOMETHING_WRONG, ASK_WRONG)
+    assert not (tmp_path / "offset").exists()
+    assert marked_failed(tmp_path) == 10
+
+
+def test_the_help_lists_the_week_plan():
+    assert any(
+        line.startswith("• Week plan —") and "five short texts" in line
+        for line in HELP.splitlines()
+    )
+
+
+def test_the_inbox_docstring_counts_five_things():
+    assert "Five things can be said to it" in inbox.__doc__
+    assert "Four things" not in inbox.__doc__
