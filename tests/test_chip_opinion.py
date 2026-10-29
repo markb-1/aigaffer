@@ -23,6 +23,7 @@ import pytest
 
 from aigaffer.chips import WILDCARD
 from aigaffer.config import Config
+from aigaffer.data.models import Fixture
 from aigaffer.manager import chip_opinion
 from aigaffer.manager.chip_opinion import (
     ANSWER,
@@ -749,3 +750,29 @@ def test_the_what_if_age_counts_from_the_day_it_is_given():
     view = LedgerView({pid: Judged(entry, True, None)})
     text = build_chip_briefing(week, whatif, None, today=date(2026, 10, 9), ledger=view)
     assert "(3 days ago)" in text
+
+
+def test_the_what_if_briefing_carries_the_fixtures_for_the_clubs_it_is_about():
+    # A wildcard or a free hit is judged on fixtures first, and the gaffer
+    # takes them only from his briefing. The sample projects GW2 alone, so the
+    # window is GW2: ASH at home to BRW, and BRW away (lower case). The GW3
+    # fixture is outside it. Hume (8) plays for ASH.
+    week = sample_week()
+    fixtures = [
+        Fixture(id=1, event=2, team_h=1, team_a=2),
+        Fixture(id=2, event=3, team_h=3, team_a=1),
+    ]
+    inputs = week.effective.__class__(**{**week.effective.__dict__, "fixtures": fixtures})
+    week = PreparedWeek(**{**week.__dict__, "effective": inputs, "inputs": inputs})
+
+    body = build_chip_briefing(week, sample_whatif(), VERDICT, today=date(2026, 10, 8))
+
+    assert "## Fixtures (GW2–GW2)" in body
+    assert "\nASH: BRW(h)\nBRW: ash(a)\n" in body
+    assert "| v BRW(h) |" in body
+
+
+def test_the_what_if_briefing_has_no_fixtures_section_without_fixtures():
+    body = build_chip_briefing(sample_week(), sample_whatif(), VERDICT, today=date(2026, 10, 8))
+
+    assert "## Fixtures" not in body

@@ -36,6 +36,7 @@ never come to disagree about what £4.0m or a naive deadline means.
 """
 
 from collections import defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date
 from typing import TYPE_CHECKING
@@ -666,13 +667,24 @@ def _fixtures(
     Which clubs: every one the briefing mentions a player of: the squad, the
     plans' squads and transfers, the paths' signings and the watchlist.
     """
-    if not board.fixtures or not board.window:
-        return []
     pids = {*held, *relevant_players(solve), *_watchlist_ids(held, board)}
     for plan in solve.plans:
         if plan.path is not None:
             for move in plan.path.moves:
                 pids.update(move.transfers_in, move.transfers_out)
+    return _fixtures_for(pids, board)
+
+
+def _fixtures_for(pids: Iterable[int], board: _Board) -> list[str]:
+    """The ``## Fixtures`` section for the clubs of ``pids``, or none at all.
+
+    Split from :func:`_fixtures` so the chip what-if's briefing
+    (:mod:`aigaffer.manager.chip_opinion`) hands its gaffer the same table for
+    the players it is about: a wildcard or a free hit is judged on fixtures
+    more than any other call he makes.
+    """
+    if not board.fixtures or not board.window:
+        return []
     clubs = sorted({board.players[pid].team for pid in pids if pid in board.players},
                    key=lambda team: (board.clubs[team], team))
     first, last = board.window[0], board.window[-1]
