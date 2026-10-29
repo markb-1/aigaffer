@@ -125,14 +125,14 @@ def what_changed(prev: dict | None, cur: dict) -> list[str]:
     if prev is None:
         return [FIRST_LOOK]
     lines = []
-    old_moves, new_moves = _moves(prev), _moves(cur)
+    old_moves, new_moves = moves(prev), moves(cur)
     if old_moves != new_moves:
         lines.append(f"Transfers: {_moves_text(cur)} (was: {_moves_text(prev)})")
     for label, key in (("Captain", "captain"), ("Vice", "vice")):
         if prev.get(key) != cur.get(key):
-            lines.append(f"{label}: {_name(cur, cur.get(key))} (was: {_name(prev, prev.get(key))})")
-    if _chip(prev) != _chip(cur):
-        lines.append(f"Chip: {_chip(cur)} (was: {_chip(prev)})")
+            lines.append(f"{label}: {name(cur, cur.get(key))} (was: {name(prev, prev.get(key))})")
+    if chip(prev) != chip(cur):
+        lines.append(f"Chip: {chip(cur)} (was: {chip(prev)})")
     if prev.get("bench") != cur.get("bench"):
         lines.append(f"Bench: {_names(cur, cur['bench'])} (was: {_names(prev, prev['bench'])})")
     for adjustment in cur["decision"].get("adjustments", []):
@@ -142,7 +142,7 @@ def what_changed(prev: dict | None, cur: dict) -> list[str]:
         if old != new:
             shown = "not projected" if new is None else _minutes(new)
             was = "not projected" if old is None else _minutes(old)
-            lines.append(f"{_name(cur, pid)}: xMins {was} → {shown}")
+            lines.append(f"{name(cur, pid)}: xMins {was} → {shown}")
     for pid in cur["squad"]:
         before, after = prev["players"].get(pid), cur["players"].get(pid)
         if before is None or after is None:
@@ -196,7 +196,7 @@ def _pairs(snapshot: dict) -> list[tuple[int, int]]:
     return pairs
 
 
-def _moves(snapshot: dict) -> tuple[list[int], list[int]]:
+def moves(snapshot: dict) -> tuple[list[int], list[int]]:
     plan = snapshot["plans"][snapshot["chosen"]]
     return sorted(plan["out"]), sorted(plan["in"])
 
@@ -205,10 +205,10 @@ def _moves_text(snapshot: dict) -> str:
     plan = snapshot["plans"][snapshot["chosen"]]
     if not plan["in"]:
         return "none"
-    return ", ".join(f"{_name(snapshot, out)} → {_name(snapshot, ins)}" for out, ins in _pairs(snapshot))
+    return ", ".join(f"{name(snapshot, out)} → {name(snapshot, ins)}" for out, ins in _pairs(snapshot))
 
 
-def _chip(snapshot: dict) -> str:
+def chip(snapshot: dict) -> str:
     return snapshot["decision"].get("chip") or "none"
 
 
@@ -249,14 +249,14 @@ def _minutes_notes(cur: dict) -> list[str]:
     if applied:
         out += ["", OVERRULED, ""]
         out += [
-            f"- Set {_name(cur, record['player_id'])}"
+            f"- Set {name(cur, record['player_id'])}"
             f" to {record['expected_minutes']:.0f} mins — {_clean(record['reason'])}"
             for record in applied
         ]
     if unspent:
         out += ["", NOT_APPLIED, ""]
         out += [
-            f"- {_name(cur, record['player_id'])}"
+            f"- {name(cur, record['player_id'])}"
             f" at {record['expected_minutes']:.0f} mins — {_clean(record['reason'])}"
             for record in unspent
         ]
@@ -287,30 +287,30 @@ def _road_ahead(cur: dict) -> list[str]:
     path = cur["plans"][cur["chosen"]].get("path") or []
     if not path:
         return ["No moves planned after this week."]
-    return [*(f"- GW{move['gw']}: {_planned(cur, move)}" for move in path), "", ADVISORY]
+    return [*(f"- GW{move['gw']}: {planned(cur, move)}" for move in path), "", ADVISORY]
 
 
-def _planned(cur: dict, move: dict) -> str:
+def planned(cur: dict, move: dict) -> str:
     parts = []
     if move["out"]:
-        parts.append("out " + _priced(cur, move["out"]))
+        parts.append("out " + priced(cur, move["out"]))
     if move["in"]:
-        parts.append("in " + _priced(cur, move["in"]))
+        parts.append("in " + priced(cur, move["in"]))
     moved = ", ".join(parts)
     if moved and "hits" in move:
         hits = move["hits"]
         free = max(0, len(move["in"]) - hits)
         cost = f"-{hits * HIT_POINTS} pts in hits" if hits else "no hit"
         moved += f" — {plural(free, 'FT')}, {cost}"
-    chip = chip_label(move["chip"]) if move.get("chip") not in (None, NO_CHIP) else ""
-    if moved and chip:
-        return f"{moved} — {chip}"
-    return moved or chip
+    played = chip_label(move["chip"]) if move.get("chip") not in (None, NO_CHIP) else ""
+    if moved and played:
+        return f"{moved} — {played}"
+    return moved or played
 
 
-def _priced(cur: dict, pids: list[int]) -> str:
+def priced(cur: dict, pids: list[int]) -> str:
     return ", ".join(
-        f"{row['n']} ({price(row['pr'])})" if (row := cur["players"].get(pid)) else _name(cur, pid)
+        f"{row['n']} ({price(row['pr'])})" if (row := cur["players"].get(pid)) else name(cur, pid)
         for pid in pids
     )
 
@@ -341,9 +341,9 @@ def _transfers(cur: dict) -> list[str]:
     pairs = _pairs(cur)
     for gone, came in pairs:
         gap = cur["players"][came]["t"] - cur["players"][gone]["t"]
-        plain_gap = _window(cur, came) - _window(cur, gone)
+        plain_gap = window(cur, came) - window(cur, gone)
         out += [
-            f"### {_name(cur, gone)} → {_name(cur, came)}",
+            f"### {name(cur, gone)} → {name(cur, came)}",
             "",
             *_table_head(cur),
             _player_row(cur, gone, "Out"),
@@ -351,7 +351,7 @@ def _transfers(cur: dict) -> list[str]:
             "",
             WEIGHTED_CAPTION,
             "",
-            f"{_name(cur, came)} over {_name(cur, gone)}: {gap:+.2f} weighted"
+            f"{name(cur, came)} over {name(cur, gone)}: {gap:+.2f} weighted"
             f" ({plain_gap:+.2f} plain) over the window. "
             + _clean(reasons.get((gone, came)) or _fallback(cur)),
             "",
@@ -404,14 +404,14 @@ def captain_rivals(cur: dict) -> list[int]:
     taken = {cur["captain"], cur.get("vice")}
     return sorted(
         (p for p in cur["xi"] if p not in taken and cur["players"][p]["p"] in _ATTACKERS),
-        key=lambda p: (-_window(cur, p), p),
+        key=lambda p: (-window(cur, p), p),
     )[:RIVALS]
 
 
 def _armbands(cur: dict) -> list[str]:
     reasons = _reasons(cur)
     captain, vice = cur["captain"], cur["vice"]
-    totals = {pid: _window(cur, pid) for pid in cur["xi"]}
+    totals = {pid: window(cur, pid) for pid in cur["xi"]}
     rivals = captain_rivals(cur)
     out = []
     # The writer gives one reason for the armbands, about the captain; the vice
@@ -419,14 +419,14 @@ def _armbands(cur: dict) -> list[str]:
     for label, pid, key in (("Captain", captain, "captain"), ("Vice", vice, None)):
         if pid is None:
             continue
-        line = f"- **{label}: {_name(cur, pid)}** ({totals.get(pid, _window(cur, pid)):.2f} over the window)"
+        line = f"- **{label}: {name(cur, pid)}** ({totals.get(pid, window(cur, pid)):.2f} over the window)"
         if key:
             line += f" — {_clean(reasons.get(key)) or _fallback(cur)}"
         out.append(line)
     if rivals:
         # Named for what they are ranked on: the plain sum over the window,
         # not the weighted total the planner decides transfers on.
-        out.append(f"- {RIVALS_LABEL}: " + ", ".join(f"{_name(cur, p)} ({totals[p]:.2f})" for p in rivals))
+        out.append(f"- {RIVALS_LABEL}: " + ", ".join(f"{name(cur, p)} ({totals[p]:.2f})" for p in rivals))
     return out or ["No armbands recorded."]
 
 
@@ -440,7 +440,7 @@ def _skipped(cur: dict) -> list[str]:
     out = ["| Player | Instead of | Gap (weighted) | Price | Why not | Note |", "|---|---|---|---|---|---|"]
     for item in rows:
         out.append(
-            f"| {_name(cur, item['id'])} | {_name(cur, item['replaces'])}"
+            f"| {name(cur, item['id'])} | {name(cur, item['replaces'])}"
             f" | {item['gap']:+.2f} | {item['price_diff'] / 10:+.1f}m | {item['tag']}"
             f" | {notes.get(item['id']) or ''} |"
         )
@@ -464,9 +464,9 @@ def _options(cur: dict) -> list[str]:
 
 def _chips(cur: dict) -> list[str]:
     decision = cur["decision"]
-    chip = _chip(cur)
-    out = [f"Chip played: {chip_label(chip)}." if chip != "none" else "No chip this week."]
-    if chip != "none":
+    played = chip(cur)
+    out = [f"Chip played: {chip_label(played)}." if played != "none" else "No chip this week."]
+    if played != "none":
         # A paragraph of its own, so the words keep their lines (see _prose).
         out += [
             "",
@@ -474,10 +474,10 @@ def _chips(cur: dict) -> list[str]:
             or _fallback(cur),
         ]
     out += ["", "Points each chip would add this week:"]
-    for name, value in cur["chip_evs"].items():
+    for kind, value in cur["chip_evs"].items():
         # The wildcard is priced over the whole horizon, and says so, as the
         # gameweek report's chip panel does.
-        label = chip_label(name) + (" (over the window)" if name == "wildcard" else "")
+        label = chip_label(kind) + (" (over the window)" if kind == "wildcard" else "")
         out.append(f"- {label}: {value:+.2f}")
     if cur.get("calendar"):
         out += ["", "Calendar:"]
@@ -509,11 +509,11 @@ def _player_row(cur: dict, pid: int, tag: str) -> str:
     )
 
 
-def _window(cur: dict, pid: int) -> float:
+def window(cur: dict, pid: int) -> float:
     return round(sum(cur["players"][pid]["x"].values()), 2)
 
 
-def _name(snapshot: dict, pid: int | None) -> str:
+def name(snapshot: dict, pid: int | None) -> str:
     if pid is None:
         return "none"
     row = snapshot["players"].get(pid)
@@ -521,7 +521,7 @@ def _name(snapshot: dict, pid: int | None) -> str:
 
 
 def _names(snapshot: dict, pids: list[int]) -> str:
-    return ", ".join(_name(snapshot, p) for p in pids) or "none"
+    return ", ".join(name(snapshot, p) for p in pids) or "none"
 
 
 def _clean(text: str | None) -> str:

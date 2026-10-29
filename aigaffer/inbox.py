@@ -6,13 +6,17 @@ reads Telegram. Each tick asks Telegram for the messages since the last one
 handled, obeys the configured chat and nobody else, answers, and exits — one
 HTTPS call on a quiet minute, and silence on stdout.
 
-Four things can be said to it. "Transfers made" records the latest verdict
+Five things can be said to it. "Transfers made" records the latest verdict
 as entered (:mod:`aigaffer.recording`). "Wildcard?" and "Free hit?" — and
 the words they normalise to — run a chip what-if
 (:mod:`aigaffer.whatif_handler`), which replies for itself, in more than one
 message. "Chip forecast" answers at once, from the newest saved report, with
 when the bot currently plans to play each chip (:mod:`aigaffer.chip_forecast`):
-no solve and no gaffer, so a read of a few rows and one text back. Anything else — "help", a typo, a sticker — gets the help.
+no solve and no gaffer, so a read of a few rows and one text back. "Week plan"
+(or "plan") sends the newest detailed plan as five short texts
+(:mod:`aigaffer.weekplan`), just as instantly and just as free, and replies for
+itself like the what-if. Anything else — "help", a typo, a sticker — gets the
+help.
 
 **Where it is.** The last handled ``update_id`` lives in
 ``$AIGAFFER_INBOX_DIR/offset`` (default ``~/.aigaffer/``), outside the
@@ -54,6 +58,10 @@ FAILED_FILE = "failed"
 
 TRANSFERS_MADE = "transfers made"
 CHIP_FORECAST = "chip forecast"
+# The Week plan button's label, normalised, and the short word for it. Both
+# are tried before the question check, so "plan?" is a command and never a
+# question for the gaffer.
+WEEK_PLAN_WORDS = frozenset({"week plan", "plan"})
 # Every word that asks for a chip what-if, normalised, and the chip it asks
 # about. The keyboard's "Wildcard?" and "Free hit?" normalise to the first and
 # third (``normalise`` strips the question mark).
@@ -87,6 +95,8 @@ HELP = (
     " if you play it, don't send Transfers made.\n"
     "• Chip forecast — when the bot currently plans to play each chip, from the"
     " latest report. Instant.\n"
+    "• Week plan — the latest plan as five short texts: what to do, the team"
+    " news, why, the road ahead and chips, and the fixtures. Instant.\n"
     "• help — this message.\n"
     + ASK_LINE
 )
@@ -96,6 +106,8 @@ ASK_WRONG = "I couldn't answer that just now — ask again in a minute."
 WHATIFS_OFF = "Chip what-ifs aren't set up on this box."
 CHIP_FORECAST_OFF = "Chip forecast is not configured."
 FORECAST_WRONG = "Something went wrong with that forecast — try again in a minute."
+WEEK_PLAN_OFF = "Week plan is not configured."
+WEEK_PLAN_WRONG = "Something went wrong with the week plan — try again in a minute."
 
 # What a handler answers with: one text, sent with the keyboard like every
 # reply (send_message always attaches it, hence no keyboard keyword). A
@@ -107,6 +119,8 @@ ChipWhatIf = Callable[[str, int, datetime, Reply], str | None]
 # The gaffer's answerer for a free-text question: given the RAW text, as the
 # owner typed it, it returns the answer (or None if it replied for itself).
 Ask = Callable[[str, int, datetime, Reply], str | None]
+# The week plan sends its own five texts through ``reply`` and returns nothing.
+WeekPlan = Callable[[datetime, Reply], None]
 
 NOT_CONFIGURED = "aigaffer inbox: telegram not configured — nothing to read"
 UNREACHABLE = "aigaffer inbox: telegram unreachable ({reason})"
@@ -148,6 +162,7 @@ def dispatch(
     chip_forecast: Callable[[datetime], str] | None = None,
     ask: Ask | None = None,
     raw: str = "",
+    week_plan: WeekPlan | None = None,
 ) -> str | None:
     """The reply to one normalised message, or None when the handler has
     already replied for itself — which is what a chip what-if does.
@@ -155,7 +170,9 @@ def dispatch(
     ``chip_whatif`` None is a box wired without what-ifs (and most tests):
     the chip words then get a line saying so, never the help, so a tap on the
     keyboard is not answered with a list that offers the very button tapped.
-    The same goes for ``chip_forecast`` None and the forecast.
+    The same goes for ``chip_forecast`` None and the forecast, and for
+    ``week_plan`` None and the week plan, which replies for itself (five texts
+    through ``reply``) and so returns None.
     """
     if command == TRANSFERS_MADE:
         return transfers_made(sent_at)
@@ -163,6 +180,11 @@ def dispatch(
         if chip_forecast is None:
             return CHIP_FORECAST_OFF
         return chip_forecast(sent_at)
+    if command in WEEK_PLAN_WORDS:
+        if week_plan is None:
+            return WEEK_PLAN_OFF
+        week_plan(sent_at, reply)
+        return None
     kind = CHIP_KINDS.get(command)
     if kind is not None:
         if chip_whatif is None:
@@ -184,6 +206,7 @@ def run_inbox(
     chip_forecast: Callable[[datetime], str] | None = None,
     ask: Ask | None = None,
     *,
+    week_plan: WeekPlan | None = None,
     get: Callable[[str, int | None], list[dict]] = get_updates,
     send: Callable[[str, str, str], None] = send_message,
 ) -> int:
@@ -244,11 +267,13 @@ def run_inbox(
                     apology = WHATIF_WRONG
                 elif command == CHIP_FORECAST:
                     apology = FORECAST_WRONG
+                elif command in WEEK_PLAN_WORDS:
+                    apology = WEEK_PLAN_WRONG
                 elif command != TRANSFERS_MADE and ask is not None and is_question(raw):
                     apology = ASK_WRONG
                 answer = dispatch(
                     command, uid, sent_at, reply, transfers_made, chip_whatif,
-                    chip_forecast, ask, raw,
+                    chip_forecast, ask, raw, week_plan,
                 )
                 if answer is not None:
                     send(token, chat_id, answer)

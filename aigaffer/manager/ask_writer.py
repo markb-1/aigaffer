@@ -50,7 +50,7 @@ from typing import Any
 import anthropic
 
 from aigaffer.config import Config
-from aigaffer.detailed.render import _moves, _name
+from aigaffer.detailed.render import moves, name
 from aigaffer.inbox import normalise
 from aigaffer.manager.agent import EFFORT, MAX_RESUMPTIONS, MAX_TOKENS, _cached, _result, _rolling, _text
 from aigaffer.manager.tools import MARKUP, ToolError
@@ -242,16 +242,16 @@ def plan_detail(snapshot: dict, plan_id: Any) -> dict:
     return {
         "id": plan_id,
         "chosen": plan_id == snapshot["chosen"],
-        "in": [_name(snapshot, p) for p in plan["in"]],
-        "out": [_name(snapshot, p) for p in plan["out"]],
+        "in": [name(snapshot, p) for p in plan["in"]],
+        "out": [name(snapshot, p) for p in plan["out"]],
         "hits": plan["hits"],
         "xp": plan["xp"],
         "net": plan["net"],
         "path": [
             {
                 "gw": move["gw"],
-                "in": [_name(snapshot, p) for p in move["in"]],
-                "out": [_name(snapshot, p) for p in move["out"]],
+                "in": [name(snapshot, p) for p in move["in"]],
+                "out": [name(snapshot, p) for p in move["out"]],
                 "chip": move.get("chip"),
             }
             for move in plan.get("path", [])
@@ -324,7 +324,7 @@ def question_block(snapshot: dict, thread: list[dict], question: str) -> str:
 
 def plan_moves(snapshot: dict) -> dict:
     """The chosen plan's moves as the thread keeps them."""
-    out, came = _moves(snapshot)
+    out, came = moves(snapshot)
     return {"out": out, "in": came}
 
 
