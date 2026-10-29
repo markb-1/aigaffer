@@ -61,6 +61,7 @@ from aigaffer.data.free_transfers import MAX_FREE_TRANSFERS
 from aigaffer.data.models import Player
 from aigaffer.model.xp import PlayerProjection, decayed_total
 from aigaffer.solver import multiweek
+from aigaffer.solver.calendar import OPTION_FLOOR
 from aigaffer.solver.multiweek import (
     BENCH_BOOST,
     CANDIDATES_PER_POSITION,
@@ -1342,6 +1343,32 @@ def test_a_chip_clears_its_bar_at_gw6_now_the_floor_is_gone():
     assert plan.objective == pytest.approx(129.849, abs=1e-4)
     assert path.weekly_xp[6] == pytest.approx(85.0, abs=1e-4)
     assert_legal_path(players, SQUAD, 0, 1, [6, 7], plan, path)
+
+
+def test_a_thin_edge_over_the_saved_for_week_holds_the_triple_captain_and_a_clear_one_plays_it():
+    # The calendar's bar is the saved-for week's value plus the triple
+    # captain's 2.0 option floor. Say the saved-for value, discounted back to
+    # GW6, is 8.0: the bar is 10.0. A captain worth 9.0 clears the saved-for
+    # value by 1.0, under the floor, so the chip is held and played nowhere
+    # (without the floor, a bar of 8.0, it would have played); a captain worth
+    # 13.0 clears the saved-for value by 5.0, and the bar by 3.0, and plays in
+    # GW6. GW7's captain is 6.0 either way, under the bar.
+    held = whole_season(TRIPLE_CAPTAIN)
+    bars = {"triple_captain@38": {6: 8.0 + OPTION_FLOOR[TRIPLE_CAPTAIN], 7: 8.0 + OPTION_FLOOR[TRIPLE_CAPTAIN]}}
+
+    thin_players, thin_projections = spine_captained([6, 7], {6: 9.0, 7: 6.0})
+    _, thin = optimize_path(
+        thin_players, thin_projections, SQUAD, bank=0, free_transfers=1, events=[6, 7],
+        decay=DECAY, held_chips=held, bars=bars,
+    )
+    clear_players, clear_projections = spine_captained([6, 7], {6: 13.0, 7: 6.0})
+    _, clear = optimize_path(
+        clear_players, clear_projections, SQUAD, bank=0, free_transfers=1, events=[6, 7],
+        decay=DECAY, held_chips=held, bars=bars,
+    )
+
+    assert chips_played([6, 7], thin) == {6: "none", 7: "none"}
+    assert chips_played([6, 7], clear) == {6: TRIPLE_CAPTAIN, 7: "none"}
 
 
 def test_a_chip_is_held_when_the_week_is_below_its_bar():

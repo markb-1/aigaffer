@@ -10,7 +10,7 @@ for" (one chip a week), and hands the window a bar per week — the saved-for
 week's value, discounted for distance. The window plays a chip in week w only
 where its gain there beats that bar.
 
-Four consequences worth stating, so nobody files them as bugs:
+Five consequences worth stating, so nobody files them as bugs:
 
 * With nothing left beyond the window the bar is 0: the chip is played inside
   it. Every first-set bar is 0 once the window reaches GW19 — and with the
@@ -21,16 +21,23 @@ Four consequences worth stating, so nobody files them as bugs:
   later than pure decay would. Accepted — it offsets δ's early tilt.
 * The values are proxies, haircut by :data:`PROXY_SCALE`: they price a bench
   bought for the week, a captain bought in, and a free hit against today's
-  squad, while the window's gain is what the reachable squad earns.
-* On a flat board the triple captain and the bench boost may go as early as
-  GW6. With PROXY_SCALE ≤ 0.85 and ρ^9 ≈ 0.76, a chip whose in-window gain
-  equals its proxy faces a bar of about 0.65 × that gain, so the window plays
-  it. That is the owner's "lean towards now", taken as the principal's
+  squad, while the window's gain is what the reachable squad earns. A triple
+  captain already in the squad is no proxy and is not haircut.
+* The triple captain no longer goes early on a flat board: an owned pick
+  faces about ρ^Δ × its saved-for value plus the 2.0 floor, so it waits for a
+  week clearly better than the saved-for one. The bench boost keeps the old
+  "lean towards now": with PROXY_SCALE 0.7 and ρ^9 ≈ 0.76 a gain equal to its
+  proxy faces a bar of about 0.53 × that gain, so the window plays it as early
+  as GW6. That is the owner's "lean towards now", taken as the principal's
   decision. The free hit is held by its option floor until a week clearly
-  beats it or expiry nears — the floor tapers over the chip's last five weeks
-  to nothing at its expiry, so a first-set free hit still in hand in late
-  December is readier to be played than one in October; the wildcard is held
-  by its ramp.
+  beats it or expiry nears; the wildcard is held by its ramp.
+* The floor applies only while something eligible lies beyond the window
+  (``_floor`` is 0 otherwise), and tapers over the chip's last five weeks to
+  nothing at expiry. For the first set it bites in runs up to GW13; window
+  weeks GW15-18, seen from runs GW10-13, carry the taper. From the GW14 run
+  (window GW14-19) every TC bar is 0 and the window's decay picks the best net
+  week: the existing end-game. The "lean towards now" survives in bar 0 past
+  the horizon, in δ, and in the taper.
 
 The calendar is computed once per run from base-minute projections — never the
 gaffer's minutes, which are for the coming gameweek — so his re-solves cannot
@@ -53,12 +60,18 @@ from aigaffer.solver.optimizer import AVAILABLE, BOOSTED, GOALKEEPER, bench_scor
 # How much less a week further out is worth: gentle, because a chip held is
 # not a chip lost while its window is open. First guess; one place.
 CHIP_DISCOUNT = 0.97
-# What a free hit is worth before any week is priced: insurance against a
-# blank or mass absences nobody can see yet. Added to its bar while a later
-# week remains, so a flat board does not fire it in GW6 — and tapered over the
-# chip's last FLOOR_TAPER_WEEKS weeks to 0 at expiry (see _floor), because by
-# late December the alternative to playing a first-set free hit is losing it.
-OPTION_FLOOR = {FREE_HIT: 10.0}
+# What holding a chip is worth before any week is priced, added to its bar
+# while a later week remains and tapered over the chip's last
+# FLOOR_TAPER_WEEKS weeks to 0 at expiry (see _floor), because by late
+# December the alternative to playing a first-set chip is losing it.
+# The free hit's 10.0 is insurance against a blank or mass absences nobody can
+# see yet, so a flat board does not fire it in GW6. The triple captain's 2.0
+# is the margin a single gameweek must clear over its saved-for week before
+# the chip is played early: no double gameweek is expected before GW19, so the
+# first-set chip is held for the best single week, about 7.5-9 xP against
+# roughly 5.5 for an ordinary one, and projections 6-10 weeks out are noisy
+# enough that a thin edge over them is not worth the chip.
+OPTION_FLOOR = {FREE_HIT: 10.0, TRIPLE_CAPTAIN: 2.0}
 # Over how many weeks before its last the option floor falls to nothing: flat
 # to GW14 and 0 at GW19 for the first set, GW33 to GW38 for the second.
 FLOOR_TAPER_WEEKS = 5
@@ -217,8 +230,22 @@ def _values(
         for w in weeks:
             if not starters:
                 break
-            pick = max(starters, key=lambda pid: (projections[pid].attacking_per_gw.get(w, 0.0), -pid))
-            values[w] = scale * _projected(projections, pick, w)
+            # The haircut prices a captain who has to be bought in; one
+            # already in the squad is the same man the window would triple,
+            # and haircutting him tilts every comparison toward playing now.
+            # So the pick is made on the ceiling after that haircut: a
+            # non-owned man a hair ahead must not be picked, haircut, and so
+            # price below the owned runner-up the window would really triple.
+            pick = max(
+                starters,
+                key=lambda pid: (
+                    projections[pid].attacking_per_gw.get(w, 0.0)
+                    * (1.0 if pid in current_squad else scale),
+                    -pid,
+                ),
+            )
+            owned = 1.0 if pick in current_squad else scale
+            values[w] = owned * _projected(projections, pick, w)
         return values
     if chip == BENCH_BOOST:
         priced = best_one_week_squads(

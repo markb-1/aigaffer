@@ -25,7 +25,10 @@ them and resolve rather than playing the boost on hope.
 Triple captain. Minutes certainty first: never on a doubt, and be wary of a \
 player with a midweek European tie or a rotation-prone manager. Then the \
 fixture: at home against a weak defence. The extra multiple is the captain's \
-whole score, so a nailed attacker in the week's best fixture is the case for it.
+whole score, so a nailed attacker in the week's best fixture is the case for it. \
+The chip's bar already carries a margin for holding it, so the reason must \
+name the fixture and how far the week clears its bar; a thin edge on an \
+ordinary fixture is a reason to keep the chip.
 
 Wildcard. For a fixture swing that needs four or more moves, or a squad whose \
 structure is wrong — not to fix one injury, which a free transfer or a hit \

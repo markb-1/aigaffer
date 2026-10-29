@@ -186,6 +186,28 @@ def test_the_second_set_free_hit_tapers_to_gw38():
     }
 
 
+def test_the_triple_captain_floor_is_in_the_bars_and_tapers_to_nothing_at_expiry():
+    # TC@19 over GW13-18, GW19 still beyond the window, saved for GW19 at 9.0.
+    # The floor is OPTION_FLOOR[TRIPLE_CAPTAIN] = 2.0 x min(1, (19 - w) / 5),
+    # the free hit's taper: GW13 and GW14 2.0, GW15 1.6, GW16 1.2, GW17 0.8,
+    # GW18 0.4 - on top of 9.0 discounted back (19 - w) weeks.
+    window = [13, 14, 15, 16, 17, 18]
+    bars = _bars_for(TC19, window, saved_for=19, value=9.0)
+    floors = {13: 2.0, 14: 2.0, 15: 1.6, 16: 1.2, 17: 0.8, 18: 0.4}
+    assert bars == {w: pytest.approx(9.0 * RHO ** (19 - w) + f) for w, f in floors.items()}
+    # With no saved-for week the floor stands alone, and the same taper.
+    alone = _bars_for(TC19, window, saved_for=None, value=None)
+    assert alone == {w: pytest.approx(f) for w, f in floors.items()}
+
+
+def test_the_triple_captain_floor_is_nothing_with_no_week_beyond_the_window():
+    # Window GW14-19 reaches the chip's expiry: nothing eligible lies beyond
+    # it, so the floor is 0 whatever the week - the end-game, where the
+    # window's own decay picks the best net week.
+    window = [14, 15, 16, 17, 18, 19]
+    assert set(_bars_for(TC19, window, saved_for=None, value=None).values()) == {0.0}
+
+
 def test_the_taper_never_touches_the_fallback_calendar():
     # The fallback has no option floor at all - its free-hit bar is the old
     # flat constant - so nothing here moves with the taper.
@@ -199,9 +221,12 @@ def test_assign_ignores_worthless_weeks():
 
 
 def test_a_saved_for_week_sets_a_bar_that_falls_with_distance():
+    # Plus the triple captain's option floor, flat at 2.0 this far from GW19
+    # (GW6 is 13 weeks off, GW11 eight: both over the five-week taper).
     bars = _bars_for(TC19, WINDOW, saved_for=15, value=12.0)
-    assert bars[15 - 9] == pytest.approx(12.0 * CHIP_DISCOUNT ** 9)   # GW6
-    assert bars[11] == pytest.approx(12.0 * CHIP_DISCOUNT ** 4)
+    floor = OPTION_FLOOR[TRIPLE_CAPTAIN]
+    assert bars[15 - 9] == pytest.approx(12.0 * CHIP_DISCOUNT ** 9 + floor)   # GW6
+    assert bars[11] == pytest.approx(12.0 * CHIP_DISCOUNT ** 4 + floor)
     assert bars[6] < bars[11]   # the within-window tilt towards later weeks: pinned
 
 
@@ -352,14 +377,17 @@ def test_build_calendar_values_and_saves_each_chip(board_beyond_window):
 
 
 def test_the_window_bars_are_the_saved_for_values_discounted_back(board_beyond_window):
-    # TC: 8.5 ρ^(9-w). BB: 6.552 ρ^(8-w). FH: 16.065 ρ^(10-w) plus its
-    # option floor, since GW8-10 are still to come - tapered, because GW10 is
-    # its last week: 10 x (10 - 6) / 5 = 8.0 in GW6 and 10 x (10 - 7) / 5 =
-    # 6.0 in GW7 (spec §9; these were a flat 10.0 before the taper).
+    # TC: 8.5 ρ^(9-w) plus its option floor, 2.0 x (10 - w) / 5 = 1.6 in GW6
+    # and 1.2 in GW7 (GW10 is its last week). BB: 6.552 ρ^(8-w). FH:
+    # 16.065 ρ^(10-w) plus its option floor, since GW8-10 are still to come -
+    # tapered, because GW10 is its last week: 10 x (10 - 6) / 5 = 8.0 in GW6
+    # and 10 x (10 - 7) / 5 = 6.0 in GW7 (spec §9; these were a flat 10.0
+    # before the taper).
     cal = _build(board_beyond_window)
     floor = {6: OPTION_FLOOR[FREE_HIT] * 0.8, 7: OPTION_FLOOR[FREE_HIT] * 0.6}
+    tc_floor = {6: OPTION_FLOOR[TRIPLE_CAPTAIN] * 0.8, 7: OPTION_FLOOR[TRIPLE_CAPTAIN] * 0.6}
     expected = {
-        "triple_captain@10": {6: 8.5 * RHO ** 3, 7: 8.5 * RHO ** 2},
+        "triple_captain@10": {6: 8.5 * RHO ** 3 + tc_floor[6], 7: 8.5 * RHO ** 2 + tc_floor[7]},
         "bench_boost@10": {6: BB_VALUE * RHO ** 2, 7: BB_VALUE * RHO},
         "free_hit@10": {6: FH_VALUES[10] * RHO ** 4 + floor[6], 7: FH_VALUES[10] * RHO ** 3 + floor[7]},
     }
@@ -505,8 +533,8 @@ def test_a_window_across_the_halves_saves_each_set_on_its_own(monkeypatch):
     # and 0.85 x 10.0 = 8.5 in GW25, anchored at GW20 — the first window week
     # it may be played in, not the window's GW15. GW25 wins:
     # 8.5 ρ⁵ = 7.299 against GW21's 6.8 ρ = 6.596. Its one window week is
-    # GW20, where the bar is 8.5 ρ^(25-20) = 7.299 — no option floor, it is a
-    # triple captain.
+    # GW20, where the bar is 8.5 ρ^(25-20) = 7.299 plus the triple captain's
+    # option floor, still the full 2.0 with 18 weeks to its expiry: 9.299.
     window = [15, 16, 17, 18, 19, 20]
     weeks = range(15, 39)
     points = {w: 10.0 if w == 25 else 8.0 for w in weeks}
@@ -537,7 +565,7 @@ def test_a_window_across_the_halves_saves_each_set_on_its_own(monkeypatch):
     assert first.bars == {w: 0.0 for w in range(15, 20)}
     assert second.saved_for == 25
     assert second.value == pytest.approx(8.5)
-    assert second.bars == {20: pytest.approx(8.5 * RHO ** 5)}
+    assert second.bars == {20: pytest.approx(8.5 * RHO ** 5 + OPTION_FLOOR[TRIPLE_CAPTAIN])}
     assert cal.horizon_end == 38
     # One assignment a half, each anchored where it may first be played.
     assert [anchors for _, anchors in asked] == [
@@ -564,3 +592,35 @@ def test_the_bench_boost_gain_is_the_full_bench_less_the_ordered_bench(board_bey
     expected = PROXY_SCALE[BENCH_BOOST] * (10.4 - bench_score(WINDOW_SETTINGS, [0.5], [3.9, 3.0, 3.0]))
     assert expected == pytest.approx(6.377, abs=1e-9)
     assert values == {w: pytest.approx(expected, abs=1e-6) for w in (8, 9, 10)}
+
+
+def test_a_triple_captain_already_owned_is_not_haircut(board_beyond_window):
+    # Put 20 in the squad in place of 15: he is the man the window would
+    # triple, so his weeks are priced in full, not at 0.85.
+    b = board_beyond_window
+    owned = [pid for pid in b.squad if pid != 15] + [20]
+    values = _values(TRIPLE_CAPTAIN, [8, 9, 10], b.players, b.projections, b.xmins, owned, b.bank, None)
+    assert values == {w: pytest.approx(b.striker_points[w]) for w in (8, 9, 10)}
+
+
+def test_the_triple_captain_is_picked_on_the_owned_adjusted_ceiling(board_beyond_window):
+    # 24 is a non-owned striker whose attacking EV is a hair ahead of 20's in
+    # GW8: 4.1 against 4.0. 20 is put in the squad in place of 15. Raw, 24 is
+    # the pick and prices 0.85 x 8.5 = 7.225; on the ceiling after the haircut
+    # 24 is 0.85 x 4.1 = 3.485 against 20's 4.0 owned, so 20 is picked and
+    # priced in full: 8.0, the more the window would really triple.
+    b = board_beyond_window
+    b.players[24] = _player(24, FWD, 200)
+    b.projections[24] = PlayerProjection(
+        player_id=24, per_gw={w: 8.5 for w in BOARD_WEEKS}, total=8.5 * len(BOARD_WEEKS),
+        attacking_per_gw={w: 4.1 for w in BOARD_WEEKS},
+    )
+    b.xmins[24] = 90.0
+    owned = [pid for pid in b.squad if pid != 15] + [20]
+    values = _values(TRIPLE_CAPTAIN, [8], b.players, b.projections, b.xmins, owned, b.bank, None)
+    assert values == {8: pytest.approx(8.0)}
+    # Not owned, the same two men flip back: 24's 4.1 beats 20's 4.0 and is
+    # haircut - 0.85 x 8.5 = 7.225.
+    assert _values(TRIPLE_CAPTAIN, [8], b.players, b.projections, b.xmins, b.squad, b.bank, None) == {
+        8: pytest.approx(0.85 * 8.5)
+    }
