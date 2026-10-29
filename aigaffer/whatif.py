@@ -41,7 +41,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from time import monotonic
 
-from aigaffer.chips import FREE_HIT, WILDCARD, HeldChip, held_for, playable_in
+from aigaffer.chips import FREE_HIT, TRIPLE_CAPTAIN, WILDCARD, HeldChip, held_for, playable_in
 from aigaffer.config import Config
 from aigaffer.model.xp import projected_events
 from aigaffer.orchestrator import PreparedWeek, _held, _week1_lock
@@ -359,7 +359,7 @@ def _hold_week(
     entry = None
     if calendar is not None:
         entry = next((e for e in calendar.entries if e.held.id == chip.id), None)
-    if kind == FREE_HIT and entry is not None and entry.saved_for is not None:
+    if kind in (FREE_HIT, TRIPLE_CAPTAIN) and entry is not None and entry.saved_for is not None:
         return _held_until(entry.saved_for, entry.value, "calendar", events)
     bar = None
     if calendar is not None:
