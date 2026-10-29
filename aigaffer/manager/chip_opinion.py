@@ -51,7 +51,9 @@ from aigaffer.manager.agent import (
 from aigaffer.manager.briefing import (
     _Board,
     _by_position,
+    _club_fixtures,
     _described,
+    _fixtures_for,
     _known,
     _planned,
     _player_line,
@@ -59,6 +61,7 @@ from aigaffer.manager.briefing import (
     _squad,
 )
 from aigaffer.manager.playbook import CHIP_PLAYBOOK
+from aigaffer.model.xp import projected_events
 from aigaffer.manager.tools import MARKUP, ToolError
 from aigaffer.report.render import chip_label, horizon_of, price, render_chip_calendar
 from aigaffer.whatif import HOLD, MARGINAL, PLAY, next_break
@@ -620,6 +623,8 @@ def build_chip_briefing(
         projections=week.projections,
         horizon=horizon_of(week.projections),
         xmins=week.xmins,
+        fixtures=_club_fixtures(inputs, week.projections),
+        window=tuple(projected_events(week.projections)),
     )
     event = whatif.event
     deadlines = {e.id: e.deadline_time for e in inputs.bootstrap.events}
@@ -631,6 +636,9 @@ def build_chip_briefing(
         f"Today is {today:%a %d %b %Y}. The GW{event} deadline is"
         f" {_when(deadlines.get(event))}. You are asked for an opinion on the"
         " numbers below, not for a decision.",
+        # The weekly briefing's own fixtures table, for every club the what-if
+        # is about: a wildcard or a free hit is a call on fixtures first.
+        *_fixtures_for(_about(week, whatif), board),
         _numbers(whatif),
         "## Chip plays by path\n\n"
         f"- On: {_plays(whatif.on.chips)}\n- Off: {_plays(whatif.off.chips)}",
@@ -705,6 +713,25 @@ def _plays(chips: dict[int, str]) -> str:
     if not chips:
         return "none in the window"
     return ", ".join(f"GW{w} {_CHIP_NAMES.get(c, c)}" for w, c in sorted(chips.items()))
+
+
+def _about(week: "PreparedWeek", whatif: "WhatIf") -> list[int]:
+    """Whose clubs the what-if's fixtures table covers: today's squad, both
+    paths' squads, a free hit's fifteen and every later signing or sale."""
+    on, off = whatif.on, whatif.off
+    later = [
+        pid
+        for side in (on, off)
+        for move in side.path.moves
+        for pid in (*move.transfers_in, *move.transfers_out)
+    ]
+    return list(dict.fromkeys([
+        *week.effective.squad.player_ids,
+        *on.plan.squad,
+        *(on.path.week1_freehit_squad or []),
+        *off.plan.squad,
+        *later,
+    ]))
 
 
 def _if_played(whatif: "WhatIf", board: _Board) -> str:
