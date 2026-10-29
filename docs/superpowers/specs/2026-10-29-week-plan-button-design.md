@@ -43,6 +43,7 @@ The order and contents come from the FPL expert's recommendation, trimmed to wha
 - Header: `📋 GW9 week plan · as of Wed scout run 23:35 · deadline Sat 11:00 (Irish time)`.
 - **What changed since the last run**, only when something did, as the detailed report's `what_changed` bullets (capped at about 6, then "+N more").
 - **The action card:** the snapshot's `do_this`, verbatim. That's the chip banner, the "Do this" checklist with selling prices, captain and vice, and the lineup.
+  - **Fallback when `do_this` is absent.** Snapshots written before PR #23, including every committed one today, have no `do_this`. Build a plain card from the snapshot instead: the chosen plan's out and in, priced (`_priced`); the chip; captain and vice; the XI by position; and the bench in order. Label it "Action card (the gameweek report has the full checklist)".
 - A one-line summary: `1 FT used, 0 banked next week · bank £3.7m · no hit`.
 
 ### 2 · Team news
@@ -60,6 +61,7 @@ Only for the players who matter: the XI and bench first, then the planned target
 - **Runner-up:** the best non-chosen plan and its margin, plus rolling the transfer and its margin, from the options table: `Next best: +Konsa for a hit, 1.6 behind · Rolling: 1.9 behind`.
 - **Captain:** captain, vice and the two rivals with their window and this-week xP, from "Captain and vice".
 - **Skipped:** the two or three highest-gain transfers that were passed over, each with the reason given in the report.
+- **Phase 2 slot:** when the snapshot's `reasons` carries `triggers` (decision points, "what would change my mind"), print them here under "What would change the plan". The slot costs nothing today, and it makes Phase 2 a data-only change.
 
 ### 4 · The road ahead and chips
 
@@ -74,9 +76,9 @@ Only for the players who matter: the XI and bench first, then the planned target
 - **The squad's week-by-week projected total over the window:** `GW9 54.3 · GW10 64.9 · …`, with a note that GW+4 to GW+6 are softer.
 - **One line per XI player and planned target:** opponents and home/away across the window, then his window total. `Haaland  BHA nfo FUL ars LEE bre — 32.9`. Home is upper case and away lower case, as in the report.
 - **Blanks and doubles** marked: `—` for a blank, `+` joining a double.
-- **One "swing" line**, worked out from the data: the club whose fixtures turn most, best to worst or the reverse, between the first and last three weeks, among the squad's clubs. Leave it out when nothing turns sharply.
+- The fixture strip is new, written in `weekplan.py`. The detailed report's `_cell` prints `LEE(h) 4.12` per week, which is too wide for a phone, so it isn't reused.
 
-Price watch isn't in the snapshot today, so it moves to Phase 2.
+The FPL expert's "fixture swing" line is cut from v1. The snapshot holds opponents but not team strengths, so a swing line would be new analysis the report never prints, which breaks the non-goal and risks contradicting it. Price watch isn't in the snapshot either. Both move to Phase 2.
 
 ## How it works
 
@@ -85,17 +87,29 @@ Price watch isn't in the snapshot today, so it moves to Phase 2.
     - row 1: `Transfers made` / `Week plan`
     - row 2: `Wildcard?` / `Free hit?`
     - row 3: `Chip forecast` / `Help`
-  - Add `week plan` (and `plan`) to the inbox's `dispatch`, ahead of the question check. Without that, "plan?" would go to ask.
-  - Add a line to `HELP`.
-- **Source:** `latest_snapshot(state_dir)` for the next gameweek, plus that week's earlier snapshots from `load_snapshots` for "what changed". It's read under `state_lock`, as `ask` does, which says "report running" if the hourly tick holds the lock. If there's no snapshot for the coming gameweek, it falls back to the newest one and says so.
+  - Add `week plan` (and `plan`) to the inbox's `dispatch`, ahead of the question check. `normalise` strips "?", so "plan?" reaches it before `is_question`, and ask's own uses of "plan" are multi-word, so nothing collides.
+  - Update `HELP` and the inbox module docstring ("Four things" becomes five).
+- **Source and lock:**
+  - Read under `state_lock`, as `ask` does. The hourly tick's `git pull --rebase` rewrites `state/detailed/`, and the atomic write in `write_snapshot` covers only the orchestrator's own write, not that rewrite.
+  - Inside the lock, read the snapshots (`latest_snapshot` plus that gameweek's `load_snapshots`) and the executed record. Render outside it.
+  - If there's no snapshot for the coming gameweek, fall back to the newest one and say so.
+  - No network request: the deadline comes from the snapshot, not the bootstrap.
 - **Rendering:**
   - New module `aigaffer/weekplan.py`: a pure `render_week_plan(snapshots, now, executed) -> list[str]`, one string per text, plus the inbox handler `week_plan(cfg, sent_at, reply)`.
-  - It reuses the detailed renderer's helpers rather than parsing the markdown: `what_changed`, `_road_ahead` / `_planned`, `captain_rivals`, `settled` / `noted`, `chip_label`, `price`, and the cell format. The private ones become public.
-- **Sending:** each text goes through the inbox's `reply`, which is `send_message` and handles HTML escaping, splitting and the plain-text fallback. The handler returns None, as `chip_whatif` does. The keyboard rides on the last text.
+  - It reuses the detailed renderer's helpers rather than parsing the markdown, made public under these exact names: `what_changed`, `captain_rivals`, `moves` (`_moves`), `chip` (`_chip`), `window` (`_window`), `name` (`_name`), `planned` (`_planned`), `priced` (`_priced`).
+  - It also uses `settled` / `noted`, `chip_label` and `price` from report/render.py.
+  - It does not reuse `_road_ahead` (markdown bullets plus the advisory) or `_cell` (too wide). `weekplan.py` writes its own lines from `planned` and the fixture strip.
+  - No shared layer: these are two pure readers of one dict.
+- **Sending:**
+  - Render all five texts first, then send each one through the inbox's `reply`. That's `send_message`, which handles HTML escaping, splitting and the plain-text fallback, and attaches the keyboard to every reply.
+  - The handler returns None, as `chip_whatif` does. If rendering fails, nothing is sent, so the inbox's one retry (the failed marker) can't double-send a half-finished series.
+  - Add an apology for week plan: the inbox picks its apology before dispatch (`inbox.py` ~243–248), so without a new branch a failure would get the ask apology.
 - **Freshness checks:**
+  - The snapshot's `ts` and `deadline` are `DEADLINE_FORMAT` strings with minute precision, and `Executed.recorded_at` is ISO. Parse both and compare in UTC.
   - If an executed record ("Transfers made") is newer than the snapshot, text 1 says: "You've entered moves since this run; the next report works from your squad."
-  - If the snapshot's gameweek deadline has passed, it says the plan is for a gameweek now underway.
-- **Failure:** the inbox's existing failed-marker retry and apology apply. Rendering is pure, so tests can feed it the committed GW8 and GW9 snapshots.
+  - If the snapshot's deadline is before `sent_at`, it says the plan is for a gameweek now underway.
+  - A snapshot without `deadline` skips that check and says "deadline unknown". It never raises.
+- **Times:** shown in Irish time (Europe/Dublin), as `chip_forecast` does.
 
 ## Phase 2 (not in v1, listed so v1 leaves room)
 
@@ -104,13 +118,17 @@ Price watch isn't in the snapshot today, so it moves to Phase 2.
 3. **Price watch in the snapshot**, for owned players and planned targets: likely rise or fall tonight, and a "transfer before about 01:30" line.
 4. **Captain ownership / effective ownership and the template gap.** This needs ownership data beyond `selected_by_percent`, and is worth it only if the owner plays for rank.
 5. **Confidence per road-ahead move**, as in FPL Review's sensitivity: how often a move survives nearby alternatives.
+6. **A fixture-swing line** ("our attack's fixtures turn GW12"). It needs per-fixture team strengths stored in the snapshot, so that the report and the week plan can both print it from the same data.
 
 ## Testing
 
 - `render_week_plan` on hand-built snapshot dicts, in the style of `test_detailed_render.py`:
   - each text's contents and order
   - "changes" left out when nothing changed
-  - old snapshots without `do_this` or `hits`
+  - old snapshots without `do_this` or `hits` (the fallback action card)
+  - a hand-built snapshot with a long `do_this`, to exercise the length limit
+  - the week plan apology on failure
+  - `triggers` printed when `reasons` carries them
   - a solver-only run (no rationale blocks)
   - a free-hit week
   - the stale-snapshot and entered-moves notices
@@ -121,14 +139,16 @@ Price watch isn't in the snapshot today, so it moves to Phase 2.
 ## Left to the builder
 
 - Exact wording and emoji. Keep to the house voice of the existing digest.
-- The thresholds: 65-minute flag, 6 change bullets, 3 skipped transfers, and the cut-off for the swing line.
+- The thresholds: 65-minute flag, 6 change bullets, 3 skipped transfers.
 - Whether "Week plan" also accepts `wp`.
 
-## Example (GW9, from the committed scout snapshot, abridged)
+## Example (GW9, illustrative, abridged)
 
-> **1/5** 📋 GW9 week plan · as of Wed scout run 23:35 · deadline Sat 31 Oct 11:00
+The committed GW9 snapshot predates `do_this`, so text 1 would show the fallback card. Below is what a post-#23 snapshot would give.
+
+> **1/5** 📋 GW9 week plan · as of Wed scout run 23:35 · deadline Sat 31 Oct 11:00 (Irish time)
 > Changed since Monday: chip now Triple Captain · Calafiori 25→15 min · Rice 86→70 min · …
-> ⏰ Make these by Sat 31 Oct 11:00 UTC — GW9 / SELL Calafiori … → BUY Gabriel … / CAPTAIN Haaland · VICE Mbeumo / Set lineup (3-5-2): …
+> ⏰ Make these by Sat 31 Oct 11:00 — GW9 / SELL Calafiori … → BUY Gabriel … / CAPTAIN Haaland · VICE Mbeumo / Set lineup (3-5-2): …
 >
 > **2/5** Team news — Calafiori (hip) out of Fleetwood tie, "genuine concern" for Anfield → sold. Rice trained Monday, 70 min. Thomas forced off, 35 min, benched. João Pedro out "a few weeks". ⚠️ Not checked: Man Utd, Hull, Everton, Bournemouth, Leeds.
 >
