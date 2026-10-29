@@ -85,7 +85,7 @@ LOCAL_ZONE = ZoneInfo("Europe/Dublin")
 LOW_MINUTES = 65  # under this many projected minutes, a player is flagged
 MAX_CHANGES = 6  # change bullets shown before "+N more"
 MAX_SKIPPED = 3  # passed-over transfers shown
-MAX_REASON = 160  # characters of a news string or reason in a flag line
+MAX_REASON = 240  # characters a flag line or reason may run to, ending on a sentence
 SOFTER_FROM = 4  # window weeks from this index on are the softer ones
 
 TEXTS = 5
@@ -346,9 +346,33 @@ def _flags(cur: dict) -> list[str]:
 
 
 def _short(text: str | None) -> str:
-    """One line, no longer than :data:`MAX_REASON`."""
+    """One line, ending where a sentence ends.
+
+    A cut at a fixed width left the gaffer's reasons stopping mid-word
+    ("doesn't justi…"), which reads as a fault. So whole sentences are kept
+    while the running total stays within :data:`MAX_REASON`. If even the first
+    sentence is longer than that, it is cut at the last word boundary before
+    the limit and closed with "…": a word is never split. Text that fits is
+    returned as it came, apart from the whitespace being flattened to one line.
+    """
     flat = " ".join((text or "").split())
-    return flat if len(flat) <= MAX_REASON else flat[: MAX_REASON - 1].rstrip() + "…"
+    if len(flat) <= MAX_REASON:
+        return flat
+    kept = ""
+    for sentence in re.split(r"(?<=[.!?])\s+", flat):
+        joined = f"{kept} {sentence}" if kept else sentence
+        if len(joined) > MAX_REASON:
+            break
+        kept = joined
+    if kept:
+        return kept
+    # One long first sentence: leave room for the ellipsis, then back up to a
+    # space so that no word is split. A single unbroken word longer than the
+    # limit has no space to back up to, and is cut where it stands.
+    room = flat[: MAX_REASON - 1]
+    if not flat[MAX_REASON - 1].isspace() and " " in room:
+        room = room.rsplit(" ", 1)[0]
+    return room.rstrip() + "…"
 
 
 # --- Text 3: why this plan --------------------------------------------------
@@ -425,10 +449,27 @@ def _runner_up(cur: dict) -> str:
 
 
 def _describe(cur: dict, plan: dict, chosen: dict) -> str:
-    """What ``plan`` does that the chosen plan does not: the men it buys that
-    he does not, else everything it buys, and the hits it costs."""
-    extra = [pid for pid in plan["in"] if pid not in chosen["in"]] or plan["in"]
-    bought = ", ".join(f"+{name(cur, pid)}" for pid in extra) or "a different road ahead"
+    """What ``plan`` does that the chosen plan does not, and the hits it costs.
+
+    The men it buys that he does not. If it buys the same men (it differs only
+    in what it sells, or in its later road ahead), the men it sells that he
+    does not, written ``-Name``. If both are the same, the plans differ only
+    in the moves planned for later weeks, and the line says so rather than
+    naming a man the chosen plan already has.
+    """
+    extra = [pid for pid in plan["in"] if pid not in chosen["in"]]
+    if not extra and set(plan["in"]) != set(chosen["in"]):
+        extra = plan["in"]  # it buys only some of his men: say which
+    if extra:
+        bought = ", ".join(f"+{name(cur, pid)}" for pid in extra)
+    else:
+        sold = [pid for pid in plan["out"] if pid not in chosen["out"]]
+        if not sold and set(plan["out"]) != set(chosen["out"]):
+            sold = plan["out"]
+        bought = (
+            ", ".join(f"-{name(cur, pid)}" for pid in sold)
+            or "same moves, a different road ahead"
+        )
     if plan["hits"]:
         bought += " for a hit" if plan["hits"] == 1 else f" for {plan['hits']} hits"
     return bought

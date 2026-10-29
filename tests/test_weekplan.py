@@ -380,6 +380,46 @@ def test_a_solver_only_run_has_no_research_to_show():
     assert detailed.NO_GAFFER in out[2], "text 3 says whose pick it is"
 
 
+# --- Reasons end on a sentence -----------------------------------------------
+
+
+def test_a_short_reason_is_left_alone():
+    assert weekplan._short("Limped off in training.") == "Limped off in training."
+    assert weekplan._short("  two   spaces\nand a newline ") == "two spaces and a newline"
+    assert weekplan._short(None) == ""
+
+
+def test_whole_sentences_are_kept_while_they_fit():
+    # 120 + 1 + 100 = 221 characters: two sentences within 240 stay whole, and
+    # the third (which would take it to 332) is dropped with its full stop.
+    first = "A" * 119 + "."
+    second = "B" * 99 + "."
+    third = "C" * 110 + "."
+
+    assert weekplan._short(f"{first} {second} {third}") == f"{first} {second}"
+
+
+def test_a_long_first_sentence_is_cut_at_a_word_with_an_ellipsis():
+    words = " ".join(["justify"] * 60)  # 479 characters, no stop
+
+    out = weekplan._short(words + ". Then more.")
+
+    assert out.endswith("justify…")
+    assert len(out) <= weekplan.MAX_REASON
+    assert set(out.rstrip("…").split()) == {"justify"}
+
+
+def test_no_cut_ever_lands_inside_a_word():
+    # Words of every length from 3 to 12, so the limit falls inside a word at
+    # some offset whatever the starting point.
+    for start in range(10):
+        words = [("w" * (3 + (i + start) % 10)) + str(i) for i in range(80)]
+        out = weekplan._short(" ".join(words))
+        assert out.endswith("…")
+        assert len(out) <= weekplan.MAX_REASON
+        assert out[:-1].split() == words[: len(out[:-1].split())], out
+
+
 # --- Text 3: why this plan --------------------------------------------------
 
 
@@ -426,6 +466,36 @@ def test_when_the_chosen_plan_is_rolling_only_the_next_best_is_shown():
 
     assert "Next best: +Cucurella, 0.5 behind" in third
     assert "Rolling" not in third
+
+
+def test_a_rival_that_buys_the_same_men_but_sells_another_names_the_sale():
+    # Chosen sells Justin (4) for Cucurella (7), nets 19.0. Plan 2 buys the
+    # same man but sells Salah (2) instead, nets 17.5: 1.5 behind. It buys
+    # nothing the chosen plan does not, so the line names what it sells that
+    # the chosen plan keeps: -Salah.
+    board = snap(plans={0: plan([7], [4]), 2: plan([7], [2], net=17.5)})
+
+    assert "Next best: -Salah, 1.5 behind" in texts(board)[2]
+
+
+def test_a_rival_with_the_same_moves_says_only_its_road_ahead_differs():
+    # Plan 2 buys Cucurella for Justin exactly as the chosen plan does and nets
+    # 18.2, 0.8 behind: it differs only in its later weeks. It must not name
+    # Cucurella, whom the chosen plan already buys.
+    board = snap(plans={0: plan([7], [4]), 2: plan([7], [4], net=18.2)})
+
+    third = texts(board)[2]
+
+    assert "Next best: same moves, a different road ahead, 0.8 behind" in third
+    assert "Next best: +Cucurella" not in third
+
+
+def test_a_rival_that_buys_other_men_names_only_the_extra_buys():
+    # Chosen buys Cucurella (7). Plan 2 buys Cucurella and Xhaka (5) for a hit
+    # and nets 17.4: only Xhaka is what it buys that the chosen plan does not.
+    board = snap(plans={0: plan([7], [4]), 2: plan([7, 5], [4, 2], hits=1, net=17.4)})
+
+    assert "Next best: +Xhaka for a hit, 1.6 behind" in texts(board)[2]
 
 
 def test_the_armbands_carry_the_window_and_this_weeks_xp():
