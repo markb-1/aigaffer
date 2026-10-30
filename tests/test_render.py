@@ -81,7 +81,10 @@ from aigaffer.report.render import (
     render_reminder_digest,
     render_withheld,
     render_report,
+    _recommendation,
+    _watchlist,
 )
+from aigaffer.report.transfer_card import WILDCARD_POINTER, CardInputs
 from aigaffer.solver.calendar import (
     CalendarEntry,
     ChipCalendar,
@@ -539,6 +542,21 @@ def test_the_action_block_is_a_terminal_checklist():
         "⏰ Make these by Fri 22 Aug 2025 17:30 UTC — GW2",
         "SELL Gale (DEF CRV £4.0m) → BUY Reid (FWD CRV £9.5m)",
         "CAPTAIN Hume · VICE Moss",
+    ]
+
+
+def test_checklist_pairs_sales_and_buys_by_position():
+    # Out: Fenn (6, DEF) and Lang (12, MID). In: Pike (16, MID) and Quinn
+    # (17, DEF). Both lists are sorted, so a plain zip would read Fenn -> Pike
+    # and Lang -> Quinn, a defender for a midfielder. Like for like it is
+    # Fenn -> Quinn (DEF) and Lang -> Pike (MID).
+    crossed = replace(ONE, transfers_out=[6, 12], transfers_in=[16, 17])
+
+    swaps = [line for line in section(report(choice=crossed), "Do this") if "→" in line]
+
+    assert swaps == [
+        "SELL Fenn (DEF BRW £4.5m) → BUY Quinn (DEF BRW £5.5m)",
+        "SELL Lang (MID BRW £5.5m) → BUY Pike (MID ASH £8.0m)",
     ]
 
 
@@ -1132,14 +1150,124 @@ def test_the_watchlist_is_the_five_best_players_the_plan_leaves_behind():
     # Hume is the best player on the board and never appears: we own him.
     # Reid does not either — the plan just bought him. Gale, whom it sold,
     # is back on the list, and Ubaldi is the sixth best and misses the cut.
+    #
+    # The figure is the plain window sum, six gameweeks of round(points / 6, 1):
+    # Pike 6.9 x 6 = 41.4, Salas 6.3 x 6 = 37.8, Quinn 5.5 x 6 = 33.0,
+    # Tovey 3.7 x 6 = 22.2, Gale 1.7 x 6 = 10.2.
     watchlist = bullets(report(), "Watchlist")
 
     assert watchlist == [
-        "- Pike (MID, ASH, £8.0m) — 41.5 xP",
-        "- Salas (MID, ASH, £6.5m) — 38.0 xP",
+        "- Pike (MID, ASH, £8.0m) — 41.4 xP",
+        "- Salas (MID, ASH, £6.5m) — 37.8 xP",
         "- Quinn (DEF, BRW, £5.5m) — 33.0 xP",
-        "- Tovey (GKP, BRW, £5.0m) — 22.0 xP",
-        "- Gale (DEF, CRV, £4.0m) — 10.0 xP",
+        "- Tovey (GKP, BRW, £5.0m) — 22.2 xP",
+        "- Gale (DEF, CRV, £4.0m) — 10.2 xP",
+    ]
+
+
+def test_watchlist_ranks_and_prints_plain_window_sums():
+    # Front has the bigger decayed total (30.0) but the smaller plain sum
+    # (3 x 4.0 = 12.0); Back is the reverse (3 x 5.0 = 15.0, total 20.0). The
+    # card prints plain sums, so the watchlist ranks Back first and prints 15.0.
+    players = {
+        1: element(1, "Front", ASH, DEF, 50),
+        2: element(2, "Back", BRW, DEF, 50),
+    }
+    projections = {
+        1: PlayerProjection(player_id=1, per_gw={2: 8.0, 3: 3.0, 4: 1.0}, total=30.0),
+        2: PlayerProjection(player_id=2, per_gw={2: 1.0, 3: 5.0, 4: 9.0}, total=20.0),
+    }
+    clubs = {ASH: "ASH", BRW: "BRW"}
+
+    text = _watchlist([], players, clubs, projections)
+
+    assert text.splitlines()[2:] == [
+        "- Back (DEF, BRW, £5.0m) — 15.0 xP",
+        "- Front (DEF, ASH, £5.0m) — 12.0 xP",
+    ]
+
+
+# --- the transfer cards in the recommendation -------------------------------
+#
+# ONE sells Gale (7, DEF CRV, listed 40, no ledger price) for Reid (18, FWD
+# CRV, 95) with a bank of 80 before the move: 80 + 40 - 95 = 25, £2.5m left.
+# Window GW2-GW3. Gale: ASH(h) 1.0, brw(a) 2.0, sum 3.0. Reid: 4.0, 5.0, sum
+# 9.0. This week 4.0 - 1.0 = +3.0; over two weeks 9.0 - 3.0 = +6.0.
+
+CARD_ROWS = {
+    7: {"n": "Gale", "p": "DEF", "c": "CRV", "cf": "Corvus", "pr": 40, "sp": None,
+        "f": {2: [["ASH", "h"]], 3: [["BRW", "a"]]}, "x": {2: 1.0, 3: 2.0}},
+    18: {"n": "Reid", "p": "FWD", "c": "CRV", "cf": "Corvus", "pr": 95, "sp": None,
+         "f": {2: [["ASH", "h"]], 3: [["BRW", "a"]]}, "x": {2: 4.0, 3: 5.0}},
+}
+CARDS = CardInputs(CARD_ROWS, [2, 3], SQUAD, 80)
+CARD = "\n".join([
+    "Gale → Reid · FWD · £9.5m (bank £2.5m left)",
+    "Out  ASH 1.0 · brw 2.0 = 3.0",
+    "In   ASH 4.0 · brw 5.0 = 9.0",
+    "+3.0 this week, +6.0 over 2 weeks",
+])
+
+
+def test_digest_carries_the_card_under_recommendation():
+    text = render_digest("deadline", EVENT, ONE, LINEUP, BOOTSTRAP, free_transfers=1,
+                         cards=CARDS)
+
+    # The digest has no gaffer here, so the pointer line is the section's tail.
+    assert section(text, "Recommendation")[:5] == ["1 transfer, no hit.", *CARD.splitlines()]
+    assert "- Out:" not in text
+
+
+def test_full_report_carries_the_same_card_text_as_the_digest():
+    full = render_report("scout", EVENT, PLANS, ONE, LINEUP, CHIPS, BOOTSTRAP, XP,
+                         free_transfers=1, cards=CARDS)
+    phone = render_digest("scout", EVENT, ONE, LINEUP, BOOTSTRAP, free_transfers=1,
+                          cards=CARDS)
+
+    assert CARD in full
+    assert CARD in phone
+    assert "- In:" not in full
+
+
+def test_without_cards_the_bullets_are_unchanged():
+    assert section(report(), "Recommendation") == [
+        "1 transfer, no hit.",
+        "- Out: Gale (DEF, CRV, £4.0m)",
+        "- In: Reid (FWD, CRV, £9.5m)",
+    ]
+    assert report() == render_report("scout", EVENT, PLANS, ONE, LINEUP, CHIPS, BOOTSTRAP,
+                                     XP, free_transfers=1, cards=None, selling_prices=None)
+
+
+def test_a_card_with_a_missing_row_falls_back_to_the_bullets():
+    bought = ONE.transfers_in[0]
+    holed = CARDS._replace(rows={pid: r for pid, r in CARDS.rows.items() if pid != bought})
+
+    text = render_digest("deadline", EVENT, ONE, LINEUP, BOOTSTRAP, free_transfers=1,
+                         cards=holed)
+
+    assert section(text, "Recommendation")[:3] == [
+        "1 transfer, no hit.",
+        "- Out: Gale (DEF, CRV, £4.0m)",
+        "- In: Reid (FWD, CRV, £9.5m)",
+    ]
+
+
+def test_wildcard_keeps_the_bullets_and_adds_the_pointer():
+    players = BOOTSTRAP_PLAYERS
+    clubs = {team.id: team.short_name for team in BOOTSTRAP.teams}
+
+    lines = _recommendation(ONE, players, clubs, cards=CARDS, chip=WILDCARD).splitlines()
+
+    assert lines == [
+        "## Recommendation",
+        "",
+        "1 transfer, no hit.",
+        "",
+        "- Out: Gale (DEF, CRV, £4.0m)",
+        "- In: Reid (FWD, CRV, £9.5m)",
+        "",
+        WILDCARD_POINTER.format(count=1),
     ]
 
 

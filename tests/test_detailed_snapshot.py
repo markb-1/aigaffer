@@ -29,6 +29,7 @@ id  name     club  pos  price  part
 ==  =======  ====  ===  =====  =========================================
 """
 
+import copy
 import json
 from datetime import UTC, datetime
 
@@ -40,6 +41,7 @@ from aigaffer.detailed.snapshot import (
     build_snapshot,
     latest_snapshot,
     load_snapshots,
+    player_rows,
     snapshot_path,
     write_snapshot,
 )
@@ -186,18 +188,38 @@ DECISION = {
 
 
 def snapshot(**overrides) -> dict:
-    """``build_snapshot`` on the board above, with any argument replaced."""
+    """``build_snapshot`` on the board above, with any argument replaced.
+
+    The rows come from ``player_rows``, as the orchestrator builds them, so
+    the row inputs (``bootstrap``, ``fixtures``, ``xmins``, ``projected_ids``,
+    ``selling_prices``) are overridable here though they are no longer
+    arguments of ``build_snapshot`` itself.
+    """
+    row_arguments = dict(
+        bootstrap=BOOTSTRAP,
+        fixtures=FIXTURES,
+        xmins=XMINS,
+        projected_ids=PROJECTED,
+        selling_prices={1: 99, 2: 55, 4: 45},
+    )
+    for key in row_arguments:
+        row_arguments[key] = overrides.pop(key, row_arguments[key])
+    squad_ids = overrides.get("squad_ids", SQUAD)
+    projections = overrides.get("projections", PROJECTIONS)
     arguments = dict(
         event=EVENT,
         mode="early",
         ts="2026-10-21T07:00:00+00:00",
-        bootstrap=BOOTSTRAP,
-        fixtures=FIXTURES,
-        projections=PROJECTIONS,
-        xmins=XMINS,
-        projected_ids=PROJECTED,
+        projections=projections,
+        players=player_rows(
+            bootstrap=row_arguments["bootstrap"],
+            fixtures=row_arguments["fixtures"],
+            projections=projections,
+            xmins=row_arguments["xmins"],
+            ids=set(row_arguments["projected_ids"]) | set(squad_ids),
+            selling_prices=row_arguments["selling_prices"],
+        ),
         squad_ids=SQUAD,
-        selling_prices={1: 99, 2: 55, 4: 45},
         plans={0: SWAP, 1: ROLL},
         chosen_id=0,
         decision=DECISION,
@@ -294,6 +316,51 @@ def test_a_squad_player_without_a_projection_is_named():
 
     with pytest.raises(ValueError, match=r"\b4\b"):
         snapshot(projections=projections)
+
+
+def test_player_rows_skips_unprojected_and_rounds():
+    # Player 3 is asked for but has no projection, so he has no row. Player 1's
+    # gameweek-8 xP is 4.123, kept to two decimals: 4.12.
+    projections = {pid: p for pid, p in PROJECTIONS.items() if pid != 3}
+
+    rows = player_rows(
+        bootstrap=BOOTSTRAP,
+        fixtures=FIXTURES,
+        projections=projections,
+        xmins=XMINS,
+        ids={1, 3},
+        selling_prices=None,
+    )
+
+    assert list(rows) == [1]
+    assert rows[1]["x"][8] == 4.12
+    assert rows[1]["sp"] is None
+
+
+def test_build_snapshot_names_a_squad_player_missing_from_rows():
+    rows = snapshot()["players"]
+    del rows[4]
+
+    with pytest.raises(ValueError, match=r"\b4\b"):
+        build_snapshot(
+            event=EVENT, mode="early", ts="t", projections=PROJECTIONS, players=rows,
+            squad_ids=SQUAD, plans={0: SWAP, 1: ROLL}, chosen_id=0, decision=DECISION,
+            chip_evs={}, calendar_lines=[], freehit=None, bank=13, shortlist=2,
+        )
+
+
+def test_build_snapshot_leaves_the_rows_it_is_given_untouched():
+    # The digest holds the same dict, so the snapshot must not edit it.
+    rows = snapshot()["players"]
+    before = copy.deepcopy(rows)
+
+    build_snapshot(
+        event=EVENT, mode="early", ts="t", projections=PROJECTIONS, players=rows,
+        squad_ids=SQUAD, plans={0: SWAP, 1: ROLL}, chosen_id=0, decision=DECISION,
+        chip_evs={}, calendar_lines=[], freehit=None, bank=13, shortlist=2,
+    )
+
+    assert rows == before
 
 
 # --- the plans and the decision --------------------------------------------

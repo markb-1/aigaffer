@@ -28,6 +28,7 @@ on the way in, so a snapshot read from disk is the snapshot that was built.
 import json
 import os
 import re
+from collections.abc import Iterable
 from pathlib import Path
 
 from aigaffer.data.models import Bootstrap, Event, Fixture
@@ -53,18 +54,69 @@ _FILE = re.compile(r"gw(\d+)-([a-z]+)\.json")
 SOLVER = "solver"
 
 
+def player_rows(
+    *,
+    bootstrap: Bootstrap,
+    fixtures: list[Fixture],
+    projections: dict[int, PlayerProjection],
+    xmins: dict[int, float],
+    ids: Iterable[int],
+    selling_prices: dict[int, int] | None,
+) -> dict[int, dict]:
+    """One row per player the run projected: the snapshot's ``players``.
+
+    Lifted out of :func:`build_snapshot` so that the run builds the rows once
+    and hands the same dict to the phone's digest, the full report and the
+    snapshot. Each card then reads numbers rounded in one place and cannot
+    come out a tenth from the Week plan's. ``projections`` and ``xmins`` are
+    the ones the decision was costed on, so the xP beside a player is the xP
+    the plan was chosen on.
+
+    It is total: an id with no bootstrap element or no projection is left out
+    rather than raised on, because the digest must never fail to send over a
+    missing row. A squad player missing is a bug, and :func:`build_snapshot`
+    is where that is reported.
+    """
+    events = projected_events(projections)
+    clubs = {team.id: team for team in bootstrap.teams}
+    elements = {element.id: element for element in bootstrap.elements}
+    opponents = club_opponents(fixtures, clubs, set(events))
+    prices = selling_prices or {}
+
+    players = {}
+    for pid in sorted(set(ids)):
+        element = elements.get(pid)
+        projection = projections.get(pid)
+        if element is None or projection is None:
+            continue
+        club = clubs[element.team]
+        players[pid] = {
+            "n": element.web_name,
+            "p": POSITIONS.get(element.element_type, "?"),
+            "c": club.short_name,
+            "cf": club.name,
+            "pr": element.now_cost,
+            "sp": prices.get(pid),
+            "st": element.status,
+            "nw": element.news,
+            "xm": round(xmins.get(pid, 0.0), 1),
+            # Every window gameweek, a blank as an empty list: a missing key
+            # would read as "not looked at" where the truth is "no game".
+            "f": {gw: [list(o) for o in opponents.get((gw, element.team), [])] for gw in events},
+            "x": {gw: round(projection.per_gw.get(gw, 0.0), 2) for gw in events},
+            "t": round(projection.total, 2),
+        }
+    return players
+
+
 def build_snapshot(
     *,
     event: Event,
     mode: str,
     ts: str,
-    bootstrap: Bootstrap,
-    fixtures: list[Fixture],
     projections: dict[int, PlayerProjection],
-    xmins: dict[int, float],
-    projected_ids: set[int],
+    players: dict[int, dict],
     squad_ids: list[int],
-    selling_prices: dict[int, int] | None,
     plans: dict[int, Plan],
     chosen_id: int,
     decision: dict,
@@ -78,9 +130,12 @@ def build_snapshot(
 ) -> dict:
     """The run, as one JSON-ready dict.
 
-    ``projections`` and ``xmins`` are the ones the decision was costed on —
-    the gaffer's re-solve's when he re-solved — so the xP beside a player is
-    the xP the plan was chosen on. ``plans`` is the registry he finalized
+    ``players`` is the row dict :func:`player_rows` built, handed in rather
+    than rebuilt here so that the phone's transfer cards and this file read
+    one set of rows, rounded once. It is stored as given and never mutated.
+    ``projections`` are the ones the decision was costed on — the gaffer's
+    re-solve's when he re-solved — and are read here only for the window's
+    gameweeks and the plans' events. ``plans`` is the registry he finalized
     against (the solver's shortlist on a run with no gaffer), and
     ``shortlist`` is how many of its ids the briefing printed: every id at or
     above it came from a re-solve, which is how a plan is marked ``resolved``
@@ -106,50 +161,20 @@ def build_snapshot(
     chosen plan's squad on an ordinary week, the free hit's own on a free-hit
     week, since the standing squad is not the team that plays then.
 
-    Raises ValueError for a squad player with no projection: the squad table
-    is the report's spine, and a man missing from it should be named here
-    rather than surface as a KeyError three modules later. Squad ⊆ the history
-    pool makes it impossible today; the check is what keeps it so. A player
-    in ``projected_ids`` with no projection or no bootstrap row is left out
-    instead — a smaller pool is a smaller answer, not a broken one.
+    Raises ValueError for a squad player with no row: the squad table is the
+    report's spine, and a man missing from it should be named here rather than
+    surface as a KeyError three modules later. Squad ⊆ the history pool makes
+    it impossible today; the check is what keeps it so. :func:`player_rows` is
+    total and leaves such a man out, so the check lives here, where a snapshot
+    is actually written, and not in the builder the phone's digest also calls.
     """
     if chosen_id not in plans:
         raise ValueError(f"the chosen plan {chosen_id} is not among the plans {sorted(plans)}")
-    missing = [pid for pid in squad_ids if pid not in projections]
+    missing = [pid for pid in squad_ids if pid not in players]
     if missing:
-        raise ValueError(f"squad players with no projection: {missing}")
+        raise ValueError(f"squad players with no projection or no bootstrap row: {missing}")
 
     events = projected_events(projections)
-    clubs = {team.id: team for team in bootstrap.teams}
-    elements = {element.id: element for element in bootstrap.elements}
-    opponents = club_opponents(fixtures, clubs, set(events))
-    prices = selling_prices or {}
-
-    players = {}
-    for pid in sorted(set(projected_ids) | set(squad_ids)):
-        element = elements.get(pid)
-        projection = projections.get(pid)
-        if element is None or projection is None:
-            if pid in squad_ids:
-                raise ValueError(f"squad player {pid} is not on the bootstrap")
-            continue
-        club = clubs[element.team]
-        players[pid] = {
-            "n": element.web_name,
-            "p": POSITIONS.get(element.element_type, "?"),
-            "c": club.short_name,
-            "cf": club.name,
-            "pr": element.now_cost,
-            "sp": prices.get(pid),
-            "st": element.status,
-            "nw": element.news,
-            "xm": round(xmins.get(pid, 0.0), 1),
-            # Every window gameweek, a blank as an empty list: a missing key
-            # would read as "not looked at" where the truth is "no game".
-            "f": {gw: [list(o) for o in opponents.get((gw, element.team), [])] for gw in events},
-            "x": {gw: round(projection.per_gw.get(gw, 0.0), 2) for gw in events},
-            "t": round(projection.total, 2),
-        }
 
     bench = list(decision.get("bench", []))
     fielded = freehit[0] if freehit is not None else plans[chosen_id].squad

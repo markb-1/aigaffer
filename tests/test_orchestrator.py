@@ -37,7 +37,7 @@ from aigaffer.config import Config
 from aigaffer.data.fpl_api import FplClient
 from aigaffer.data.models import GwHistory, Player
 from aigaffer.detailed.render import NO_GAFFER, REASON_UNAVAILABLE
-from aigaffer.detailed.snapshot import load_snapshots
+from aigaffer.detailed.snapshot import load_snapshots, player_rows
 from aigaffer.ledger import Observation
 from aigaffer.manager import agent
 from aigaffer.manager.agent import ManagerDecision
@@ -76,10 +76,12 @@ from aigaffer.report import render
 from aigaffer.recording import record_transfers_made
 from aigaffer.report.render import render_report, working_from
 from aigaffer.report.telegram import KEYBOARD, send_report
+from aigaffer.report.transfer_card import CardInputs
 from aigaffer.solver.calendar import CHIP_DISCOUNT
 from aigaffer.solver.lineup import Lineup, attacking_evs, pick_lineup
+from aigaffer.solver import multiweek
 from aigaffer.solver.multiweek import FALLBACK_BARS, PlannedPath
-from aigaffer.solver.optimizer import FORWARD, MIDFIELDER, Plan
+from aigaffer.solver.optimizer import FORWARD, MIDFIELDER, Plan, candidate_pool
 from aigaffer.store import Store
 from tests.test_manager_agent import FakeClient, reply, use
 from tests.fixtures import (
@@ -1064,8 +1066,27 @@ def test_the_fetch_gathers_everything_the_later_stages_need(seam):
 def test_the_stages_compose_to_the_report_the_pipeline_wrote(seam, scout_run):
     # The seam is a refactor, not a rewrite: fetch, project and solve in that
     # order still produce the report to the character.
-    _, projections = build_projections(seam.inputs, seam.cfg)
+    xmins, projections = build_projections(seam.inputs, seam.cfg)
     solved = solve(seam.inputs, projections, seam.cfg)
+    # The report also carries the transfer cards, which read the run's player
+    # rows; built here the way the run builds them (no gaffer, so the solver's
+    # own minutes and projections are the costed ones).
+    squad_ids = list(seam.inputs.squad.player_ids)
+    rows = player_rows(
+        bootstrap=seam.inputs.bootstrap,
+        fixtures=seam.inputs.fixtures,
+        projections=projections,
+        xmins=xmins,
+        ids=set(seam.inputs.histories)
+        | set(
+            candidate_pool(
+                seam.inputs.players, projections, squad_ids,
+                limit=multiweek.CANDIDATES_PER_POSITION,
+            )
+        )
+        | set(squad_ids),
+        selling_prices=None,
+    )
 
     report = render_report(
         "scout",
@@ -1076,6 +1097,9 @@ def test_the_stages_compose_to_the_report_the_pipeline_wrote(seam, scout_run):
         solved.chips,
         seam.inputs.bootstrap,
         projections,
+        cards=CardInputs(
+            rows, sorted(projected_events(projections)), squad_ids, seam.inputs.squad.bank
+        ),
     )
 
     assert report == scout_run.report
@@ -2203,7 +2227,9 @@ def test_the_report_is_costed_on_the_projections_he_decided_on(monkeypatch, tmp_
 
     report, _, _ = gaffer_run(monkeypatch, tmp_path, decide=re_costed, send=False)
 
-    assert bullets(report, "Watchlist")[0] == "- Reyes (MID, EAS, £9.5m) — 99.9 xP"
+    # The watchlist prints the plain window sum, his one gameweek of 9.9, not
+    # the decayed total (99.9) he was given.
+    assert bullets(report, "Watchlist")[0] == "- Reyes (MID, EAS, £9.5m) — 9.9 xP"
 
 
 def test_a_decision_with_no_projections_is_costed_by_the_solvers(
@@ -4979,6 +5005,45 @@ def test_a_gaffer_week_is_written_on_his_plan_his_armbands_and_his_minutes(
     assert snapshot["players"][GRANT]["xm"] == 0.0
     assert snapshot["decision"]["source"] == "manager"
     assert snapshot["decision"]["rationale"] == GAFFER_RATIONALE
+
+
+def test_run_passes_costed_rows_to_the_digest(monkeypatch, tmp_path):
+    # The gaffer re-solved with Grant playing a very different part: his
+    # projection is 9.99 a gameweek, nothing like the model's. The card's rows
+    # must be costed on his projections, the set the plan was chosen on, and
+    # the digest, the full report and the snapshot must all hold the one dict.
+    def his(consult):
+        decision = decided(consult)
+        base = consult.projections[GRANT]
+        decision.projections = {
+            **consult.projections,
+            GRANT: replace(base, per_gw={gw: 9.99 for gw in base.per_gw}),
+        }
+        decision.registry = dict(enumerate(consult.solve0.plans))
+        return decision
+
+    seen = {}
+    for name in ("render_report", "render_digest"):
+        real = getattr(orchestrator, name)
+
+        def spy(*args, _real=real, _name=name, **kwargs):
+            seen[_name] = kwargs["cards"]
+            return _real(*args, **kwargs)
+
+        monkeypatch.setattr(orchestrator, name, spy)
+    monkeypatch.setattr(orchestrator, "send_report", lambda *args, **kwargs: None)
+    stub_gaffer(monkeypatch, his)
+    cfg = replace(gaffer_cfg(tmp_path), telegram_token=TOKEN, telegram_chat_id="42")
+
+    run_pipeline(
+        cfg, make_client(pipeline_routes()), Store(tmp_path / "aigaffer.db"), "scout",
+        now=PAST_THE_FLOOR,
+    )
+    [snapshot] = load_snapshots(tmp_path / "state", 2)
+
+    assert seen["render_digest"].rows is seen["render_report"].rows
+    assert set(seen["render_digest"].rows[GRANT]["x"].values()) == {9.99}
+    assert seen["render_digest"].rows == snapshot["players"]
 
 
 def consult_index(gaffer: Gaffer, plan: Plan) -> int:
