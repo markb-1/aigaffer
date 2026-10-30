@@ -740,8 +740,13 @@ def test_the_committed_snapshots_render_five_texts_under_telegrams_limit(gw):
     assert all(0 < len(text) < 4000 for text in out)
 
 
+# Wednesday night's real GW9 runs, frozen: the live state/ moves on with every
+# run, and a test pinned to it goes red the first time the bot does its job.
+GW9_WEDNESDAY = Path(__file__).parent / "data" / "weekplan-gw9"
+
+
 def test_the_committed_gw9_plan_matches_the_gaffers_numbers():
-    out = render_week_plan(load_snapshots(REPO / "state", 9), NOW, None)
+    out = render_week_plan(load_snapshots(GW9_WEDNESDAY, 9), NOW, None)
 
     assert out[0].splitlines()[0] == (
         "1/5 · 📋 GW9 week plan · as of Wed scout run 23:35"
