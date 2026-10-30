@@ -17,6 +17,12 @@ road ahead come from the very helpers the detailed report prints them with
 shared layer between the two renderers on purpose: a layer would be a third
 thing to keep in step, and two readers of one dict cannot disagree about it.
 
+Text 3 opens with a card for each of the week's transfers
+(:mod:`aigaffer.report.transfer_card`): both players' fixtures with their
+projected points, the totals and the gain, and the next best alternatives,
+drawn from the snapshot's own rows, so it is the card the phone's digest
+showed. Text 1's bank is the one left after those same moves.
+
 Two things are new here and nowhere else. The fixture strip of text 5 is
 written for a phone (``BHA nfo FUL ars``), because the report's cell
 (``LEE(h) 4.12``) is too wide for one. And there is a fallback action card,
@@ -48,6 +54,7 @@ from zoneinfo import ZoneInfo
 
 from aigaffer.chips import FREE_HIT, WILDCARD
 from aigaffer.config import Config
+from aigaffer.data.schedule import phone_games
 from aigaffer.detailed.render import (
     NO_CHANGE,
     NO_GAFFER,
@@ -72,6 +79,7 @@ from aigaffer.report.render import (
     price,
     settled,
 )
+from aigaffer.report.transfer_card import CardInputs, bank_left, transfer_cards
 from aigaffer.statesync import REPORT_RUNNING, state_lock
 from aigaffer.store import EXECUTED_DIR, read_executed
 
@@ -246,10 +254,28 @@ def _bench(cur: dict) -> list[int]:
     return list(cur["bench"])
 
 
+def _bank_after(cur: dict, plan: dict) -> int:
+    """The bank once the chosen plan's moves are made, in tenths.
+
+    The card module's own :func:`~aigaffer.report.transfer_card.bank_left`.
+    A snapshot that holds no row for one of the men moved (it should not
+    happen; the rows are the projected set, which holds the squad and the
+    candidates) falls back to the bank before the moves rather than failing
+    the whole text.
+    """
+    cards = CardInputs(cur["players"], cur["events"], cur["squad"], cur["bank"])
+    if all(pid in cur["players"] for pid in [*plan["out"], *plan["in"]]):
+        return bank_left(cards, plan["out"], plan["in"])
+    return cur["bank"]
+
+
 def _summary(cur: dict) -> str:
-    """``1 FT used, 0 carried over · bank £3.7m · no hit`` — the week's
+    """``1 FT used, 0 carried over · bank £1.5m · no hit`` — the week's
     transfer bookkeeping on one line. A wildcard or free hit week touches no
-    free transfers, and says so instead of counting them."""
+    free transfers, and says so instead of counting them. The bank is the one
+    left after this week's moves (the card's figure, so the two cannot
+    disagree): it sits beside "1 FT used", and the snapshot's own ``bank`` is
+    the one before them, which read as the bank afterwards."""
     plan = cur["plans"][cur["chosen"]]
     hits = plan["hits"]
     parts = []
@@ -258,7 +284,7 @@ def _summary(cur: dict) -> str:
     elif cur.get("ft") is not None:
         used = max(0, len(plan["in"]) - hits)
         parts.append(f"{used} FT used, {max(0, cur['ft'] - used)} carried over")
-    parts.append(f"bank {price(cur['bank'])}")
+    parts.append(f"bank {price(_bank_after(cur, plan))}")
     parts.append(f"-{hits * HIT_POINTS} pts in hits" if hits else "no hit")
     return " · ".join(parts)
 
@@ -383,6 +409,16 @@ def _short(text: str | None) -> str:
 
 def _why(cur: dict) -> str:
     lines = [f"3/{TEXTS} · 🤔 Why this plan"]
+    plan = cur["plans"][cur["chosen"]]
+    # Each transfer's card first: the numbers that answer "but his fixtures
+    # look tough", before the gaffer's words about the week.
+    for card in transfer_cards(
+        CardInputs(cur["players"], cur["events"], cur["squad"], cur["bank"]),
+        plan["out"],
+        plan["in"],
+        chip(cur),
+    ):
+        lines += ["", *card.split("\n")]
     reasons = cur.get("reasons") or {}
     why = _block(cur["decision"].get("rationale") or "", "WHY THIS PLAN")
     if why:
@@ -406,7 +442,7 @@ def _why(cur: dict) -> str:
         lines += ["", "Passed over:"]
         lines += [
             f"• {name(cur, item['id'])} over {name(cur, item['replaces'])}"
-            f" ({item['gap']:+.1f}): {_short(notes.get(item['id']) or item['tag'])}"
+            f" ({item['gap']:+.1f} weighted): {_short(notes.get(item['id']) or item['tag'])}"
             for item in skipped
         ]
 
@@ -582,10 +618,7 @@ def _strip(cur: dict, pid: int) -> str:
     row = cur["players"][pid]
     cells = []
     for gw in cur["events"]:
-        games = row["f"].get(gw) or []
-        cells.append(
-            "+".join(opp if where == "h" else opp.lower() for opp, where in games) or "—"
-        )
+        cells.append(phone_games(row["f"].get(gw) or []))
     return f"{row['n']} {' '.join(cells)} — {window(cur, pid):.1f}"
 
 

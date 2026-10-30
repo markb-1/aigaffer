@@ -394,7 +394,7 @@ def test_a_skipped_row_gets_its_reason_and_a_missing_one_stays_blank():
 def test_transfers_pair_by_position_not_by_sorted_id():
     # Ids sorted: out [5, 9], in [3, 12]. Zipping would pair 5 (DEF) with
     # 3 (MID) and 9 (MID) with 12 (DEF). By position: DEF 5 -> DEF 12 and
-    # MID 9 -> MID 3 (listed strongest outgoing first: Emm 4.00, Dee 2.00).
+    # MID 9 -> MID 3 (listed by ascending outgoing id: Dee 5, then Emm 9).
     players = {
         **PLAYERS,
         5: row("Dee", "DEF", 50, [], [], 1.0, 1.0),
@@ -406,7 +406,7 @@ def test_transfers_pair_by_position_not_by_sorted_id():
 
     lines = what_changed(snap("early", "T1"), cur)
 
-    assert "Transfers: Emm → Emmtwo, Dee → Deetwo (was: Justin → Cucurella)" in lines
+    assert "Transfers: Dee → Deetwo, Emm → Emmtwo (was: Justin → Cucurella)" in lines
 
 
 def test_every_transfer_has_its_own_table():

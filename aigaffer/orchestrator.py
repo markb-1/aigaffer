@@ -114,6 +114,7 @@ from aigaffer.detailed.render import render_detailed
 from aigaffer.detailed.snapshot import (
     build_snapshot,
     load_snapshots,
+    player_rows,
     snapshot_path,
     write_snapshot,
 )
@@ -151,6 +152,7 @@ from aigaffer.report.render import (
     render_withheld,
 )
 from aigaffer.report.telegram import KEYBOARD, send_report
+from aigaffer.report.transfer_card import CardInputs
 from aigaffer.review import LastWeek, last_week as review_lessons
 from aigaffer.solver import multiweek
 from aigaffer.solver.calendar import (
@@ -268,6 +270,9 @@ OVERTAKEN = (
 # Said when the detailed report could not be built or written; the run goes
 # on without it, as it does without a ledger it could not write.
 DETAILED_SKIPPED = "detailed: report skipped ({reason})"
+# The transfer cards fall back to plain Out/In bullets when a man moved has no
+# row; the phone shows nothing wrong, so the log says it happened.
+CARDS_SKIPPED = "cards: a moved player has no projected row, so the recommendation printed bullets"
 # Said when the gaffer's reasons for the detailed report could not be added;
 # the report already written keeps "unavailable" in his slots, and the run
 # goes on. The reason is the writer's own (a stop reason, an error's class
@@ -608,6 +613,42 @@ def run_pipeline(
     lineup = _fielded_lineup(
         chip, choice, lineup, effective.players, costed, event.id, executed
     )
+    # The player rows, built once, here, on the projections the decision was
+    # costed on, and handed to the report, the digest and the snapshot alike:
+    # the card on the phone and the snapshot's Week plan then read numbers
+    # rounded in one place. None on a draft or with no squad, which have no
+    # transfer to explain. The builder is total, so it cannot fail the week.
+    rows = None
+    if not solved.draft_mode and effective.squad is not None:
+        squad_ids = list(effective.squad.player_ids)
+        rows = player_rows(
+            bootstrap=effective.bootstrap,
+            fixtures=effective.fixtures,
+            projections=costed,
+            xmins=_costed_minutes(xmins, gaffer),
+            ids=set(inputs.histories)
+            | set(
+                candidate_pool(
+                    effective.players,
+                    costed,
+                    squad_ids,
+                    limit=multiweek.CANDIDATES_PER_POSITION,
+                )
+            )
+            | set(squad_ids),
+            selling_prices=prices,
+        )
+    cards = (
+        None
+        if rows is None
+        else CardInputs(
+            rows, sorted(projected_events(costed)), squad_ids, effective.squad.bank
+        )
+    )
+    if rows is not None and any(
+        pid not in rows for pid in [*choice.transfers_out, *choice.transfers_in]
+    ):
+        print(CARDS_SKIPPED)
     report = render_report(
         _label(mode, drafting=solved.draft_mode),
         event,
@@ -631,6 +672,7 @@ def run_pipeline(
         selling_prices=prices,
         calendar=calendar,
         executed=executed,
+        cards=cards,
     )
     # Asked for, and not there at all. Not the same as the kill switch, no key
     # or a draft — those are choices, and the invariant is that they render
@@ -812,13 +854,16 @@ def run_pipeline(
         # and no transfer to explain — and never at the week's expense: the
         # GW report above is the verdict, and a snapshot that will not build
         # costs this file and one line on the log, as the ledger's write does.
-        if not solved.draft_mode and effective.squad is not None:
+        # The rows it keeps were built above, before the report, because the
+        # report's card reads them too; only the snapshot's own assembly is
+        # fail-soft.
+        if rows is not None:
             try:
                 _write_detailed(
                     cfg, event, mode,
                     _run_snapshot(
-                        cfg, mode, clock, inputs, effective, solved, gaffer,
-                        choice, costed, xmins, prices, calendar, chip, decision,
+                        cfg, mode, clock, effective, solved, gaffer,
+                        choice, costed, rows, calendar, chip, decision,
                         freehit_squad, freehit_xi,
                         # The gameweek report's own opening, from the same
                         # arguments render_report was given above, so the
@@ -858,6 +903,7 @@ def run_pipeline(
             standing=_standing(effective),
             calendar=calendar,
             executed=executed,
+            cards=cards,
         )
         # The two lines the report carries that the renderer cannot know
         # about ride the digest too, under the same conditions: the accident
@@ -2587,14 +2633,12 @@ def _run_snapshot(
     cfg: Config,
     mode: str,
     clock: datetime,
-    inputs: PipelineInputs,
     effective: PipelineInputs,
     solved: SolveResult,
     gaffer: "ManagerDecision | None",
     choice: Plan,
     costed: dict[int, PlayerProjection],
-    xmins: dict[int, float],
-    prices: dict[int, int] | None,
+    rows: dict[int, dict],
     calendar: ChipCalendar | None,
     chip: str,
     decision: dict,
@@ -2616,10 +2660,11 @@ def _run_snapshot(
       registry, or the solver's shortlist numbered the way the briefing
       numbers it (:func:`~aigaffer.manager.briefing.initial_plan_ids`) when
       there was no gaffer, or a fallback that carries no registry of its own;
-    - the projected set: everyone a history was fetched for, the window's own
-      candidate cut on the same projections, and the squad. A player outside
-      it was never really projected, and storing him would store a
-      confident-looking zero.
+    - the projected set, which is ``rows``: built once by the caller from
+      everyone a history was fetched for, the window's own candidate cut on
+      the same projections, and the squad, and shared with the report and the
+      digest. A player outside it was never really projected, and storing him
+      would store a confident-looking zero.
 
     The briefing module is imported here rather than at module scope, for the
     reason :func:`_consult` gives: the manager package is reached from inside
@@ -2635,9 +2680,6 @@ def _run_snapshot(
         if gaffer is not None and gaffer.registry
         else dict(initial_plan_ids(solved))
     )
-    pool = candidate_pool(
-        effective.players, costed, squad_ids, limit=multiweek.CANDIDATES_PER_POSITION
-    )
     freehit = (
         (freehit_squad, freehit_xi)
         if freehit_squad is not None and freehit_xi is not None
@@ -2647,13 +2689,9 @@ def _run_snapshot(
         event=event,
         mode=mode,
         ts=_stamp(clock),
-        bootstrap=effective.bootstrap,
-        fixtures=effective.fixtures,
         projections=costed,
-        xmins=_costed_minutes(xmins, gaffer),
-        projected_ids=set(inputs.histories) | set(pool) | set(squad_ids),
+        players=rows,
         squad_ids=squad_ids,
-        selling_prices=prices,
         plans=plans,
         chosen_id=_chosen_id(plans, choice),
         decision=decision,

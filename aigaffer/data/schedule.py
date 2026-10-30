@@ -10,6 +10,7 @@ once. It lives here, below both, with nothing but the data models above it.
 """
 
 from collections import defaultdict
+from collections.abc import Sequence
 
 from aigaffer.data.models import Fixture
 
@@ -35,6 +36,17 @@ def opponents(
         schedule[(fixture.event, fixture.team_h)].append((clubs[fixture.team_a].short_name, "h"))
         schedule[(fixture.event, fixture.team_a)].append((clubs[fixture.team_h].short_name, "a"))
     return schedule
+
+
+def phone_games(games: Sequence[Sequence[str]]) -> str:
+    """One gameweek as the phone texts write it: no brackets, home in upper
+    case (``BHA``), away in lower (``lee``), a double joined with ``+``
+    (``BHA+ars``), a blank as ``—``. The venue is carried by the case alone,
+    so the cell stays short enough for six of them on a line. It takes
+    ``(opponent, "h"|"a")`` pairs as tuples or as the JSON lists a snapshot
+    holds. The week plan's strip and the transfer card both call it, so the
+    venue rule is not copied a fourth time."""
+    return "+".join(opp if where == "h" else opp.lower() for opp, where in games) or "—"
 
 
 def games_text(games: list[tuple[str, str]]) -> str:
