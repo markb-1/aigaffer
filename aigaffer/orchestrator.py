@@ -154,7 +154,7 @@ from aigaffer.report.render import (
 )
 from aigaffer.report.telegram import KEYBOARD, send_report
 from aigaffer.report.transfer_card import CardInputs
-from aigaffer.review import LastWeek, last_week as review_lessons, review_target
+from aigaffer.review import LastWeek, last_week as review_lessons
 from aigaffer.solver import multiweek
 from aigaffer.solver.calendar import (
     ChipCalendar,
@@ -858,7 +858,7 @@ def run_pipeline(
             _write_standing(
                 cfg.state_dir.parent,
                 client.entry_summary(cfg.team_id),
-                after=review_target(effective.bootstrap),
+                after=_last_finished(effective.bootstrap),
             )
         except Exception as error:
             print(STANDING_SKIPPED.format(reason=type(error).__name__))
@@ -2928,10 +2928,20 @@ def _point_readme(root: Path, event_id: int) -> None:
 STANDING_MARKER = "<!-- season-standing -->"
 
 
+def _last_finished(bootstrap: Bootstrap) -> int | None:
+    """The latest gameweek whose matches are all played, None for none yet.
+
+    ``finished`` and not ``review_target``'s ``data_checked``: the entry's
+    points and ranks settle when the matches end, and the data check can come
+    hours later, so waiting for it could print "After GW8" over GW9's figures.
+    """
+    return max((e.id for e in bootstrap.events if e.finished), default=None)
+
+
 def _write_standing(root: Path, summary: EntrySummary, after: int | None) -> None:
     """Rewrite the README's standing line from ``summary``, "after GW{after}".
 
-    ``after`` is the latest finished gameweek from the bootstrap, not the
+    ``after`` is the latest finished gameweek (:func:`_last_finished`), not the
     entry's ``current_event``, which flips at the deadline while the figures
     are still the previous round's. With no finished gameweek there is
     nothing to be "after" and the line is left as it was.

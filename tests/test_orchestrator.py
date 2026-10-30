@@ -496,22 +496,22 @@ def test_a_readme_without_the_marker_is_left_alone(tmp_path):
     assert readme.read_text(encoding="utf-8") == "# Fork without the line\n"
 
 
-def checked_routes() -> dict:
-    """The pipeline's routes with GW1 data-checked, so it is the review target."""
-    events = [{**e, "data_checked": e["finished"]} for e in PIPELINE_BOOTSTRAP_JSON["events"]]
+def unfinished_routes() -> dict:
+    """The pipeline's routes with no gameweek finished yet."""
+    events = [{**e, "finished": False} for e in PIPELINE_BOOTSTRAP_JSON["events"]]
     return pipeline_routes(bootstrap={**PIPELINE_BOOTSTRAP_JSON, "events": events})
 
 
 def test_a_bootstrap_with_no_finished_gameweek_leaves_the_standing_alone(tmp_path):
-    # The stock fixture's GW1 is finished but not yet data-checked, so there
-    # is no gameweek the figures could be "after": the line stays as it was.
+    # With no finished gameweek there is nothing the figures could be
+    # "after": the line stays as it was.
     cfg = config(state_dir=tmp_path / "state")
     readme = tmp_path / "README.md"
     original = "old <!-- season-standing -->\n"
     readme.write_text(original, encoding="utf-8")
 
     run_pipeline(
-        cfg, make_client(pipeline_routes()), Store(cfg.state_dir / "a.db"), "scout"
+        cfg, make_client(unfinished_routes()), Store(cfg.state_dir / "a.db"), "scout"
     )
 
     assert readme.read_text(encoding="utf-8") == original
@@ -521,8 +521,9 @@ def test_the_readme_carries_the_standing(tmp_path):
     # A second marked line holds the season's points and both ranks, off the
     # entry endpoint. ENTRY_JSON: 57 points, world 1,000,000, Ireland 9,446 -
     # so the line reads as below, thousands separators and all. The label
-    # comes from the bootstrap (GW1 finished and data-checked), not from
-    # ENTRY_JSON's current_event of 2, which a deadline just past would flip.
+    # comes from the bootstrap's latest finished gameweek (GW1, finished but
+    # not yet data-checked, as the stock fixture has it), not from ENTRY_JSON's
+    # current_event of 2, which a deadline just past would flip.
     cfg = config(state_dir=tmp_path / "state")
     readme = tmp_path / "README.md"
     readme.write_text(
@@ -531,7 +532,7 @@ def test_the_readme_carries_the_standing(tmp_path):
     )
 
     run_pipeline(
-        cfg, make_client(checked_routes()), Store(cfg.state_dir / "a.db"), "scout"
+        cfg, make_client(pipeline_routes()), Store(cfg.state_dir / "a.db"), "scout"
     )
 
     text = readme.read_text(encoding="utf-8")
@@ -574,7 +575,7 @@ def test_a_failing_entry_route_costs_the_standing_line_not_the_run(tmp_path, cap
     readme = tmp_path / "README.md"
     original = "old <!-- season-standing -->\n"
     readme.write_text(original, encoding="utf-8")
-    routes = checked_routes()
+    routes = pipeline_routes()
     del routes[ENTRY_PATH]  # the fake transport answers 404
 
     report = run_pipeline(
@@ -593,7 +594,7 @@ def test_a_standing_with_parts_missing_drops_those_parts(tmp_path):
     cfg = config(state_dir=tmp_path / "state")
     readme = tmp_path / "README.md"
     readme.write_text("old <!-- season-standing -->\n", encoding="utf-8")
-    routes = checked_routes()
+    routes = pipeline_routes()
     routes[ENTRY_PATH] = {**ENTRY_JSON, "leagues": {"classic": []}}
 
     run_pipeline(cfg, make_client(routes), Store(cfg.state_dir / "a.db"), "scout")
@@ -608,7 +609,7 @@ def test_a_standing_with_nothing_in_it_leaves_the_line_as_it_was(tmp_path):
     readme = tmp_path / "README.md"
     original = "old <!-- season-standing -->\n"
     readme.write_text(original, encoding="utf-8")
-    routes = checked_routes()
+    routes = pipeline_routes()
     routes[ENTRY_PATH] = {"current_event": None}
 
     run_pipeline(cfg, make_client(routes), Store(cfg.state_dir / "a.db"), "scout")
