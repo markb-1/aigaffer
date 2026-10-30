@@ -1,4 +1,4 @@
-# AI Gaffer — GW9 scout
+# AI Gaffer — GW9 deadline
 
 Deadline: Sat 31 Oct 2026 11:00 UTC
 
@@ -19,38 +19,34 @@ Set lineup (3-5-2): Tzolakis; Gabriel, Muharemović, Guéhi; Rice, Tavernier, Le
 ## The Gaffer's view
 
 WHAT I DID
-One free transfer: Calafiori out, Gabriel in, so no points hit. Haaland is captain (BHA at home) and Mbeumo is vice. No chip this week.
+One free transfer: Calafiori out, Gabriel in (both Arsenal, away at Liverpool). No hit. Haaland captain (BHA at home), Mbeumo vice. No chip.
 
 WHAT I LEARNED
-- Arsenal: Arteta said Calafiori, Rice and Madueke all missed Tuesday's Carabao Cup defeat at Fleetwood through injury. On 29 Oct football.london reported "genuine concern" that Calafiori misses Sunday's game at liv(a). The same report said Rice is expected to be available. Rice came off against Everton holding his hamstring, though, and he has a history of hamstring and back trouble. I cut Calafiori from 56 to 15 minutes and moved Rice from 64 to 70. Saliba is still out, which keeps Gabriel's place safe.
-- Coventry: Lampard said Thomas has a "small calf issue" and that they are "not sure about this weekend". Predicted line-ups have Mfuni starting. I cut Thomas from 42 to 30 minutes. He is on the bench anyway.
-- Leeds: Farke said Calvert-Lewin had a normal training week and is fully available. His 86 minutes stay.
-- Hull: Butland is back in group training, and Jakirovic said he would decide on Friday whether to include him. Butland is a real rival for the No.1 spot, so I trimmed Tzolakis from 90 to 80 minutes. I couldn't confirm Friday's decision, so this is my main open question. If Butland starts, Verbruggen is the bench keeper.
-- Man City: Maresca gave Haaland time off this week and he sat out the cup tie against Brighton, so he should be fresh. I kept him at 85, from the earlier run's entry.
-- Other earlier findings I carried over unchanged: Gabriel 88, Konsa 88, Tavernier 85, Guéhi 72 (rotation risk) and João Pedro 0 (injured).
-- Brighton: Hurzeler's press conference flagged no problems for Groß, Vuskovic or Verbruggen. Predicted line-ups have Mbeumo starting at che(a). I couldn't check Lewis-Potter's fitness this run, but the preview I found mentions nothing about him.
+- Calafiori (doubt, 75% flag): last run's report from 29 Oct has him at about 15 minutes, so I cut him from 56. That is why the move makes sense. He is very unlikely to start, and Gabriel is a nailed starter (88 mins, report from 24 Oct). Swapping a non-starter for a starter is a real gain, not projection noise.
+- Guéhi (the one re-check): he captained City in Wednesday's Carabao Cup win over Brighton while Dias, Gvardiol and Donnarumma were rested. Most predicted XIs on 30 Oct still start him on Saturday. One (AOL/Standard) has Khusanov in for him after a poor run of form. I cut him from 81 to 65. That is a guess about rotation, not confirmed news.
+- Haaland: rested for the cup tie and in every predicted XI I saw. I set him to 85, as in the earlier run's report. Your GW8 note asked me to confirm his minutes before any Triple Captain. I didn't play it, so that check never came up.
+- Brighton: Verbruggen and Vuskovic sat out the cup tie unused, so they're fresh. Groß played that game but is predicted to start. I didn't change any of them.
+- Carried over unchanged from the earlier run: Rice 70 mins, Tavernier 85, Thomas 30 (50% flag), Tzolakis 80, Konsa 88, João Pedro 0 (injured).
+- Not checked: I ran out of searches this turn before I could check Lewis-Potter (Brentford), Mbeumo (Man Utd) and Muharemović (Leeds). None of them has a flag and the transfer doesn't depend on them, but their minutes are the model's own, not news I checked.
 
 WHY THIS PLAN
-Calafiori probably won't play. That is real news, not projection noise, and the move costs no hit. With my adjustments, plan 4 is 2.0 points ahead of rolling (plan 6). Rolling would just make the same move next week while Calafiori likely blanks this week. Gabriel is getting heavy transfers in, so his price may rise tonight.
-- Plan 5 adds Thomas → Konsa for a 4-point hit and comes out only 0.3 ahead of rolling. The solver does that move next week for free.
-- Plan 7 (three moves, two hits) comes out 1.4 points behind rolling.
-- Triple captain: worth +5.7 this week against a bar of 7.0, so I'm keeping it for GW15.
-The risks: Gabriel faces a tough away game at Liverpool, and Rice could still be held back.
+After my changes the solver puts plan 4 2.0 points ahead of rolling (plan 6). Normally I'd call that inside the noise. But the edge comes from a fact: Calafiori probably won't start. And plan 6's own path makes this same swap next week anyway, so waiting only loses a week of Gabriel. Plans 5 and 7 take hits to sell Guéhi or Thomas as well. Both come out behind or level with rolling, and I didn't think Guéhi's rotation risk was firm enough to pay 4 points to fix. Plan 4 also still leaves the free transfers for Thomas → Konsa next week.
+Gabriel is being bought (227k net in), so he may be a little cheaper if the move is made tonight rather than at the deadline.
+Chips: Triple Captain is worth +5.7 this week against a bar of 7.0, so it waits for GW15 as planned. Free Hit (+7.3 against 15.2) and Wildcard (−14.3) are nowhere near worth it. Bench Boost isn't available this week.
 
 Minutes he overruled:
 
-- Set Calafiori to 15 mins — Arteta confirmed Calafiori missed Tuesday's Carabao Cup tie injured; football.london reports 'genuine concern' he misses Sunday's trip to Liverpool.
-- Set Rice to 70 mins — Rice came off v Everton holding hamstring and missed cup tie, but football.london reports he is expected to be available at Anfield. History of hamstring/back trouble, so not full 90.
-- Set Thomas to 30 mins — Lampard pre-match presser: Thomas has a 'small calf issue', 'not sure about this weekend'. Predicted XIs have Mfuni starting.
-- Set Gabriel to 88 mins — Carried fresh entry: nailed starter.
-- Set Konsa to 88 mins — Carried fresh entry: nailed starter.
-- Set Tavernier to 85 mins — Carried fresh entry: nailed starter.
-- Set Guéhi to 72 mins — Carried fresh entry: rotation risk under Maresca.
-- Set Haaland to 85 mins — Carried fresh entry; Maresca gave Haaland time off this week (rested for the cup tie on 28 Oct), so he should be fresh to start v BHA.
-- Set Tzolakis to 80 mins — Jakirovic (Thu presser, via BBC/FFScout): Jack Butland back in group training, decision on his involvement due Friday. Tzolakis has been No.1 but Butland is a genuine rival, so a small risk he is displaced.
-- Set Calvert-Lewin to 86 mins — Farke: Calvert-Lewin had a normal training week, 'fully available' if nothing happens. Model minutes stand.
+- Set Gabriel to 88 mins — Fresh entry from earlier run: nailed starter at ARS.
+- Set Calafiori to 15 mins — Fresh entry from earlier run: doubt, likely bench at most.
+- Set Rice to 70 mins — Fresh entry from earlier run: doubt but expected to play most of the game.
+- Set Konsa to 88 mins — Fresh entry from earlier run: nailed starter.
+- Set Tavernier to 85 mins — Fresh entry from earlier run: nailed starter.
+- Set Thomas to 30 mins — Fresh entry from earlier run: 50% flag, doubt.
+- Set Haaland to 85 mins — Fresh entry from earlier run: nailed; rested from Wednesday's Carabao Cup tie v Brighton (given three days off) and every predicted XI (Sports Mole, Khel Now, HardTackle, 101GG on 30 Oct) has him starting.
+- Set Tzolakis to 80 mins — Fresh entry from earlier run: some rotation risk.
+- Set Guéhi to 65 mins — Re-check: Guéhi captained City in the midweek Carabao Cup win over Brighton (28 Oct) while the other first-choice CBs rested. Most 30 Oct predicted XIs (Sports Mole, HardTackle, 101GG, Khel Now) still start him, but the Evening Standard/AOL line-up predicts him rested for Khusanov after poor form. Real rotation risk.
 
-12 web searches. Decided by the gaffer.
+8 web searches. Decided by the gaffer.
 
 ## Starting XI (3-5-2)
 
@@ -64,7 +60,7 @@ Minutes he overruled:
 
 xP and net are the whole window, decayed and with the armband in; net is after hits, any bench-buy charge and a small cost a transfer, plus a credit for free transfers kept; transfers and hits shown are this week's unless the row says otherwise.
 
-- 1 transfer | 0 hits | 244.5 xP | 245.1 net  <- recommended (re-solved on the gaffer's minutes)
+- 1 transfer | 0 hits | 244.3 xP | 244.8 net  <- recommended (re-solved on the gaffer's minutes)
 - 1 transfer | 0 hits | 245.2 xP | 245.7 net  (same moves, before his changes)
 - 2 transfers | 1 hit | 247.1 xP | 244.2 net
 - 0 transfers | 0 hits | 243.5 xP | 244.1 net
