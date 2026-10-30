@@ -42,7 +42,7 @@ from aigaffer.chips import BENCH_BOOST, FREE_HIT, TRIPLE_CAPTAIN, WILDCARD
 from aigaffer.data.free_transfers import MAX_FREE_TRANSFERS, after_roll
 from aigaffer.data.models import Bootstrap, Event, Player, Standing
 from aigaffer.model.xp import PlayerProjection
-from aigaffer.report.transfer_card import pair_moves
+from aigaffer.report.transfer_card import CardInputs, pair_moves, transfer_cards
 from aigaffer.solver.lineup import ChipEvs, Lineup
 from aigaffer.solver.optimizer import (
     DEFENDER,
@@ -278,6 +278,7 @@ def render_report(
     selling_prices: dict[int, int] | None = None,
     calendar: "ChipCalendar | None" = None,
     executed: "Executed | None" = None,
+    cards: CardInputs | None = None,
 ) -> str:
     """The whole report as one markdown string. Pure; no I/O.
 
@@ -319,6 +320,10 @@ def render_report(
     made": the report then says, under its header, what squad it is working
     from, and the week's chip is the one he entered. None is the report as it
     always was.
+
+    ``cards`` is what the transfer cards read (the run's player rows, the
+    window, the squad and the bank before the moves). Omitted, the
+    recommendation keeps its Out and In bullets as they were.
     """
     players = {player.id: player for player in bootstrap.elements}
     clubs = {team.id: team.short_name for team in bootstrap.teams}
@@ -342,7 +347,7 @@ def render_report(
         _header(mode, event, banner=action.banner),
         *([] if action.working_from is None else [action.working_from]),
         *([] if action.do_this is None else [action.do_this]),
-        _recommendation(choice, players, clubs),
+        _recommendation(choice, players, clubs, cards=cards, chip=chip),
         *([] if gaffer is None else [_gaffer(gaffer, players)]),
         _team_sheet(lineup, players, projections, free_hit),
         _candidates(
@@ -524,6 +529,7 @@ def render_digest(
     standing: Standing | None = None,
     calendar: "ChipCalendar | None" = None,
     executed: "Executed | None" = None,
+    cards: CardInputs | None = None,
 ) -> str:
     """The report as the phone gets it. Pure; no I/O.
 
@@ -540,6 +546,8 @@ def render_digest(
     more under it: each chip's week and the nearest expiry (:func:`chip_line`).
     ``executed`` is what the owner has entered this week: the digest then says
     what squad it is working from, after the header and its chip line.
+    ``cards`` is the transfer cards' input, as :func:`render_report` takes it:
+    under the recommendation each move gets its card. None prints the bullets.
 
     Straight after the checklist it carries the whole eleven and the bench
     (:func:`phone_lineup`), because the full report that holds them is on
@@ -570,7 +578,7 @@ def render_digest(
             )
         )
         sections.append(phone_lineup(lineup, players, free_hit=free_hit))
-    sections.append(_recommendation(choice, players, clubs))
+    sections.append(_recommendation(choice, players, clubs, cards=cards, chip=chip))
     if gaffer is not None:
         sections.append(_gaffer_digest(gaffer))
     sections.append(FULL_REPORT_POINTER.format(gw=event.id))
@@ -1426,9 +1434,25 @@ def formation(lineup: Lineup, players: dict[int, Player]) -> str:
 
 
 def _recommendation(
-    choice: Plan, players: dict[int, Player], clubs: dict[int, str]
+    choice: Plan,
+    players: dict[int, Player],
+    clubs: dict[int, str],
+    *,
+    cards: CardInputs | None = None,
+    chip: str = NO_CHIP,
 ) -> str:
     """What to do, and what it costs.
+
+    Given ``cards`` the bare Out/In bullets are replaced by one transfer card
+    per move (:mod:`aigaffer.report.transfer_card`), which is what the phone
+    needs to judge the move without opening the app. The count-and-cost line
+    stays above them. A Wildcard week keeps the bullets, because fifteen cards
+    is a wall, and adds the card module's pointer line at the detailed report.
+    A Free Hit week arrives with no transfers on ``choice`` (the temporary team
+    lives on the path), so it prints "Roll the transfer." and no pointer, by
+    design. With no ``cards``, or when the card module has none to give (a
+    pair the run holds no rows for), the bullets print exactly as they always
+    did.
 
     An opening draft buys fifteen and sells nobody, and it is the only plan
     that does: every other week swaps like for like. So the sales bullet is
@@ -1443,9 +1467,18 @@ def _recommendation(
     moves = plural(len(choice.transfers_in), "transfer")
     cost = f"-{choice.hits * HIT_POINTS} pts in hits" if choice.hits else "no hit"
     lines += [f"{moves}, {cost}.", ""]
+    rendered = (
+        []
+        if cards is None
+        else transfer_cards(cards, choice.transfers_out, choice.transfers_in, chip)
+    )
+    if rendered and chip != WILDCARD:
+        return "\n".join(lines) + "\n" + "\n\n".join(rendered)
     if choice.transfers_out:
         lines.append("- Out: " + _listed(choice.transfers_out, players, clubs))
     lines.append("- In: " + _listed(choice.transfers_in, players, clubs))
+    if rendered:
+        lines += ["", *rendered]
     return "\n".join(lines)
 
 
@@ -1867,14 +1900,27 @@ def _watchlist(
     clubs: dict[int, str],
     projections: dict[int, PlayerProjection],
 ) -> str:
-    """The best projections we do not own — the shortlist for next week."""
+    """The best projections we do not own — the shortlist for next week.
+
+    Ranked and printed on the plain window sum, the number the transfer card
+    shows for the same man: the one document would otherwise give a player one
+    six-week figure on the card and another a few sections down. The decayed
+    total is a solver's weighting, and appears only in the detailed report
+    under its own caption. The team sheet's ``_ranked`` is unchanged.
+    """
     owned = set(squad)
     field = [pid for pid in players if pid not in owned]
+
+    def window(pid: int) -> float:
+        projection = projections.get(pid)
+        return 0.0 if projection is None else sum(projection.per_gw.values())
+
     lines = ["## Watchlist", ""]
     lines += [
-        f"- {_described(pid, players, clubs)}"
-        f" — {projected_points(projections, pid):.1f} xP"
-        for pid in _ranked(field, players, projections)[:WATCHLIST_SIZE]
+        f"- {_described(pid, players, clubs)} — {window(pid):.1f} xP"
+        for pid in sorted(field, key=lambda pid: (-window(pid), players[pid].web_name))[
+            :WATCHLIST_SIZE
+        ]
     ]
     return "\n".join(lines)
 

@@ -152,6 +152,7 @@ from aigaffer.report.render import (
     render_withheld,
 )
 from aigaffer.report.telegram import KEYBOARD, send_report
+from aigaffer.report.transfer_card import CardInputs
 from aigaffer.review import LastWeek, last_week as review_lessons
 from aigaffer.solver import multiweek
 from aigaffer.solver.calendar import (
@@ -634,6 +635,13 @@ def run_pipeline(
             | set(squad_ids),
             selling_prices=prices,
         )
+    cards = (
+        None
+        if rows is None
+        else CardInputs(
+            rows, sorted(projected_events(costed)), squad_ids, effective.squad.bank
+        )
+    )
     report = render_report(
         _label(mode, drafting=solved.draft_mode),
         event,
@@ -657,6 +665,7 @@ def run_pipeline(
         selling_prices=prices,
         calendar=calendar,
         executed=executed,
+        cards=cards,
     )
     # Asked for, and not there at all. Not the same as the kill switch, no key
     # or a draft — those are choices, and the invariant is that they render
@@ -887,6 +896,7 @@ def run_pipeline(
             standing=_standing(effective),
             calendar=calendar,
             executed=executed,
+            cards=cards,
         )
         # The two lines the report carries that the renderer cannot know
         # about ride the digest too, under the same conditions: the accident
