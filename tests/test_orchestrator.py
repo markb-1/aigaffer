@@ -54,6 +54,7 @@ from aigaffer.orchestrator import (
     SolveResult,
     DETAILED_SKIPPED,
     REASONS_SKIPPED,
+    STANDING_SKIPPED,
     _calendar,
     _chosen_id,
     _fielded_lineup,
@@ -85,6 +86,8 @@ from aigaffer.solver.optimizer import FORWARD, MIDFIELDER, Plan, candidate_pool
 from aigaffer.store import Store
 from tests.test_manager_agent import FakeClient, reply, use
 from tests.fixtures import (
+    ENTRY_JSON,
+    ENTRY_PATH,
     HISTORY_PATH,
     PICKS_15_IDS,
     PICKS_PATH,
@@ -491,6 +494,127 @@ def test_a_readme_without_the_marker_is_left_alone(tmp_path):
     )
 
     assert readme.read_text(encoding="utf-8") == "# Fork without the line\n"
+
+
+def unfinished_routes() -> dict:
+    """The pipeline's routes with no gameweek finished yet."""
+    events = [{**e, "finished": False} for e in PIPELINE_BOOTSTRAP_JSON["events"]]
+    return pipeline_routes(bootstrap={**PIPELINE_BOOTSTRAP_JSON, "events": events})
+
+
+def test_a_bootstrap_with_no_finished_gameweek_leaves_the_standing_alone(tmp_path):
+    # With no finished gameweek there is nothing the figures could be
+    # "after": the line stays as it was.
+    cfg = config(state_dir=tmp_path / "state")
+    readme = tmp_path / "README.md"
+    original = "old <!-- season-standing -->\n"
+    readme.write_text(original, encoding="utf-8")
+
+    run_pipeline(
+        cfg, make_client(unfinished_routes()), Store(cfg.state_dir / "a.db"), "scout"
+    )
+
+    assert readme.read_text(encoding="utf-8") == original
+
+
+def test_the_readme_carries_the_standing(tmp_path):
+    # A second marked line holds the season's points and both ranks, off the
+    # entry endpoint. ENTRY_JSON: 57 points, world 1,000,000, Ireland 9,446 -
+    # so the line reads as below, thousands separators and all. The label
+    # comes from the bootstrap's latest finished gameweek (GW1, finished but
+    # not yet data-checked, as the stock fixture has it), not from ENTRY_JSON's
+    # current_event of 2, which a deadline just past would flip.
+    cfg = config(state_dir=tmp_path / "state")
+    readme = tmp_path / "README.md"
+    readme.write_text(
+        "# AI Gaffer\n\nverdict <!-- latest-verdict -->\n\nold <!-- season-standing -->\n\nThe pitch.\n",
+        encoding="utf-8",
+    )
+
+    run_pipeline(
+        cfg, make_client(pipeline_routes()), Store(cfg.state_dir / "a.db"), "scout"
+    )
+
+    text = readme.read_text(encoding="utf-8")
+    assert (
+        "🏆 **After GW1:** 57 pts · world rank 1,000,000 · Ireland rank 9,446"
+        " <!-- season-standing -->\n"
+    ) in text
+    assert "old" not in text
+    assert text.endswith("The pitch.\n")
+
+
+def test_a_dry_run_leaves_the_standing_alone(tmp_path):
+    cfg = config(state_dir=tmp_path / "state")
+    readme = tmp_path / "README.md"
+    original = "old <!-- season-standing -->\n"
+    readme.write_text(original, encoding="utf-8")
+
+    run_pipeline(
+        cfg, make_client(pipeline_routes()), Store(cfg.state_dir / "a.db"), "scout",
+        send=False, save=False,
+    )
+
+    assert readme.read_text(encoding="utf-8") == original
+
+
+def test_a_readme_without_the_standing_marker_is_left_alone(tmp_path):
+    cfg = config(state_dir=tmp_path / "state")
+    readme = tmp_path / "README.md"
+    readme.write_text("# Fork without the line\n", encoding="utf-8")
+
+    run_pipeline(
+        cfg, make_client(pipeline_routes()), Store(cfg.state_dir / "a.db"), "scout"
+    )
+
+    assert readme.read_text(encoding="utf-8") == "# Fork without the line\n"
+
+
+def test_a_failing_entry_route_costs_the_standing_line_not_the_run(tmp_path, capsys):
+    cfg = config(state_dir=tmp_path / "state")
+    readme = tmp_path / "README.md"
+    original = "old <!-- season-standing -->\n"
+    readme.write_text(original, encoding="utf-8")
+    routes = pipeline_routes()
+    del routes[ENTRY_PATH]  # the fake transport answers 404
+
+    report = run_pipeline(
+        cfg, make_client(routes), Store(cfg.state_dir / "a.db"), "scout"
+    )
+
+    assert report
+    assert (tmp_path / "GW2.md").exists(), "the verdict was still written"
+    assert readme.read_text(encoding="utf-8") == original
+    assert STANDING_SKIPPED.format(reason="HTTPStatusError") in capsys.readouterr().out
+
+
+def test_a_standing_with_parts_missing_drops_those_parts(tmp_path):
+    # No region league: the line keeps points and world rank, and says
+    # nothing of Ireland. Worked by hand: "After GW1: 57 pts, world rank 1,000,000".
+    cfg = config(state_dir=tmp_path / "state")
+    readme = tmp_path / "README.md"
+    readme.write_text("old <!-- season-standing -->\n", encoding="utf-8")
+    routes = pipeline_routes()
+    routes[ENTRY_PATH] = {**ENTRY_JSON, "leagues": {"classic": []}}
+
+    run_pipeline(cfg, make_client(routes), Store(cfg.state_dir / "a.db"), "scout")
+
+    assert readme.read_text(encoding="utf-8") == (
+        "🏆 **After GW1:** 57 pts · world rank 1,000,000 <!-- season-standing -->\n"
+    )
+
+
+def test_a_standing_with_nothing_in_it_leaves_the_line_as_it_was(tmp_path):
+    cfg = config(state_dir=tmp_path / "state")
+    readme = tmp_path / "README.md"
+    original = "old <!-- season-standing -->\n"
+    readme.write_text(original, encoding="utf-8")
+    routes = pipeline_routes()
+    routes[ENTRY_PATH] = {"current_event": None}
+
+    run_pipeline(cfg, make_client(routes), Store(cfg.state_dir / "a.db"), "scout")
+
+    assert readme.read_text(encoding="utf-8") == original
 
 
 def test_the_deadline_run_overwrites_the_scouts_root_file(tmp_path):

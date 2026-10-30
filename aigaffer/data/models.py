@@ -182,6 +182,34 @@ class Pick(BaseModel):
     is_vice_captain: bool
 
 
+class EntrySummary(BaseModel):
+    """The season's standing as the README shows it, off ``/entry/{id}/``.
+
+    One request carries all of it: ``summary_overall_points`` and
+    ``summary_overall_rank`` are the tally and the world rank, and
+    ``player_region_name`` names the manager's country. The gameweek the
+    figures are "after" is deliberately not read here: ``current_event``
+    flips at the deadline while the summary figures stay the previous
+    round's until matches are played, so the label comes from the bootstrap's
+    latest finished gameweek instead. The country rank is
+    ``entry_rank`` in the system league (``league_type == "s"``) *named* the
+    region: the other system leagues ("Overall", "Gameweek 1", a club) and any
+    private league that shares the country's name are not it, and matching on
+    the region's name rather than a literal "Ireland" is what lets a fork in
+    another country get its own. Verified against the live endpoint on
+    2026-10-30.
+
+    Everything is optional: before the first deadline there are no points or
+    ranks, a region may have no league, and a null must cost the README a
+    figure, never the run.
+    """
+
+    total_points: int | None = None
+    overall_rank: int | None = None
+    region: str | None = None
+    region_rank: int | None = None
+
+
 class Standing(BaseModel):
     """Where the manager stands after the last gameweek played.
 

@@ -9,6 +9,8 @@ ever made for you, and the final tap in the app is yours.
 
 📋 **Latest verdict: [GW9](GW9.md)** <!-- latest-verdict -->
 
+🏆 **After GW8:** 556 pts · world rank 263,808 · Ireland rank 9,446 <!-- season-standing -->
+
 ## What you get, and when
 
 Four reports a gameweek. Three are timed against the deadline ahead, and one
