@@ -20,7 +20,7 @@
   },
   "13": {
     "category": "doubt",
-    "checked_at": "2026-10-28T23:35:03.552418+00:00",
+    "checked_at": "2026-10-30T10:37:59.231400+00:00",
     "expected_minutes": 70.0,
     "fpl": {
       "chance_of_playing_next_round": 75,
@@ -29,12 +29,12 @@
       "status": "d"
     },
     "gw": 9,
-    "note": "Rice missed the midweek cup tie with a minor problem but trained on Monday. The Standard and football.london expect him to be available at Anfield. Arteta updates on Friday.",
+    "note": "Rice came off v Everton holding hamstring and missed cup tie, but football.london reports he is expected to be available at Anfield. History of hamstring/back trouble, so not full 90.",
     "player_id": 13,
-    "quote_date": "2026-10-27",
+    "quote_date": "2026-10-29",
     "return_gw": null,
     "run": "scout",
-    "source": "Yahoo (Evening Standard), Arsenal Insider (football.london)",
+    "source": "football.london via roundtable.io",
     "tier": 2
   },
   "165": {
@@ -58,26 +58,26 @@
   },
   "173": {
     "category": "doubt",
-    "checked_at": "2026-10-28T23:35:03.552418+00:00",
-    "expected_minutes": 35.0,
+    "checked_at": "2026-10-30T10:37:59.231400+00:00",
+    "expected_minutes": 30.0,
     "fpl": {
-      "chance_of_playing_next_round": 75,
-      "news": "Unspecified injury - 75% chance of playing",
+      "chance_of_playing_next_round": 50,
+      "news": "Calf injury - 50% chance of playing",
       "news_added": "2026-10-24T17:00:09.115906Z",
       "status": "d"
     },
     "gw": 9,
-    "note": "Forced off just before the hour vs Fulham on 24 Oct. Lampard didn't know the extent and was only 'hoping' it's not serious. Dave.Sport's predicted XI for Sunderland has Mfuni in his place. FPL flag says 75%.",
+    "note": "Lampard pre-match presser: Thomas has a 'small calf issue', 'not sure about this weekend'. Predicted XIs have Mfuni starting.",
     "player_id": 173,
-    "quote_date": "2026-10-24",
+    "quote_date": "2026-10-29",
     "return_gw": null,
     "run": "scout",
-    "source": "CoventryLive (Lampard post-match); Dave.Sport predicted XI",
+    "source": "Coventry Telegraph / Hayters (Lampard presser)",
     "tier": 1
   },
   "31": {
     "category": "nailed",
-    "checked_at": "2026-10-26T18:35:03.605298+00:00",
+    "checked_at": "2026-10-30T10:37:59.231400+00:00",
     "expected_minutes": 88.0,
     "fpl": {
       "chance_of_playing_next_round": 100,
@@ -86,17 +86,36 @@
       "status": "a"
     },
     "gw": 9,
-    "note": "Started and scored v Everton; first-choice CB alongside Gabriel.",
+    "note": "Carried fresh entry: nailed starter.",
     "player_id": 31,
     "quote_date": "2026-10-24",
     "return_gw": null,
-    "run": "early",
-    "source": "AOL / azat.tv match reports",
+    "run": "scout",
+    "source": "earlier run",
     "tier": 2
+  },
+  "346": {
+    "category": "nailed",
+    "checked_at": "2026-10-30T10:37:59.231400+00:00",
+    "expected_minutes": 86.0,
+    "fpl": {
+      "chance_of_playing_next_round": 100,
+      "news": "",
+      "news_added": "2026-10-23T13:00:09.444671Z",
+      "status": "a"
+    },
+    "gw": 9,
+    "note": "Farke: Calvert-Lewin had a normal training week, 'fully available' if nothing happens. Model minutes stand.",
+    "player_id": 346,
+    "quote_date": "2026-10-29",
+    "return_gw": null,
+    "run": "scout",
+    "source": "leedsunited.com Farke presser",
+    "tier": 1
   },
   "388": {
     "category": "rotation",
-    "checked_at": "2026-10-28T23:35:03.552418+00:00",
+    "checked_at": "2026-10-30T10:37:59.231400+00:00",
     "expected_minutes": 72.0,
     "fpl": {
       "chance_of_playing_next_round": null,
@@ -105,17 +124,17 @@
       "status": "a"
     },
     "gw": 9,
-    "note": "Carried fresh entry: some rotation risk at Man City; Dias and Gvardiol were rested midweek and will be fresh for Saturday.",
+    "note": "Carried fresh entry: rotation risk under Maresca.",
     "player_id": 388,
     "quote_date": "2026-10-24",
     "return_gw": null,
     "run": "scout",
-    "source": "earlier run (fresh)",
+    "source": "earlier run",
     "tier": 2
   },
   "4": {
     "category": "nailed",
-    "checked_at": "2026-10-28T23:35:03.552418+00:00",
+    "checked_at": "2026-10-30T10:37:59.231400+00:00",
     "expected_minutes": 88.0,
     "fpl": {
       "chance_of_playing_next_round": null,
@@ -124,17 +143,17 @@
       "status": "a"
     },
     "gw": 9,
-    "note": "Carried fresh entry: nailed Arsenal starting CB.",
+    "note": "Carried fresh entry: nailed starter.",
     "player_id": 4,
     "quote_date": "2026-10-24",
     "return_gw": null,
     "run": "scout",
-    "source": "earlier run (fresh)",
+    "source": "earlier run",
     "tier": 2
   },
   "411": {
     "category": "nailed",
-    "checked_at": "2026-10-28T23:35:03.552418+00:00",
+    "checked_at": "2026-10-30T10:37:59.231400+00:00",
     "expected_minutes": 85.0,
     "fpl": {
       "chance_of_playing_next_round": 100,
@@ -143,17 +162,36 @@
       "status": "a"
     },
     "gw": 9,
-    "note": "Carried fresh entry. Maresca confirmed (27 Oct presser) Haaland was given three days off after the Villa defeat and sits out the midweek Carabao Cup tie: rested, not injured. Kept at 85, not raised toward 90, per last week's lesson.",
+    "note": "Carried fresh entry; Maresca gave Haaland time off this week (rested for the cup tie on 28 Oct), so he should be fresh to start v BHA.",
     "player_id": 411,
     "quote_date": "2026-10-27",
     "return_gw": null,
     "run": "scout",
-    "source": "thefalse9 report of Maresca press conference 27 Oct",
+    "source": "mancity.com / earlier run",
+    "tier": 2
+  },
+  "572": {
+    "category": "rotation",
+    "checked_at": "2026-10-30T10:37:59.231400+00:00",
+    "expected_minutes": 80.0,
+    "fpl": {
+      "chance_of_playing_next_round": null,
+      "news": "",
+      "news_added": null,
+      "status": "a"
+    },
+    "gw": 9,
+    "note": "Jakirovic (Thu presser, via BBC/FFScout): Jack Butland back in group training, decision on his involvement due Friday. Tzolakis has been No.1 but Butland is a genuine rival, so a small risk he is displaced.",
+    "player_id": 572,
+    "quote_date": "2026-10-29",
+    "return_gw": null,
+    "run": "scout",
+    "source": "BBC Sport / dave.sport summarising Jakirovic presser",
     "tier": 2
   },
   "68": {
     "category": "nailed",
-    "checked_at": "2026-10-28T23:35:03.552418+00:00",
+    "checked_at": "2026-10-30T10:37:59.231400+00:00",
     "expected_minutes": 85.0,
     "fpl": {
       "chance_of_playing_next_round": null,
@@ -162,17 +200,17 @@
       "status": "a"
     },
     "gw": 9,
-    "note": "Carried fresh entry: nailed starter for Bournemouth.",
+    "note": "Carried fresh entry: nailed starter.",
     "player_id": 68,
     "quote_date": "2026-10-25",
     "return_gw": null,
     "run": "scout",
-    "source": "earlier run (fresh)",
+    "source": "earlier run",
     "tier": 2
   },
   "8": {
     "category": "doubt",
-    "checked_at": "2026-10-28T23:35:03.552418+00:00",
+    "checked_at": "2026-10-30T10:37:59.231400+00:00",
     "expected_minutes": 15.0,
     "fpl": {
       "chance_of_playing_next_round": 75,
@@ -181,12 +219,12 @@
       "status": "d"
     },
     "gw": 9,
-    "note": "Arteta said Calafiori was out for the Fleetwood cup tie (27 Oct). He hurt his hip/side coming off the bench vs Everton, and football.london report 'genuine concern' that he misses Liverpool away on Sunday. He was also not starting before the knock.",
+    "note": "Arteta confirmed Calafiori missed Tuesday's Carabao Cup tie injured; football.london reports 'genuine concern' he misses Sunday's trip to Liverpool.",
     "player_id": 8,
-    "quote_date": "2026-10-27",
+    "quote_date": "2026-10-29",
     "return_gw": null,
     "run": "scout",
-    "source": "Arsenal Insider / football.london / Yahoo (Standard)",
+    "source": "football.london via roundtable.io / Sports Mole",
     "tier": 2
   }
 }
