@@ -42,6 +42,7 @@ from aigaffer.chips import BENCH_BOOST, FREE_HIT, TRIPLE_CAPTAIN, WILDCARD
 from aigaffer.data.free_transfers import MAX_FREE_TRANSFERS, after_roll
 from aigaffer.data.models import Bootstrap, Event, Player, Standing
 from aigaffer.model.xp import PlayerProjection
+from aigaffer.report.transfer_card import pair_moves
 from aigaffer.solver.lineup import ChipEvs, Lineup
 from aigaffer.solver.optimizer import (
     DEFENDER,
@@ -1084,8 +1085,9 @@ def entered_moves(executed: "Executed", players: dict[int, Player]) -> str:
     """What the owner entered this gameweek, as one clause.
 
     ``Grant → Reyes``, ``no transfers``, ``Dodd → Kelly, Grant → Reyes``.
-    The pairing is presentational, as it is on the checklist: both lists are
-    sorted, so which sale funded which signing means nothing. A wildcard is
+    The pairing is presentational, as it is on the checklist, and is the same
+    one (:func:`~aigaffer.report.transfer_card.pair_moves`): like for like by
+    position, so a defender is not read as replaced by a midfielder. A wildcard is
     counted rather than listed — fifteen arrows is not a clause — and any
     other chip follows the moves. Shared by the inbox's echo, the reports'
     "working from" line and the briefing, so all three say it one way.
@@ -1095,7 +1097,11 @@ def entered_moves(executed: "Executed", players: dict[int, Player]) -> str:
         return f"{chip_label(WILDCARD)} played ({count})"
     pairs = [
         f"{_who(out, players)} → {_who(bought, players)}"
-        for out, bought in zip(executed.transfers_out, executed.transfers_in)
+        for out, bought in pair_moves(
+            executed.transfers_out,
+            executed.transfers_in,
+            lambda pid: players[pid].element_type if pid in players else None,
+        )
     ]
     moves = ", ".join(pairs) if pairs else "no transfers"
     if executed.chip != NO_CHIP:
@@ -1383,7 +1389,11 @@ def _moves(
     return [
         f"SELL {_sale_tag(out, players, clubs, selling_prices)}"
         f" → BUY {_named(bought, players, clubs)}"
-        for out, bought in zip(choice.transfers_out, choice.transfers_in)
+        for out, bought in pair_moves(
+            choice.transfers_out,
+            choice.transfers_in,
+            lambda pid: players[pid].element_type,
+        )
     ]
 
 

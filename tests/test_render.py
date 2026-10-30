@@ -542,6 +542,21 @@ def test_the_action_block_is_a_terminal_checklist():
     ]
 
 
+def test_checklist_pairs_sales_and_buys_by_position():
+    # Out: Fenn (6, DEF) and Lang (12, MID). In: Pike (16, MID) and Quinn
+    # (17, DEF). Both lists are sorted, so a plain zip would read Fenn -> Pike
+    # and Lang -> Quinn, a defender for a midfielder. Like for like it is
+    # Fenn -> Quinn (DEF) and Lang -> Pike (MID).
+    crossed = replace(ONE, transfers_out=[6, 12], transfers_in=[16, 17])
+
+    swaps = [line for line in section(report(choice=crossed), "Do this") if "→" in line]
+
+    assert swaps == [
+        "SELL Fenn (DEF BRW £4.5m) → BUY Quinn (DEF BRW £5.5m)",
+        "SELL Lang (MID BRW £5.5m) → BUY Pike (MID ASH £8.0m)",
+    ]
+
+
 def test_each_transfer_is_its_own_sell_then_buy_line():
     swaps = [line for line in section(report(choice=TWO), "Do this") if "→" in line]
 

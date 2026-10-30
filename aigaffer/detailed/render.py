@@ -38,6 +38,7 @@ from aigaffer.report.render import (
     settled,
     source_line,
 )
+from aigaffer.report.transfer_card import pair_moves
 
 NO_GAFFER = "Solver's pick — no gaffer this run"
 REASON_UNAVAILABLE = "Reason unavailable this run"
@@ -174,26 +175,17 @@ def _pairs(snapshot: dict) -> list[tuple[int, int]]:
     """The chosen plan's transfers as ``(out, in)`` pairs.
 
     The plan keeps its ``out`` and ``in`` as sorted id lists, not matched
-    pairs, so zipping them would pair strangers. FPL transfers are like for
-    like by position, so each ``out`` is paired with an ``in`` of the same
-    position, within a position strongest window total (``t``) first on both
-    sides. Anything that cannot be paired (a free-hit style odd lot) is left
-    out rather than invented.
+    pairs, so zipping them would pair strangers. The pairing is the one rule
+    the card and the checklist share (``pair_moves`` in
+    :mod:`aigaffer.report.transfer_card`): like for like by position, within a position by id. A player
+    the snapshot does not hold has the position ``"?"``, so he is still paired
+    rather than lost.
     """
     plan = snapshot["plans"][snapshot["chosen"]]
     players = snapshot["players"]
-
-    def by_position(ids):
-        groups: dict[str, list[int]] = {}
-        for pid in sorted(ids, key=lambda p: (-players[p]["t"], p) if p in players else (0, p)):
-            groups.setdefault(players[pid]["p"] if pid in players else "?", []).append(pid)
-        return groups
-
-    gone, came = by_position(plan["out"]), by_position(plan["in"])
-    pairs = []
-    for pos in gone:
-        pairs.extend(zip(gone[pos], came.get(pos, []), strict=False))
-    return pairs
+    return pair_moves(
+        plan["out"], plan["in"], lambda pid: players[pid]["p"] if pid in players else "?"
+    )
 
 
 def moves(snapshot: dict) -> tuple[list[int], list[int]]:
