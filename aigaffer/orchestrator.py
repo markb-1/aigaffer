@@ -102,6 +102,7 @@ from aigaffer.data.fpl_api import FplClient
 from aigaffer.data.free_transfers import compute_free_transfers
 from aigaffer.data.models import (
     Bootstrap,
+    EntrySummary,
     Event,
     Fixture,
     GwHistory,
@@ -848,6 +849,12 @@ def run_pipeline(
         # The real inputs, never the effective: the ledger keeps the API's truth.
         observe(store, inputs.squad, inputs.players, inputs.chips_used)
         _write_report(cfg, event.id, mode, report)
+        # The README's standing line, a luxury like the rest: one request,
+        # and a failure costs the line, never the report just saved.
+        try:
+            _write_standing(cfg.state_dir.parent, client.entry_summary(cfg.team_id))
+        except Exception as error:
+            print(f"readme standing skipped ({type(error).__name__})")
         # The long read beside it: the run's snapshot, and the gameweek's
         # detailed report rendered from every snapshot the week has so far.
         # Not on a draft — fifteen bought from nothing has no squad to show
@@ -2902,6 +2909,42 @@ def _point_readme(root: Path, event_id: int) -> None:
                 f"📋 **Latest verdict: [GW{event_id}](GW{event_id}.md)**"
                 f" {LATEST_MARKER}{ending}"
             )
+            readme.write_text("".join(lines), encoding="utf-8")
+            return
+
+
+# The README's second marked line: points and ranks, under the verdict
+# pointer and on the same terms — the marker is the contract, and a README
+# without it is left alone. Ranks only move once a round is final, so
+# rewriting it on every saved run changes it about once a week.
+STANDING_MARKER = "<!-- season-standing -->"
+
+
+def _write_standing(root: Path, summary: EntrySummary) -> None:
+    """Rewrite the README's standing line from ``summary``.
+
+    Parts the API did not give are dropped rather than printed as "None"; with
+    no points and no ranks at all the line is left as it was, since an empty
+    claim would be worse than a stale one.
+    """
+    readme = root / "README.md"
+    if not readme.exists():
+        return
+    parts = []
+    if summary.total_points is not None:
+        parts.append(f"{summary.total_points:,} pts")
+    if summary.overall_rank is not None:
+        parts.append(f"world rank {summary.overall_rank:,}")
+    if summary.region_rank is not None:
+        parts.append(f"{summary.region or 'country'} rank {summary.region_rank:,}")
+    if not parts:
+        return
+    after = f"After GW{summary.gw}" if summary.gw is not None else "Standing"
+    lines = readme.read_text(encoding="utf-8").splitlines(keepends=True)
+    for i, line in enumerate(lines):
+        if STANDING_MARKER in line:
+            ending = "\r\n" if line.endswith("\r\n") else "\n" if line.endswith("\n") else ""
+            lines[i] = f"🏆 **{after}:** {' · '.join(parts)} {STANDING_MARKER}{ending}"
             readme.write_text("".join(lines), encoding="utf-8")
             return
 

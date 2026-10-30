@@ -19,6 +19,7 @@ import httpx
 
 from aigaffer.data.models import (
     Bootstrap,
+    EntrySummary,
     EntryWeek,
     Fixture,
     GwHistory,
@@ -98,6 +99,29 @@ class FplClient:
     def chips_used(self, team_id: int) -> list[dict]:
         """Chips already played, as ``{"name": ..., "event": ...}`` dicts."""
         return self._get(f"/entry/{team_id}/history/").get("chips", [])
+
+    def entry_summary(self, team_id: int) -> EntrySummary:
+        """Points, world rank and country rank, off the one entry request."""
+        data = self._get(f"/entry/{team_id}/")
+        region = data.get("player_region_name")
+        classic = (data.get("leagues") or {}).get("classic") or []
+        # The country league is the system league named for the region; see
+        # EntrySummary for why the name, and not the type alone, picks it.
+        region_rank = next(
+            (
+                league.get("entry_rank")
+                for league in classic
+                if region and league.get("league_type") == "s" and league.get("name") == region
+            ),
+            None,
+        )
+        return EntrySummary(
+            gw=data.get("current_event"),
+            total_points=data.get("summary_overall_points"),
+            overall_rank=data.get("summary_overall_rank"),
+            region=region,
+            region_rank=region_rank,
+        )
 
     def live(self, event: int) -> dict[int, LiveStats]:
         """Every player's minutes and points in ``event``, by id."""

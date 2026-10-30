@@ -24,7 +24,7 @@ Set both Telegram secrets or neither. A token without a chat id delivers
 nothing and says so in the log. `ANTHROPIC_API_KEY` is optional: leave it out
 and every run is the solver's alone. The workflow needs `contents: write`
 (already declared) to commit `state/`, `reports/`, the `GW{n}.md` verdicts and
-the README's latest-verdict line back.
+the README's latest-verdict and season-standing lines back.
 
 `Config.from_env()` also reads `AIGAFFER_STATE_DIR` (the state directory,
 default `state`) and `AIGAFFER_MANAGER_MODEL` (the gaffer's model, default
