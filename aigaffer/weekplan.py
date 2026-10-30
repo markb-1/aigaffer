@@ -48,6 +48,7 @@ from zoneinfo import ZoneInfo
 
 from aigaffer.chips import FREE_HIT, WILDCARD
 from aigaffer.config import Config
+from aigaffer.data.schedule import phone_games
 from aigaffer.detailed.render import (
     NO_CHANGE,
     NO_GAFFER,
@@ -582,10 +583,7 @@ def _strip(cur: dict, pid: int) -> str:
     row = cur["players"][pid]
     cells = []
     for gw in cur["events"]:
-        games = row["f"].get(gw) or []
-        cells.append(
-            "+".join(opp if where == "h" else opp.lower() for opp, where in games) or "—"
-        )
+        cells.append(phone_games(row["f"].get(gw) or []))
     return f"{row['n']} {' '.join(cells)} — {window(cur, pid):.1f}"
 
 

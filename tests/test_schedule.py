@@ -6,7 +6,7 @@ still pin its output; these pin the function on its own.
 """
 
 from aigaffer.data.models import Bootstrap, Fixture
-from aigaffer.data.schedule import games_text, opponents
+from aigaffer.data.schedule import games_text, opponents, phone_games
 from tests.fixtures import BOOTSTRAP_JSON
 
 # Clubs 1, 2, 3 are ASH, BRW, CRV.
@@ -42,3 +42,14 @@ def test_games_text_is_the_house_cell_without_the_xp():
     assert games_text([("LEE", "h")]) == "LEE(h)"
     assert games_text([("LEE", "h"), ("WOL", "a")]) == "LEE(h)+wol(a)"
     assert games_text([]) == "—"
+
+
+def test_phone_games_home_upper_away_lower():
+    assert phone_games([("BHA", "h")]) == "BHA"
+    # A snapshot holds JSON lists, not tuples.
+    assert phone_games([["LEE", "a"]]) == "lee"
+
+
+def test_phone_games_double_and_blank():
+    assert phone_games([("BHA", "h"), ("ARS", "a")]) == "BHA+ars"
+    assert phone_games([]) == "—"
