@@ -185,10 +185,13 @@ class Pick(BaseModel):
 class EntrySummary(BaseModel):
     """The season's standing as the README shows it, off ``/entry/{id}/``.
 
-    One request carries all of it: ``current_event`` is the gameweek the
-    figures are "after", ``summary_overall_points`` and
+    One request carries all of it: ``summary_overall_points`` and
     ``summary_overall_rank`` are the tally and the world rank, and
-    ``player_region_name`` names the manager's country. The country rank is
+    ``player_region_name`` names the manager's country. The gameweek the
+    figures are "after" is deliberately not read here: ``current_event``
+    flips at the deadline while the summary figures stay the previous
+    round's until matches are played, so the label comes from the bootstrap's
+    latest finished gameweek instead. The country rank is
     ``entry_rank`` in the system league (``league_type == "s"``) *named* the
     region: the other system leagues ("Overall", "Gameweek 1", a club) and any
     private league that shares the country's name are not it, and matching on
@@ -201,7 +204,6 @@ class EntrySummary(BaseModel):
     figure, never the run.
     """
 
-    gw: int | None = None
     total_points: int | None = None
     overall_rank: int | None = None
     region: str | None = None

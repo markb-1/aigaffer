@@ -246,7 +246,7 @@ def test_entry_summary_reads_points_world_rank_and_the_country_league():
     # lookalike says 2.
     c = make_client({"/api/entry/99/": ENTRY_JSON})
     summary = c.entry_summary(99)
-    assert (summary.gw, summary.total_points, summary.overall_rank) == (1, 57, 1_000_000)
+    assert (summary.total_points, summary.overall_rank) == (57, 1_000_000)
     assert (summary.region, summary.region_rank) == ("Ireland", 9_446)
 
 
@@ -259,11 +259,11 @@ def test_entry_summary_for_another_country_follows_the_region_name():
 
 def test_entry_summary_copes_with_nulls_and_no_matching_league():
     # A new entry: nothing played, no rank, no region, no leagues block.
-    bare = {"current_event": None, "summary_overall_points": None,
+    bare = {"summary_overall_points": None,
             "summary_overall_rank": None, "player_region_name": None}
     summary = make_client({"/api/entry/99/": bare}).entry_summary(99)
     assert summary.model_dump() == {
-        "gw": None, "total_points": None, "overall_rank": None,
+        "total_points": None, "overall_rank": None,
         "region": None, "region_rank": None,
     }
     # A region whose league the list does not hold: rank is None, the rest stands.

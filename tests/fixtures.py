@@ -352,7 +352,7 @@ HISTORY_JSON = {
 # country's; "Overall" and "Liverpool" are system leagues too.
 ENTRY_JSON = {
     "id": 99,
-    "current_event": 1,
+    "current_event": 2,  # flipped at the deadline; the figures are still GW1's
     "summary_overall_points": 57,
     "summary_overall_rank": 1_000_000,
     "player_region_name": "Ireland",

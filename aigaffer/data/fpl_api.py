@@ -116,7 +116,6 @@ class FplClient:
             None,
         )
         return EntrySummary(
-            gw=data.get("current_event"),
             total_points=data.get("summary_overall_points"),
             overall_rank=data.get("summary_overall_rank"),
             region=region,
