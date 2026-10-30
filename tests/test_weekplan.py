@@ -39,6 +39,7 @@ from aigaffer.detailed.skipped import BENCH
 from aigaffer.detailed.snapshot import load_snapshots, write_snapshot
 from aigaffer.executed import Executed
 from aigaffer.report.telegram import send_message
+from aigaffer.report.transfer_card import CardInputs, transfer_cards
 from aigaffer.weekplan import (
     ENTERED,
     NO_PLAN,
@@ -199,8 +200,9 @@ def test_without_do_this_a_plain_card_is_built_from_the_snapshot():
 
 
 def test_a_summary_line_closes_the_text():
-    # One transfer on one free transfer: 1 used, 0 left over; bank 37 tenths.
-    assert texts(snap())[0].splitlines()[-1] == "1 FT used, 0 carried over · bank £3.7m · no hit"
+    # One transfer on one free transfer: 1 used, 0 left over. The bank is the
+    # one after the move: 37 + 46 (Justin sold) - 61 (Cucurella bought) = 22.
+    assert texts(snap())[0].splitlines()[-1] == "1 FT used, 0 carried over · bank £2.2m · no hit"
 
 
 def test_a_hit_is_named_in_points_and_a_banked_transfer_counted():
@@ -209,7 +211,9 @@ def test_a_hit_is_named_in_points_and_a_banked_transfer_counted():
     # moves the free ones used are 2 - 1 = 1 and 1 carried over.
     two = snap(plans={0: plan([7, 5], [4, 2], hits=1), 1: plan([], [], net=18.0)}, ft=2)
 
-    assert texts(two)[0].splitlines()[-1] == "1 FT used, 1 carried over · bank £3.7m · -4 pts in hits"
+    # Bank after both moves: 37 + 46 (Justin) + 129 (Salah) - 61 (Cucurella)
+    # - 50 (Xhaka) = 101.
+    assert texts(two)[0].splitlines()[-1] == "1 FT used, 1 carried over · bank £10.1m · -4 pts in hits"
 
 
 def test_a_chip_week_leaves_the_free_transfers_alone():
@@ -217,7 +221,7 @@ def test_a_chip_week_leaves_the_free_transfers_alone():
 
     summary = texts(wild)[0].splitlines()[-1]
 
-    assert summary == "Wildcard: free transfers untouched · bank £3.7m · no hit"
+    assert summary == "Wildcard: free transfers untouched · bank £2.2m · no hit"
     assert "Chip: Wildcard" in texts(wild)[0]
 
 
@@ -533,8 +537,66 @@ def test_the_skipped_transfers_come_with_the_reason_given_in_the_report():
     plain = texts(snap())[2]
     words = snap(reasons={"skipped": [{"id": 3, "reason": "He would sit on the bench."}]})
 
-    assert "• Haaland over Justin (+6.0): unaffordable" in plain
-    assert "• Haaland over Justin (+6.0): He would sit on the bench." in texts(words)[2]
+    assert "• Haaland over Justin (+6.0 weighted): unaffordable" in plain
+    assert "• Haaland over Justin (+6.0 weighted): He would sit on the bench." in texts(words)[2]
+
+
+def test_passed_over_gap_says_weighted():
+    # The gap is decayed, so it must not be read against the card's plain gain.
+    third = texts(snap())[2]
+
+    assert "• Haaland over Justin (+6.0 weighted): unaffordable" in third
+
+
+def test_text_three_opens_with_the_transfer_card():
+    # Justin (4, DEF, pr 46, sp None) out for Cucurella (7, DEF, pr 61), bank
+    # 37 before: 37 + 46 - 61 = 22, £2.2m left. Window GW8-GW9.
+    # Justin: LEE(h) 3.0, nothing in GW9 (a blank) = 3.0. Cucurella: wol(a)
+    # 2.0, LEE(h) 4.0 = 6.0. This week 2.0 - 3.0 = -1.0; over two weeks +3.0.
+    # Next best at DEF within 61 + 22 = 83, not in the squad after the move
+    # (1, 2, 3, 6, 7) or sold: none, since the only other DEF is Justin.
+    third = texts(snap())[2]
+
+    assert third.splitlines()[:6] == [
+        "3/5 · 🤔 Why this plan",
+        "",
+        "Justin → Cucurella · DEF · £6.1m (bank £2.2m left)",
+        "Out  LEE 3.0 · — = 3.0",
+        "In   wol 2.0 · LEE 4.0 = 6.0",
+        "-1.0 this week, +3.0 over 2 weeks",
+    ]
+
+
+def test_text_three_has_no_card_on_a_roll():
+    rolled = snap(chosen=1)
+
+    third = texts(rolled)[2]
+
+    assert "this week," not in third
+    assert third.splitlines()[:2] == ["3/5 · 🤔 Why this plan", ""]
+
+
+def test_summary_bank_is_after_the_weeks_moves():
+    # The GW9 shape: bank 37, Calafiori sold at 57 (listed 59), Gabriel bought
+    # at 79: 37 + 57 - 79 = 15, £1.5m, not the £3.7m before the move.
+    players = copy.deepcopy(PLAYERS)
+    players[4] = {**players[4], "n": "Calafiori", "pr": 59, "sp": 57}
+    players[7] = {**players[7], "n": "Gabriel", "pr": 79}
+
+    summary = texts(snap(players=players))[0].splitlines()[-1]
+
+    assert summary == "1 FT used, 0 carried over · bank £1.5m · no hit"
+
+
+def test_card_reads_only_the_row_keys_old_snapshots_have():
+    # Rows with only n p c cf pr sp f x: no st, nw, xm or t. The card must
+    # render from them, as it must from a snapshot written before the card.
+    keys = ("n", "p", "c", "cf", "pr", "sp", "f", "x")
+    lean = {pid: {k: v for k, v in row_.items() if k in keys} for pid, row_ in PLAYERS.items()}
+
+    [card] = transfer_cards(CardInputs(lean, [8, 9], [1, 2, 3, 4, 6], 37), [4], [7], "none")
+
+    assert card.splitlines()[0] == "Justin → Cucurella · DEF · £6.1m (bank £2.2m left)"
 
 
 def test_only_the_three_highest_gain_skipped_transfers_are_shown():
@@ -560,7 +622,7 @@ def test_a_transfer_skipped_only_for_the_bench_gives_way_to_one_the_plan_beat():
 
     third = texts(board)[2]
 
-    assert third.index("(+8.0)") < third.index("(+17.0)")
+    assert third.index("(+8.0 weighted)") < third.index("(+17.0 weighted)")
 
 
 def test_triggers_are_printed_when_reasons_carry_them_and_not_otherwise():
