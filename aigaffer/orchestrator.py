@@ -270,6 +270,9 @@ OVERTAKEN = (
 # Said when the detailed report could not be built or written; the run goes
 # on without it, as it does without a ledger it could not write.
 DETAILED_SKIPPED = "detailed: report skipped ({reason})"
+# The transfer cards fall back to plain Out/In bullets when a man moved has no
+# row; the phone shows nothing wrong, so the log says it happened.
+CARDS_SKIPPED = "cards: a moved player has no projected row, so the recommendation printed bullets"
 # Said when the gaffer's reasons for the detailed report could not be added;
 # the report already written keeps "unavailable" in his slots, and the run
 # goes on. The reason is the writer's own (a stop reason, an error's class
@@ -642,6 +645,10 @@ def run_pipeline(
             rows, sorted(projected_events(costed)), squad_ids, effective.squad.bank
         )
     )
+    if rows is not None and any(
+        pid not in rows for pid in [*choice.transfers_out, *choice.transfers_in]
+    ):
+        print(CARDS_SKIPPED)
     report = render_report(
         _label(mode, drafting=solved.draft_mode),
         event,

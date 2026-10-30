@@ -84,6 +84,18 @@ def test_card_matches_the_approved_shape():
     ]
 
 
+def test_a_missing_row_gives_no_cards_at_all():
+    # Two moves, one of them a man the run holds no row for: the card that
+    # survived would print a bank that ignores the missing move, so neither
+    # prints and the caller falls back to its bullets.
+    rows = board()
+    rows[4] = row("Ødegaard", "MID", "ARS", 67, {9: [("LIV", "a")], 10: [("HUL", "h")]},
+                  {9: 4.5, 10: 4.5})
+
+    assert cards_for(rows, [1, 3], [2, 99], [1, 3], 59) == []
+    assert cards_for(rows, [1, 3], [2, 4], [1, 3], 59) != []
+
+
 def test_double_shows_the_weeks_number_once():
     rows = board()
     # A double in GW9: x[9] is already the week's one number, 7.1.

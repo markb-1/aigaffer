@@ -1239,6 +1239,20 @@ def test_without_cards_the_bullets_are_unchanged():
                                      XP, free_transfers=1, cards=None, selling_prices=None)
 
 
+def test_a_card_with_a_missing_row_falls_back_to_the_bullets():
+    bought = ONE.transfers_in[0]
+    holed = CARDS._replace(rows={pid: r for pid, r in CARDS.rows.items() if pid != bought})
+
+    text = render_digest("deadline", EVENT, ONE, LINEUP, BOOTSTRAP, free_transfers=1,
+                         cards=holed)
+
+    assert section(text, "Recommendation")[:3] == [
+        "1 transfer, no hit.",
+        "- Out: Gale (DEF, CRV, £4.0m)",
+        "- In: Reid (FWD, CRV, £9.5m)",
+    ]
+
+
 def test_wildcard_keeps_the_bullets_and_adds_the_pointer():
     players = BOOTSTRAP_PLAYERS
     clubs = {team.id: team.short_name for team in BOOTSTRAP.teams}

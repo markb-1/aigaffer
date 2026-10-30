@@ -38,7 +38,7 @@ One block for each of **this week's** transfers:
 Calafiori → Gabriel · DEF · £7.9m (bank £1.5m left)
 Out  liv 0.8 · HUL 3.6 · new 3.3 · MCI 3.0 · bre 3.2 · tot 3.5 = 17.3
 In   liv 4.8 · HUL 5.8 · new 5.3 · MCI 5.0 · bre 5.2 · tot 5.6 = 31.6
-+4.0 this week, +14.3 over six weeks
++4.0 this week, +14.3 over 6 weeks
 Next best: Tarkowski 28.9 (£6.2m) · Konsa 28.6 (£4.7m)
 ```
 

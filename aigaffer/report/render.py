@@ -1913,7 +1913,11 @@ def _watchlist(
 
     def window(pid: int) -> float:
         projection = projections.get(pid)
-        return 0.0 if projection is None else sum(projection.per_gw.values())
+        # Each week to 2dp first, as the card's rows store it, so the same man
+        # cannot come out 0.1 apart between the card and this list.
+        if projection is None:
+            return 0.0
+        return sum(round(points, 2) for points in projection.per_gw.values())
 
     lines = ["## Watchlist", ""]
     lines += [

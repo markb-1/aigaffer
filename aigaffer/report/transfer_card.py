@@ -136,7 +136,6 @@ def _line(label: str, row: dict, events: Sequence[int]) -> str:
 
 def _alternatives(
     cards: CardInputs,
-    gone: int,
     came: int,
     new_squad: Sequence[int],
     out_ids: Sequence[int],
@@ -178,26 +177,21 @@ def transfer_cards(
     ``[]`` when there are no moves or on a Free Hit week (the temporary team
     is not a transfer to judge); a single pointer line on a Wildcard week,
     where up to fifteen cards would be a wall on a phone. Otherwise the cards
-    come in :func:`pair_moves` order. A pair whose rows the run does not hold
-    is left out rather than raised on, so a hole in the data costs a card, not
-    the digest that carries it.
+    come in :func:`pair_moves` order.
+
+    All or nothing: if the run holds no row for any man moved, there are no
+    cards and the caller prints its plain bullets. Dropping only the pair
+    with the hole would leave the others printing a bank that ignores it, and
+    raising would cost the digest that carries them.
     """
     if not out_ids and not in_ids or chip == FREE_HIT:
         return []
     if chip == WILDCARD:
         return [WILDCARD_POINTER.format(count=len(in_ids))]
     rows = cards.rows
-    pairs = [
-        pair
-        for pair in pair_moves(
-            out_ids, in_ids, lambda pid: rows[pid]["p"] if pid in rows else "?"
-        )
-        if pair[0] in rows and pair[1] in rows
-    ]
-    out_ids = [gone for gone, _ in pairs]
-    in_ids = [came for _, came in pairs]
-    if not pairs:
+    if not all(pid in rows for pid in [*out_ids, *in_ids]):
         return []
+    pairs = pair_moves(out_ids, in_ids, lambda pid: rows[pid]["p"])
     left = bank_left(cards, out_ids, in_ids)
     new_squad = [pid for pid in cards.squad if pid not in out_ids] + list(in_ids)
     events = cards.events
@@ -213,7 +207,7 @@ def transfer_cards(
             _line("In   ", in_row, events),
             f"{this_week:+.1f} this week, {in_sum - out_sum:+.1f} over {len(events)} weeks",
         ]
-        best = _alternatives(cards, gone, came, new_squad, out_ids, left)
+        best = _alternatives(cards, came, new_squad, out_ids, left)
         if best:
             lines.append("Next best: " + " · ".join(best))
         mates = sorted(

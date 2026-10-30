@@ -588,6 +588,18 @@ def test_summary_bank_is_after_the_weeks_moves():
     assert summary == "1 FT used, 0 carried over · bank £1.5m · no hit"
 
 
+def test_summary_bank_falls_back_to_the_snapshot_bank_when_a_mover_has_no_row():
+    # A snapshot missing the bought man's row cannot price the move, so text 1
+    # says the bank it does know rather than failing the whole week plan.
+    players = copy.deepcopy(PLAYERS)
+    del players[7]
+
+    out = texts(snap(players=players))
+
+    assert out[0].splitlines()[-1] == "1 FT used, 0 carried over · bank £3.7m · no hit"
+    assert "→" not in out[2].split("\n\n")[1]
+
+
 def test_card_reads_only_the_row_keys_old_snapshots_have():
     # Rows with only n p c cf pr sp f x: no st, nw, xm or t. The card must
     # render from them, as it must from a snapshot written before the card.
