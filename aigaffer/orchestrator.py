@@ -102,6 +102,7 @@ from aigaffer.data.fpl_api import FplClient
 from aigaffer.data.free_transfers import compute_free_transfers
 from aigaffer.data.models import (
     Bootstrap,
+    EntrySummary,
     Event,
     Fixture,
     GwHistory,
@@ -278,6 +279,9 @@ CARDS_SKIPPED = "cards: a moved player has no projected row, so the recommendati
 # goes on. The reason is the writer's own (a stop reason, an error's class
 # name) or an exception's class name, never an exception's words.
 REASONS_SKIPPED = "detailed: reasons skipped ({reason})"
+# Said when the README's standing line could not be fetched or written; the
+# report is already saved and the run goes on, the reason an error's class name.
+STANDING_SKIPPED = "readme: standing skipped ({reason})"
 
 # The reason a manager whose own module would not import is withheld under.
 # There is no decision to label and the class name already went to stdout;
@@ -848,6 +852,16 @@ def run_pipeline(
         # The real inputs, never the effective: the ledger keeps the API's truth.
         observe(store, inputs.squad, inputs.players, inputs.chips_used)
         _write_report(cfg, event.id, mode, report)
+        # The README's standing line, a luxury like the rest: one request,
+        # and a failure costs the line, never the report just saved.
+        try:
+            _write_standing(
+                cfg.state_dir.parent,
+                client.entry_summary(cfg.team_id),
+                after=_last_finished(effective.bootstrap),
+            )
+        except Exception as error:
+            print(STANDING_SKIPPED.format(reason=type(error).__name__))
         # The long read beside it: the run's snapshot, and the gameweek's
         # detailed report rendered from every snapshot the week has so far.
         # Not on a draft — fifteen bought from nothing has no squad to show
@@ -2902,6 +2916,57 @@ def _point_readme(root: Path, event_id: int) -> None:
                 f"📋 **Latest verdict: [GW{event_id}](GW{event_id}.md)**"
                 f" {LATEST_MARKER}{ending}"
             )
+            readme.write_text("".join(lines), encoding="utf-8")
+            return
+
+
+# The README's second marked line: points and ranks, under the verdict
+# pointer and on the same terms — the marker is the contract, and a README
+# without it is left alone. Ranks settle after each matchday and no
+# scheduled run lands mid-round, so rewriting it on every saved report run
+# changes it about once a week.
+STANDING_MARKER = "<!-- season-standing -->"
+
+
+def _last_finished(bootstrap: Bootstrap) -> int | None:
+    """The latest gameweek whose matches are all played, None for none yet.
+
+    ``finished`` and not ``review_target``'s ``data_checked``: the entry's
+    points and ranks settle when the matches end, and the data check can come
+    hours later, so waiting for it could print "After GW8" over GW9's figures.
+    """
+    return max((e.id for e in bootstrap.events if e.finished), default=None)
+
+
+def _write_standing(root: Path, summary: EntrySummary, after: int | None) -> None:
+    """Rewrite the README's standing line from ``summary``, "after GW{after}".
+
+    ``after`` is the latest finished gameweek (:func:`_last_finished`), not the
+    entry's ``current_event``, which flips at the deadline while the figures
+    are still the previous round's. With no finished gameweek there is
+    nothing to be "after" and the line is left as it was.
+
+    Parts the API did not give are dropped rather than printed as "None"; with
+    no points and no ranks at all the line is left as it was, since an empty
+    claim would be worse than a stale one.
+    """
+    readme = root / "README.md"
+    if not readme.exists():
+        return
+    parts = []
+    if summary.total_points is not None:
+        parts.append(f"{summary.total_points:,} pts")
+    if summary.overall_rank is not None:
+        parts.append(f"world rank {summary.overall_rank:,}")
+    if summary.region_rank is not None:
+        parts.append(f"{summary.region} rank {summary.region_rank:,}")
+    if not parts or after is None:
+        return
+    lines = readme.read_text(encoding="utf-8").splitlines(keepends=True)
+    for i, line in enumerate(lines):
+        if STANDING_MARKER in line:
+            ending = "\r\n" if line.endswith("\r\n") else "\n" if line.endswith("\n") else ""
+            lines[i] = f"🏆 **After GW{after}:** {' · '.join(parts)} {STANDING_MARKER}{ending}"
             readme.write_text("".join(lines), encoding="utf-8")
             return
 

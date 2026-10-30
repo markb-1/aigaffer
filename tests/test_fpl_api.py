@@ -14,6 +14,7 @@ from aigaffer.data.fpl_api import (
 from tests.fixtures import (
     BOOTSTRAP_JSON,
     ELEMENT_SUMMARY_JSON,
+    ENTRY_JSON,
     FIXTURES_JSON,
     HISTORY_JSON,
     PICKS_JSON,
@@ -235,6 +236,41 @@ def test_chips_used_when_none_played():
     del payload["chips"]
     c = make_client({"/api/entry/99/history/": payload})
     assert c.chips_used(99) == []
+
+
+def test_entry_summary_reads_points_world_rank_and_the_country_league():
+    # The country league is found by the region's name among the system
+    # leagues: "Overall" and "Liverpool" are system leagues too, and a
+    # private league that happens to be called "Ireland" (type "x") must not
+    # pass for it. Ireland's entry_rank in ENTRY_JSON is 9,446; the private
+    # lookalike says 2.
+    c = make_client({"/api/entry/99/": ENTRY_JSON})
+    summary = c.entry_summary(99)
+    assert (summary.total_points, summary.overall_rank) == (57, 1_000_000)
+    assert (summary.region, summary.region_rank) == ("Ireland", 9_446)
+
+
+def test_entry_summary_for_another_country_follows_the_region_name():
+    payload = copy.deepcopy(ENTRY_JSON)
+    payload["player_region_name"] = "Liverpool"  # any system league's name
+    c = make_client({"/api/entry/99/": payload})
+    assert c.entry_summary(99).region_rank == 55_000
+
+
+def test_entry_summary_copes_with_nulls_and_no_matching_league():
+    # A new entry: nothing played, no rank, no region, no leagues block.
+    bare = {"summary_overall_points": None,
+            "summary_overall_rank": None, "player_region_name": None}
+    summary = make_client({"/api/entry/99/": bare}).entry_summary(99)
+    assert summary.model_dump() == {
+        "total_points": None, "overall_rank": None,
+        "region": None, "region_rank": None,
+    }
+    # A region whose league the list does not hold: rank is None, the rest stands.
+    odd = copy.deepcopy(ENTRY_JSON)
+    odd["player_region_name"] = "Atlantis"
+    summary = make_client({"/api/entry/99/": odd}).entry_summary(99)
+    assert (summary.total_points, summary.region, summary.region_rank) == (57, "Atlantis", None)
 
 
 def test_element_history_parses():

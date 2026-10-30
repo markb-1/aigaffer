@@ -345,6 +345,27 @@ HISTORY_JSON = {
     "chips": [{"name": "wildcard", "time": "2025-08-15T10:00:00Z", "event": 1}],
 }
 
+# The entry endpoint as the live API serves it (shape checked 2026-10-30):
+# the season's tally and world rank at the top, the region's name, and the
+# classic leagues the manager is in — the system ones (type "s") beside any
+# private one (type "x"). Only the league whose name is the region is the
+# country's; "Overall" and "Liverpool" are system leagues too.
+ENTRY_JSON = {
+    "id": 99,
+    "current_event": 2,  # flipped at the deadline; the figures are still GW1's
+    "summary_overall_points": 57,
+    "summary_overall_rank": 1_000_000,
+    "player_region_name": "Ireland",
+    "leagues": {
+        "classic": [
+            {"id": 1, "name": "Overall", "league_type": "s", "entry_rank": 1_000_000},
+            {"id": 124, "name": "Ireland", "league_type": "s", "entry_rank": 9_446},
+            {"id": 7, "name": "Liverpool", "league_type": "s", "entry_rank": 55_000},
+            {"id": 900, "name": "Ireland", "league_type": "x", "entry_rank": 2},
+        ]
+    },
+}
+
 # ``history_past`` carries a full season's totals, one row a season, oldest
 # first — checked against the live endpoint on 2026-08-22. 3230 minutes over a
 # 38-gameweek season is a prior of 85.0, which is below the 90 the round-1 row
@@ -581,6 +602,7 @@ TEAM_ID = 99
 PICKS_PATH = f"/api/entry/{TEAM_ID}/event/1/picks/"
 TRANSFERS_PATH = f"/api/entry/{TEAM_ID}/transfers/"
 HISTORY_PATH = f"/api/entry/{TEAM_ID}/history/"
+ENTRY_PATH = f"/api/entry/{TEAM_ID}/"
 
 
 def config(**kwargs) -> Config:
@@ -607,6 +629,7 @@ def pipeline_routes(
         PICKS_PATH: PICKS_15_JSON,
         TRANSFERS_PATH: TRANSFERS_JSON,
         HISTORY_PATH: HISTORY_JSON,
+        ENTRY_PATH: ENTRY_JSON,
         **{
             f"/api/element-summary/{element['id']}/": ELEMENT_SUMMARY_JSON
             for element in PIPELINE_ELEMENTS_JSON
