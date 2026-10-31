@@ -50,7 +50,6 @@ from aigaffer.weekplan import (
 )
 
 NOW = datetime(2026, 10, 29, 20, 0, tzinfo=UTC)  # after the run, before the deadline
-REPO = Path(__file__).parent.parent
 
 
 def row(name, pos, pr, f8, f9, x8, x9, *, st="a", nw="", xm=90.0, club="ARS"):
@@ -741,20 +740,23 @@ def test_a_free_hit_week_shows_the_temporary_team_and_leaves_the_transfers_alone
 # --- The committed snapshots -------------------------------------------------
 
 
-@pytest.mark.parametrize("gw", [8, 9])
-def test_the_committed_snapshots_render_five_texts_under_telegrams_limit(gw):
-    snapshots = load_snapshots(REPO / "state", gw)
-    assert snapshots, "the repository carries this week's snapshots"
+# Real runs, frozen: the live state/ moves on with every run, and a test
+# pinned to it goes red the first time the bot does its job. GW8 is the whole
+# finished week (early, scout, deadline); GW9 is Wednesday night's two runs.
+# (GW9's deadline run came later and is not frozen.)
+GW8_WEEK = Path(__file__).parent / "data" / "weekplan-gw8"
+GW9_WEDNESDAY = Path(__file__).parent / "data" / "weekplan-gw9"
+
+
+@pytest.mark.parametrize("frozen, gw", [(GW8_WEEK, 8), (GW9_WEDNESDAY, 9)])
+def test_the_committed_snapshots_render_five_texts_under_telegrams_limit(frozen, gw):
+    snapshots = load_snapshots(frozen, gw)
+    assert snapshots, "the frozen copy carries the week's snapshots"
 
     out = render_week_plan(snapshots, NOW, None)
 
     assert len(out) == 5
     assert all(0 < len(text) < 4000 for text in out)
-
-
-# Wednesday night's real GW9 runs, frozen: the live state/ moves on with every
-# run, and a test pinned to it goes red the first time the bot does its job.
-GW9_WEDNESDAY = Path(__file__).parent / "data" / "weekplan-gw9"
 
 
 def test_the_committed_gw9_plan_matches_the_gaffers_numbers():
