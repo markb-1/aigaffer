@@ -743,6 +743,7 @@ def test_a_free_hit_week_shows_the_temporary_team_and_leaves_the_transfers_alone
 # Real runs, frozen: the live state/ moves on with every run, and a test
 # pinned to it goes red the first time the bot does its job. GW8 is the whole
 # finished week (early, scout, deadline); GW9 is Wednesday night's two runs.
+# (GW9's deadline run came later and is not frozen.)
 GW8_WEEK = Path(__file__).parent / "data" / "weekplan-gw8"
 GW9_WEDNESDAY = Path(__file__).parent / "data" / "weekplan-gw9"
 
