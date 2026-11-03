@@ -5061,6 +5061,9 @@ def test_a_reminder_asks_for_rows_for_the_shown_plan_not_only_the_fresh_one(
 
     alert, _ = _sent_reminder(monkeypatch, tmp_path, entered=entered)
 
+    # One call for the deadline run, one for the reminder: the last is the
+    # reminder's own, not the deadline's (whose ids also hold the stranger).
+    assert len(asked) == 2
     assert stranger in asked[-1], "the reminder's own rows cover the plan it shows"
     assert PLAYERS[stranger].web_name in alert
 
