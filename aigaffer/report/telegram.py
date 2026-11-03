@@ -8,16 +8,30 @@ outside the Basic Multilingual Plane is one Python character but two units —
 and 4000 rather than 4096 leaves room, now that the chunks carry markup, for
 a heading's tags on top of that.
 
-The markup is Telegram HTML, made one line at a time: every line is escaped —
-``&`` first, then ``<`` and ``>``, so an entity is never escaped twice — and a
-markdown heading becomes a ``<b>`` line with its hashes dropped, which is the
-difference between a report that reads like a report on the phone and one that
-opens with a row of ``#``. Escaping is not optional prudence: the live report
-contains the literal ``<- recommended``, which unescaped is an open tag and a
-message Telegram rejects outright. Because every tag opens and closes on its
-own line, no cut — between lines, or inside a line too long for one message,
-which is cut by escaped cost so an entity is never severed either — can leave
-a tag half-sent.
+The markup is Telegram HTML, made one unit at a time. A unit is ordinarily a
+line: it is escaped — ``&`` first, then ``<`` and ``>``, so an entity is never
+escaped twice — and a markdown heading becomes a ``<b>`` line with its hashes
+dropped, which is the difference between a report that reads like a report on
+the phone and one that opens with a row of ``#``. Escaping is not optional
+prudence: the live report contains the literal ``<- recommended``, which
+unescaped is an open tag and a message Telegram rejects outright. Because
+every tag opens and closes within its own unit, no cut — between units, or
+inside a line too long for one message, which is cut by escaped cost so an
+entity is never severed either — can leave a tag half-sent.
+
+The other unit is a fenced block: the lines between two lines that are exactly
+three backticks, which is how the transfer card writes its table. It goes as
+one ``<pre>`` with the fences dropped, so the phone sets it in monospace and
+the columns line up. Its content is escaped and nothing more — a ``# `` inside
+a table is a table, not a heading — and a cut falls before the block or after
+it, never through it. A block too big for a message even on its own (the
+``<pre>`` tags counted) is not worth a cut table: it degrades to ordinary
+lines. The fence must be bare: a tagged fence, or one never closed, is
+ordinary text and arrives as written. A stray bare fence in the gaffer's own
+words cannot swallow a card, because the card is built by code and always
+comes before the model's prose in the report (see ``transfer_cards`` in
+``render.py`` and the week plan's cards-then-rationale order in
+``weekplan.py``), so a lone fence there finds no closer and stays text.
 
 Markup is also a way to be rejected that plain text never had, so each chunk
 remembers the plain lines it was made from: if Telegram turns the HTML down
@@ -152,9 +166,10 @@ def _utf16_len(text: str) -> int:
 
 
 def _chunks(text: str) -> list[tuple[str, str]]:
-    """``text`` as whole lines packed into ``(plain, html)`` pieces.
+    """``text`` as whole units packed into ``(plain, html)`` pieces.
 
-    Both renderings of a line stay in the same chunk, so a fallback resends
+    A unit is a line or a fenced block (see :func:`_units`), and never
+    straddles two chunks. Both renderings of a unit stay in the same chunk, so a fallback resends
     exactly what the rejected message would have said. The budget is measured
     against the HTML in UTF-16 units, tags and entities included —
     conservative, since Telegram counts the text after parsing, but a count
@@ -168,8 +183,7 @@ def _chunks(text: str) -> list[tuple[str, str]]:
     plain_lines: list[str] = []
     html_lines: list[str] = []
     length = 0
-    for line in _lines(text):
-        html = _as_html(line)
+    for line, html in _units(text):
         if plain_lines and length + 1 + _utf16_len(html) > MAX_CHARS:
             chunks.append(("\n".join(plain_lines), "\n".join(html_lines)))
             plain_lines, html_lines, length = [], [], 0
@@ -178,6 +192,49 @@ def _chunks(text: str) -> list[tuple[str, str]]:
         html_lines.append(html)
     chunks.append(("\n".join(plain_lines), "\n".join(html_lines)))
     return [chunk for chunk in chunks if chunk[0].strip()]
+
+
+def _units(text: str) -> Iterator[tuple[str, str]]:
+    """``text`` as ``(plain, html)`` units, in order: lines and fenced blocks.
+
+    A line is a unit as :func:`_lines` cuts it, rendered by :func:`_as_html`.
+    A fenced block is one unit whose HTML is ``<pre>`` around the escaped
+    content and whose plain text is the content itself, so the plain fallback
+    loses the fences and keeps the table. The content is escaped only; it
+    never reaches :func:`_as_html`, or a ``# `` row would be bolded.
+
+    A fence is a line that is exactly three backticks once stripped. An
+    opener with no closer is an ordinary line, so nothing after it is
+    swallowed. An empty block yields nothing. A block whose ``<pre>`` HTML
+    exceeds ``MAX_CHARS`` in UTF-16 units — the measure :func:`_chunks` packs
+    by — would have to be cut mid-table; it degrades to its lines instead,
+    fences dropped, and from then on they are ordinary lines (so a ``# ``
+    row is bolded there, which is acceptable).
+    """
+    lines = text.split("\n")
+    i = 0
+    while i < len(lines):
+        if lines[i].strip() == "```":
+            closer = next(
+                (j for j in range(i + 1, len(lines)) if lines[j].strip() == "```"),
+                None,
+            )
+            if closer is not None:
+                body = lines[i + 1 : closer]
+                html = "<pre>" + _escape("\n".join(body)) + "</pre>"
+                if not body:
+                    pass
+                elif _utf16_len(html) <= MAX_CHARS:
+                    yield "\n".join(body), html
+                else:
+                    for line in body:
+                        for piece in _lines(line):
+                            yield piece, _as_html(piece)
+                i = closer + 1
+                continue
+        for piece in _lines(lines[i]):
+            yield piece, _as_html(piece)
+        i += 1
 
 
 def _as_html(line: str) -> str:
