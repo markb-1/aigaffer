@@ -12,10 +12,11 @@ It says what the report says. Both are pure readers of one dict, the run
 snapshot (:mod:`aigaffer.detailed.snapshot`), so the action card is the
 snapshot's own ``do_this`` word for word (bar the two mended lines below),
 the rationale blocks are the gaffer's words as he wrote them, and the lines
-about moves, captains and the road ahead come from the very helpers the detailed report prints them with
-(:mod:`aigaffer.detailed.render` makes them public for this). There is no
-shared layer between the two renderers on purpose: a layer would be a third
-thing to keep in step, and two readers of one dict cannot disagree about it.
+about moves, captains and the road ahead come from the very helpers the
+detailed report prints them with (:mod:`aigaffer.detailed.render` makes them
+public for this). There is no shared layer between the two renderers on
+purpose: a layer would be a third thing to keep in step, and two readers of
+one dict cannot disagree about it.
 
 Text 1 also carries the team to field, as the lineup table every phone text
 carries (:mod:`aigaffer.report.lineup_table`): the eleven and the bench, each
@@ -209,7 +210,8 @@ def _this_week(cur: dict, prev: dict | None, now: datetime, executed: Executed |
     changes = _changes(cur, prev)
     if changes:
         lines += ["", *changes]
-    lines += ["", _stored_checklist(cur["do_this"]) if cur.get("do_this") else _fallback_card(cur)]
+    card = _stored_checklist(cur["do_this"]) if cur.get("do_this") else _fallback_card(cur)
+    lines += ["", card]
     lines += ["", _lineup(cur)]
     lines += ["", _summary(cur)]
     return "\n".join(lines)
