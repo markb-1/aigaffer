@@ -102,14 +102,16 @@ the card (see "Bank" below).
     most 30 characters.
   - A double-gameweek week of 10+ points, or a triple gameweek, can go to
     31 or more. That's accepted, not designed for: nothing truncates.
-  - **The 30 has to be measured before it is locked.** The principal worked
-    back from the screenshot that a 30-character `<pre>` line (Menlo, plus the
-    block's inset) is right at the edge of an iPhone bubble. Before the width
-    test is written, one throwaway `<pre>` ruler with 22-, 28- and
-    30-character lines goes to Mark's chat, with his OK. If 30 wraps, a
-    double-gameweek row uses a one-space gap between the Out and In cells
-    (28). The measured column count is recorded here, so the next card
-    change has a number to work to.
+  - **Measured on 3 Nov 2026.** The principal worked back from the first
+    screenshot that 30 characters might be at the edge, so a throwaway
+    `<pre>` ruler was sent to Mark's chat. On his iPhone (Telegram iOS,
+    default text size), lines of 22, 28, 30 and **32** characters all stayed
+    on one line, with room to spare. The sample 30-character double row was
+    tested and also fit. So the 30 budget holds with a margin, and **32 is
+    the measured ceiling** for the next card change to work to. Telegram
+    draws a `</>` badge at the top right of the block, beside the first
+    line. The table's first line is the short header row, so the two don't
+    collide.
 
 ### The lines under the table
 
