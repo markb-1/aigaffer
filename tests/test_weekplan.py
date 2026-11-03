@@ -556,13 +556,17 @@ def test_text_three_opens_with_the_transfer_card():
     # (1, 2, 3, 6, 7) or sold: none, since the only other DEF is Justin.
     third = texts(snap())[2]
 
-    assert third.splitlines()[:6] == [
+    assert third.splitlines()[:10] == [
         "3/5 · 🤔 Why this plan",
         "",
-        "Justin → Cucurella · DEF · £6.1m (bank £2.2m left)",
-        "Out  LEE 3.0 · — = 3.0",
-        "In   wol 2.0 · LEE 4.0 = 6.0",
-        "-1.0 this week, +3.0 over 2 weeks",
+        "Justin → Cucurella · DEF · £6.1m",
+        "```",
+        "GW  Out      In",
+        "8   LEE 3.0  wol 2.0",
+        "9   —        LEE 4.0",
+        "=       3.0      6.0",
+        "```",
+        "- -1.0 this week, +3.0 over 2 weeks",
     ]
 
 
@@ -607,7 +611,7 @@ def test_card_reads_only_the_row_keys_old_snapshots_have():
 
     [card] = transfer_cards(CardInputs(lean, [8, 9], [1, 2, 3, 4, 6], 37), [4], [7], "none")
 
-    assert card.splitlines()[0] == "Justin → Cucurella · DEF · £6.1m (bank £2.2m left)"
+    assert card.splitlines()[0] == "Justin → Cucurella · DEF · £6.1m"
 
 
 def test_only_the_three_highest_gain_skipped_transfers_are_shown():

@@ -1202,10 +1202,14 @@ CARD_ROWS = {
 }
 CARDS = CardInputs(CARD_ROWS, [2, 3], SQUAD, 80)
 CARD = "\n".join([
-    "Gale → Reid · FWD · £9.5m (bank £2.5m left)",
-    "Out  ASH 1.0 · brw 2.0 = 3.0",
-    "In   ASH 4.0 · brw 5.0 = 9.0",
-    "+3.0 this week, +6.0 over 2 weeks",
+    "Gale → Reid · FWD · £9.5m",
+    "```",
+    "GW  Out      In",
+    "2   ASH 1.0  ASH 4.0",
+    "3   brw 2.0  brw 5.0",
+    "=       3.0      9.0",
+    "```",
+    "- +3.0 this week, +6.0 over 2 weeks",
 ])
 
 
@@ -1214,7 +1218,7 @@ def test_digest_carries_the_card_under_recommendation():
                          cards=CARDS)
 
     # The digest has no gaffer here, so the pointer line is the section's tail.
-    assert section(text, "Recommendation")[:5] == ["1 transfer, no hit.", *CARD.splitlines()]
+    assert section(text, "Recommendation")[:9] == ["1 transfer, no hit.", *CARD.splitlines()]
     assert "- Out:" not in text
 
 
