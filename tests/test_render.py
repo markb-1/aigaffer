@@ -648,8 +648,9 @@ def test_a_signing_that_must_start_says_so():
 
 def test_two_signings_that_must_start_are_named_in_the_order_bought():
     # TWO buys Pike (16) and Reid (18); both go into the eleven, in place of
-    # Hume and Oduya. The line names them as ``choice.transfers_in`` lists them.
-    both = replace(STARTING, xi=[1, 3, 4, 5, 16, 9, 10, 11, 13, 14, 18], captain=16)
+    # Hume and Oduya. The eleven lists Reid first, so the line naming Pike
+    # first shows it follows ``choice.transfers_in``, not the eleven's order.
+    both = replace(STARTING, xi=[18, 1, 3, 4, 5, 16, 9, 10, 11, 13, 14], captain=16)
     block = section(report(choice=TWO, lineup=both), "Do this")
 
     assert "Set lineup: Pike, Reid start — see the XI below" in block
