@@ -5033,6 +5033,38 @@ def test_an_entered_reminder_shows_numbers(monkeypatch, tmp_path):
     assert buzz == alert
 
 
+@pytest.mark.parametrize("entered", [False, True])
+def test_a_reminder_asks_for_rows_for_the_shown_plan_not_only_the_fresh_one(
+    monkeypatch, tmp_path, entered
+):
+    # The pipeline's planned, entered and fresh elevens are the same men, so
+    # the shown plan is swapped for one with a stranger on its bench: an id in
+    # no fresh lineup. The run must still ask for his row, or a calm text would
+    # print him name-only while the rest of the table has numbers.
+    stranger = 21
+    rebuilt = "_entered_lineup" if entered else "_recorded_lineup"
+    real_rebuild = getattr(orchestrator, rebuilt)
+
+    def with_stranger(*args, **kwargs):
+        lineup = real_rebuild(*args, **kwargs)
+        return replace(lineup, bench=[*lineup.bench[:-1], stranger])
+
+    monkeypatch.setattr(orchestrator, rebuilt, with_stranger)
+    asked = []
+    real = orchestrator.player_rows
+
+    def spy(**kwargs):
+        asked.append(set(kwargs["ids"]))
+        return real(**kwargs)
+
+    monkeypatch.setattr(orchestrator, "player_rows", spy)
+
+    alert, _ = _sent_reminder(monkeypatch, tmp_path, entered=entered)
+
+    assert stranger in asked[-1], "the reminder's own rows cover the plan it shows"
+    assert PLAYERS[stranger].web_name in alert
+
+
 def test_a_reminder_with_no_full_report_carries_the_fresh_lineup(tmp_path):
     cfg = config(state_dir=tmp_path / "state")
     store = Store(cfg.state_dir / "aigaffer.db")

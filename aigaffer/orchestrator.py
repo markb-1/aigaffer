@@ -1036,8 +1036,8 @@ def _run_reminder(
     # it stood at the full report, and the yardstick here is solver-then against
     # solver-now, each on its own day's calendar. The coming week's minutes
     # are the manager's to read, and the reminder never asks him, so they go
-    # unread here: the model's own minutes (``week.xmins``) are all the
-    # lineup tables print.
+    # unread here; the lineup tables' rows are built on the model's own
+    # (``week.xmins``), which they never print.
     week = prepare_week(cfg, client, store)
     inputs, ledger, effective, executed = (
         week.inputs, week.ledger, week.effective, week.executed
