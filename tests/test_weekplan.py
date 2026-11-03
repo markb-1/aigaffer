@@ -38,6 +38,7 @@ from aigaffer.detailed import render as detailed
 from aigaffer.detailed.skipped import BENCH
 from aigaffer.detailed.snapshot import load_snapshots, write_snapshot
 from aigaffer.executed import Executed
+from aigaffer.report.render import FREE_HIT_LINE
 from aigaffer.report.telegram import send_message
 from aigaffer.report.transfer_card import CardInputs, transfer_cards
 from aigaffer.weekplan import (
@@ -178,24 +179,88 @@ def test_do_this_is_printed_verbatim_and_no_fallback_card_appears():
     assert "Action card (the gameweek report has the full checklist)" not in first
 
 
-def test_without_do_this_a_plain_card_is_built_from_the_snapshot():
+# Text 1's lineup table, worked by hand. The XI [1, 2, 3, 4, 6] grouped by
+# position in XI order: Raya in goal, Justin at the back, Saka (C) then Salah
+# (V) in midfield, Haaland up front: 1-2-1; Xhaka on the bench. The widest
+# name is "Salah V" (7); the GW8 fixtures are all three wide, and the widest
+# xP is three ("4.1", Saka's 4.12 at one decimal).
+TEAM = """Starting XI (1-2-1)
+```
+GW8 fixture, xP
+GK  Raya     LEE 3.0
+DEF Justin   LEE 3.0
+MID Saka C   LEE 4.1
+    Salah V  wol 5.0
+FWD Haaland  LEE 6.0
+
+B1  Xhaka    wol 2.0
+```"""
+
+
+def test_text_one_shows_the_team_after_the_checklist():
+    first = texts(snap(do_this="## Do this\nSELL X"))[0]
+
+    assert TEAM in first
+    assert first.index("SELL X") < first.index(TEAM) < first.index("1 FT used")
+
+
+def test_the_fallback_card_has_the_table_and_no_team_lines():
     first = texts(snap())[0]
 
-    # Justin £4.6m out, Cucurella £6.1m in, one free transfer, no hit; the XI
-    # is a keeper, one defender, Saka then Salah (11.42 over 5.00) and
-    # Haaland: 1-2-1; Xhaka on the bench.
+    # Justin £4.6m out, Cucurella £6.1m in, one free transfer, no hit. The
+    # card no longer lists the eleven: the table under it does.
     assert (
         "Action card (the gameweek report has the full checklist)\n"
         "Transfers: out Justin (£4.6m), in Cucurella (£6.1m) — 1 FT, no hit\n"
         "Captain Saka · Vice Salah\n"
-        "XI (1-2-1):\n"
-        "GKP: Raya\n"
-        "DEF: Justin\n"
-        "MID: Saka, Salah\n"
-        "FWD: Haaland\n"
-        "Bench: Xhaka"
+        "\n" + TEAM
     ) in first
+    assert first.count(TEAM) == 1
+    assert "XI (1-2-1):" not in first and "Bench: Xhaka" not in first
     assert "Chip:" not in first, "no chip, no chip line"
+
+
+def test_an_old_stored_set_lineup_line_is_dropped():
+    old = "Set lineup (1-2-1): Raya; Justin; Saka, Salah; Haaland"
+    new = "Set lineup: Saka starts — see the XI below"
+    first = texts(snap(do_this=f"## Do this\nSELL X\n{old}\n{new}"))[0]
+
+    assert old not in first
+    assert new in first
+    assert first.count("Raya") == 1, "the team once, in the table"
+
+
+def test_an_old_stored_free_hit_line_is_rewritten():
+    old = "Free Hit XI (this week only): Raya, Justin — a temporary team; it reverts next week"
+    first = texts(snap(do_this=f"## Do this\nPLAY FREE HIT\n{old}"))[0]
+
+    assert old not in first
+    assert FREE_HIT_LINE in first
+
+
+def test_a_free_hit_week_shows_the_temporary_team():
+    # The temporary eleven [6, 4, 7, 1, 2]: Raya; Justin, Cucurella; Saka,
+    # Salah -- 2-2-0. Its bench is the temporary fifteen less the eleven, in
+    # squad order: Xhaka, then Haaland.
+    free_hit = snap(
+        decision={**snap()["decision"], "chip": "free_hit"},
+        freehit={"squad": [6, 4, 1, 2, 7, 5, 3], "xi": [6, 4, 7, 1, 2]},
+    )
+    lines = texts(free_hit)[0].splitlines()
+
+    assert "Starting XI — free hit team (2-2-0)" in lines
+    assert any(line.startswith("    Cucurella") for line in lines)
+    assert any(line.startswith("B1  Xhaka") for line in lines)
+    assert any(line.startswith("B2  Haaland") for line in lines)
+
+
+def test_a_player_with_no_row_is_still_listed():
+    lacking = snap()
+    del lacking["players"][5]
+
+    lines = texts(lacking)[0].splitlines()
+
+    assert "B1  #5" in lines
 
 
 def test_a_summary_line_closes_the_text():
@@ -735,7 +800,7 @@ def test_a_free_hit_week_shows_the_temporary_team_and_leaves_the_transfers_alone
     out = texts(free_hit)
 
     assert "Chip: Free Hit" in out[0]
-    assert "Bench: Cucurella" in out[0]
+    assert "B1  Cucurella" in out[0]
     assert "Transfers: none — keep the free transfer." in out[0]
     assert out[0].splitlines()[-1] == "Free Hit: free transfers untouched · bank £3.7m · no hit"
     assert "Xhaka" in out[4] and "Salah" not in out[4]

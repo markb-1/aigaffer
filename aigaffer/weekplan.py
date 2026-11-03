@@ -10,12 +10,21 @@ it is only as fresh as the last run, which the first line says
 
 It says what the report says. Both are pure readers of one dict, the run
 snapshot (:mod:`aigaffer.detailed.snapshot`), so the action card is the
-snapshot's own ``do_this`` word for word, the rationale blocks are the
-gaffer's words as he wrote them, and the lines about moves, captains and the
-road ahead come from the very helpers the detailed report prints them with
-(:mod:`aigaffer.detailed.render` makes them public for this). There is no
-shared layer between the two renderers on purpose: a layer would be a third
-thing to keep in step, and two readers of one dict cannot disagree about it.
+snapshot's own ``do_this`` word for word (bar the two mended lines below),
+the rationale blocks are the gaffer's words as he wrote them, and the lines
+about moves, captains and the road ahead come from the very helpers the
+detailed report prints them with (:mod:`aigaffer.detailed.render` makes them
+public for this). There is no shared layer between the two renderers on
+purpose: a layer would be a third thing to keep in step, and two readers of
+one dict cannot disagree about it.
+
+Text 1 also carries the team to field, as the lineup table every phone text
+carries (:mod:`aigaffer.report.lineup_table`): the eleven and the bench, each
+man with this week's fixture and xP from the snapshot's rows. It sits after
+the checklist and before the transfer summary, and is the one place text 1
+names the team: a stored checklist's old ``Set lineup (…)`` line, which
+listed the eleven, is dropped, and an old free-hit line that named the
+temporary team is rewritten to point at the table.
 
 Text 3 opens with a card for each of the week's transfers
 (:mod:`aigaffer.report.transfer_card`): both players' fixtures with their
@@ -71,9 +80,14 @@ from aigaffer.detailed.skipped import BENCH
 from aigaffer.detailed.snapshot import latest_snapshot, load_snapshots
 from aigaffer.executed import Executed
 from aigaffer.inbox import Reply
+from aigaffer.report.lineup_table import lineup_table
 from aigaffer.report.render import (
     DEADLINE_FORMAT,
+    FREE_HIT_LINE,
+    FREE_HIT_XI,
     HIT_POINTS,
+    PHONE_FREE_HIT,
+    PHONE_HEADING,
     chip_label,
     noted,
     price,
@@ -196,7 +210,9 @@ def _this_week(cur: dict, prev: dict | None, now: datetime, executed: Executed |
     changes = _changes(cur, prev)
     if changes:
         lines += ["", *changes]
-    lines += ["", cur["do_this"].strip() if cur.get("do_this") else _fallback_card(cur)]
+    card = _stored_checklist(cur["do_this"]) if cur.get("do_this") else _fallback_card(cur)
+    lines += ["", card]
+    lines += ["", _lineup(cur)]
     lines += ["", _summary(cur)]
     return "\n".join(lines)
 
@@ -216,11 +232,61 @@ def _changes(cur: dict, prev: dict | None) -> list[str]:
     return [f"Changed since the {prev['mode']} run:", *shown]
 
 
+def _stored_checklist(do_this: str) -> str:
+    """The snapshot's ``do_this``, as text 1 prints it under the lineup table.
+
+    Stored text, so a snapshot written before the table keeps the old lines
+    that named the whole eleven. Two are mended here so the team is not shown
+    twice: a ``Set lineup (`` line (the bracket is unique to the old form,
+    which listed the eleven by position) is dropped, and a free-hit line that
+    named the temporary team becomes the one that points at the table.
+    Everything else is printed as it was stored.
+    """
+    kept = []
+    for line in do_this.strip().splitlines():
+        if line.startswith("Set lineup ("):
+            continue
+        kept.append(FREE_HIT_LINE if line.startswith(f"{FREE_HIT_XI}:") else line)
+    return "\n".join(kept)
+
+
+def _lineup(cur: dict) -> str:
+    """The team to field, as the lineup table every phone text carries.
+
+    The heading is the phone's (``Starting XI (1-2-1)``), with the free-hit
+    suffix when the snapshot holds a temporary team. That keys on the same
+    ``freehit`` field :func:`_bench` reads, rather than on the chip, so the
+    heading and the team under it cannot disagree. The eleven keeps the
+    snapshot's order within each position; a man with no row goes in a last
+    ``?`` group, as the fallback card used to put him. The numbers are the
+    snapshot's own rows for its gameweek.
+    """
+    free_hit = cur.get("freehit")
+    xi = free_hit["xi"] if free_hit else cur["xi"]
+    groups: dict[str, list[int]] = {pos: [] for pos in _POSITIONS}
+    for pid in xi:
+        row = cur["players"].get(pid)
+        groups.setdefault(row["p"] if row and row["p"] in groups else "?", []).append(pid)
+    shape = "-".join(str(len(groups[pos])) for pos in _POSITIONS[1:])
+    suffix = PHONE_FREE_HIT if free_hit else ""
+    table = lineup_table(
+        [("GK" if pos == "GKP" else pos, ids) for pos, ids in groups.items() if ids],
+        _bench(cur),
+        captain=cur.get("captain"),
+        vice=cur.get("vice"),
+        name=lambda pid: name(cur, pid),
+        rows=cur["players"],
+        gw=cur["gw"],
+    )
+    return "\n".join([f"{PHONE_HEADING}{suffix} ({shape})", *table])
+
+
 def _fallback_card(cur: dict) -> str:
     """The action card for a snapshot that has no ``do_this``: this week's
-    moves priced, the chip, the armbands, the XI by position and the bench in
-    order. Plain and complete enough to act on, and labelled as the lesser of
-    the two so nobody takes it for the checklist."""
+    moves priced, the chip and the armbands. The eleven and the bench are the
+    lineup table that follows it in text 1, so the card does not list them.
+    Plain and complete enough to act on, and labelled as the lesser of the two
+    so nobody takes it for the checklist."""
     plan = cur["plans"][cur["chosen"]]
     lines = [FALLBACK_LABEL]
     if plan["in"] or plan["out"]:
@@ -234,14 +300,6 @@ def _fallback_card(cur: dict) -> str:
     if played != "none":
         lines.append(f"Chip: {chip_label(played)}")
     lines.append(f"Captain {name(cur, cur.get('captain'))} · Vice {name(cur, cur.get('vice'))}")
-    groups = {pos: [] for pos in _POSITIONS}
-    for pid in sorted(cur["xi"], key=lambda p: (-window(cur, p), p) if p in cur["players"] else (0, p)):
-        row = cur["players"].get(pid)
-        groups.setdefault(row["p"] if row else "?", []).append(name(cur, pid))
-    shape = "-".join(str(len(groups[pos])) for pos in _POSITIONS[1:])
-    lines.append(f"XI ({shape}):")
-    lines += [f"{pos}: {', '.join(names)}" for pos, names in groups.items() if names]
-    lines.append("Bench: " + (", ".join(name(cur, pid) for pid in _bench(cur)) or "none"))
     return "\n".join(lines)
 
 

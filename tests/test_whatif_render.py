@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from aigaffer.chips import FREE_HIT, WILDCARD
-from aigaffer.data.models import Player
+from aigaffer.data.models import Fixture, Player
 from aigaffer.model.xp import PlayerProjection
 from aigaffer.orchestrator import PreparedWeek
 from aigaffer.report import whatif as render
@@ -48,11 +48,18 @@ def _player(pid: int) -> Player:
     )
 
 
-def _week(*, xmins=None, executed=None, deadlines=None, free_transfers=2) -> PreparedWeek:
+def _week(
+    *, xmins=None, executed=None, deadlines=None, free_transfers=2, fixtures=()
+) -> PreparedWeek:
     players = {pid: _player(pid) for pid in NAMES}
     deadlines = deadlines or {6: DEADLINE, 7: DEADLINE + timedelta(days=7)}
     events = [SimpleNamespace(id=gw, deadline_time=when) for gw, when in sorted(deadlines.items())]
-    bootstrap = SimpleNamespace(events=events, chips=[])
+    # Each player is his own club, short-named T{id}. With no fixtures every
+    # man blanks, so the team's rows print the dash and no xP.
+    teams = [SimpleNamespace(id=pid, short_name=f"T{pid}", name=f"Team {pid}") for pid in NAMES]
+    bootstrap = SimpleNamespace(
+        events=events, chips=[], teams=teams, elements=list(players.values())
+    )
     # GW6 points: the squad descends 30, 29, ... by id; signings score high.
     xp = {pid: float(31 - pid) for pid in range(1, 16)}
     xp.update({21: 20.0, 22: 20.0, 23: 19.0, 24: 25.0, 25: 24.0})
@@ -67,6 +74,7 @@ def _week(*, xmins=None, executed=None, deadlines=None, free_transfers=2) -> Pre
         event=SimpleNamespace(id=6, deadline_time=DEADLINE),
         executed=executed,
         bootstrap=bootstrap,
+        fixtures=list(fixtures),
         chips_used=[],
     )
     return PreparedWeek(
@@ -118,12 +126,28 @@ VERDICT = {"event": 6, "transfers_in": [], "transfers_out": [], "adjustments": [
 # (Kinsky 2, Guehi 5), the last four as the bench in order. Rows, by hand:
 # GK 2; DEF 5, 6, 7; MID 8, 9, 10, 11; FWD 13, 14, 15. Bank: 10 + sales (Diop
 # at his ledger price 40, the other three at 50: 190) - buys (4 x 50 = 200) = 0.
+# The week has no fixtures, so every row blanks: the dash two spaces after the
+# 12-wide name column (CalvertLewin) and no xP.
 WC_TEAM = """If you played it — C Kinsky · V Guehi · bank £0.0m:
-GK  Kinsky (C)
-DEF Guehi (V), Calafiori, Vuskovic
-MID Bruno, Mbeumo, Gross, LewisPotter
-FWD Haaland, CalvertLewin, JoaoPedro
-Bench: 1 Pickford · 2 Gvardiol · 3 Mitchell · 4 Tavernier"""
+```
+GW6 fixture, xP
+GK  Kinsky C      —
+DEF Guehi V       —
+    Calafiori     —
+    Vuskovic      —
+MID Bruno         —
+    Mbeumo        —
+    Gross         —
+    LewisPotter   —
+FWD Haaland       —
+    CalvertLewin  —
+    JoaoPedro     —
+
+B1  Pickford      —
+B2  Gvardiol      —
+B3  Mitchell      —
+B4  Tavernier     —
+```"""
 FOOTER = 'Not recorded — if you play it, don\'t send "Transfers made". Gaffer\'s view next.'
 
 
@@ -142,6 +166,28 @@ def test_a_wildcard_play_is_three_lines_the_team_and_the_footer():
         "\n" + WC_TEAM + "\n"
         "\n" + FOOTER
     )
+
+
+def test_the_team_carries_fixture_and_xp():
+    # One GW6 game: Kinsky's club (2) at home to Guehi's (5). Kinsky reads the
+    # opponent in upper case, "T5"; Guehi, away, reads "t2". Everyone else
+    # blanks. The fixture column is as wide as its widest entry, 2, so the
+    # dash pads to 2 and is rstripped away; the xP column is 4 ("29.0").
+    # Kinsky's xP is 31 - 2 = 29.0, Guehi's 31 - 5 = 26.0, before the armband.
+    week = _week(fixtures=[Fixture(id=1, event=6, team_h=2, team_a=5)])
+    lines = _text(_wildcard(band=PLAY, lean=None, net=12.0), week).splitlines()
+
+    assert "GK  Kinsky C      T5 29.0" in lines
+    assert "DEF Guehi V       t2 26.0" in lines
+    assert "    Calafiori     —" in lines
+
+
+def test_the_heading_swap_leaves_the_fence_whole():
+    lines = _text(_wildcard()).splitlines()
+    at = next(i for i, line in enumerate(lines) if line.startswith("If you played it"))
+
+    assert lines[at + 1] == "```"
+    assert lines[at + 2] == "GW6 fixture, xP"
 
 
 def test_a_hold_off_path_names_the_better_week_and_is_provisional_when_far_out():
@@ -222,11 +268,25 @@ def test_a_free_hit_leads_with_its_one_week_gain_and_fields_the_free_hit_team():
         "Deadline Sat 10 Oct 11:00 Irish (in 1d 15h)\n"
         "\n"
         "If you played it — your free-hit team · C Kinsky · V Muharemovic:\n"
-        "GK  Kinsky (C)\n"
-        "DEF Muharemovic (V), Guehi, Calafiori, Vuskovic\n"
-        "MID Bruno, Mbeumo, Gross, LewisPotter\n"
-        "FWD Haaland, CalvertLewin\n"
-        "Bench: 1 JoaoPedro · 2 Pickford · 3 Gvardiol · 4 Schade\n"
+        "```\n"
+        "GW6 fixture, xP\n"
+        "GK  Kinsky C       —\n"
+        "DEF Muharemovic V  —\n"
+        "    Guehi          —\n"
+        "    Calafiori      —\n"
+        "    Vuskovic       —\n"
+        "MID Bruno          —\n"
+        "    Mbeumo         —\n"
+        "    Gross          —\n"
+        "    LewisPotter    —\n"
+        "FWD Haaland        —\n"
+        "    CalvertLewin   —\n"
+        "\n"
+        "B1  JoaoPedro      —\n"
+        "B2  Pickford       —\n"
+        "B3  Gvardiol       —\n"
+        "B4  Schade         —\n"
+        "```\n"
         "\n" + FOOTER
     )
 
@@ -263,13 +323,31 @@ def test_a_doubtful_newcomer_is_noted_after_his_name_not_in_a_warning_line(monke
 
     text = _text(whatif, week)
 
-    assert text.split("\n\n")[1] == (
+    # The notes are a last column. Every row blanks (no fixtures), so the xP
+    # slot is empty and a note lands two spaces after the dash: one before the
+    # empty slot, one after it. Mitchell's minutes are no doubt on the bench.
+    team = text.split("\n\n", 1)[1].split("\n\n" + FOOTER)[0]
+    assert team == (
         "If you played it — C Bruno · V Mbeumo · bank £0.0m:\n"
-        "GK  Kinsky\n"
-        "DEF Guehi, Calafiori, Gvardiol (doubtful)\n"
-        "MID Bruno (C), Mbeumo (V), Gross, Tavernier (75%)\n"
-        "FWD Haaland, CalvertLewin, JoaoPedro\n"
-        "Bench: 1 Pickford · 2 Vuskovic · 3 LewisPotter · 4 Mitchell"
+        "```\n"
+        "GW6 fixture, xP\n"
+        "GK  Kinsky        —\n"
+        "DEF Guehi         —\n"
+        "    Calafiori     —\n"
+        "    Gvardiol      —  doubtful\n"
+        "MID Bruno C       —\n"
+        "    Mbeumo V      —\n"
+        "    Gross         —\n"
+        "    Tavernier     —  75%\n"
+        "FWD Haaland       —\n"
+        "    CalvertLewin  —\n"
+        "    JoaoPedro     —\n"
+        "\n"
+        "B1  Pickford      —\n"
+        "B2  Vuskovic      —\n"
+        "B3  LewisPotter   —\n"
+        "B4  Mitchell      —\n"
+        "```"
     )
     assert "⚠️" not in text
 
@@ -280,13 +358,13 @@ def test_a_newcomer_in_the_eleven_on_thin_minutes_is_noted_in_mins():
     whatif = replace(whatif, on=replace(whatif.on, lineup=lineup))
     week = _week(xmins={**{pid: 90.0 for pid in NAMES}, 21: 62.0})
 
-    assert "GK  Pickford (62 mins)" in _text(whatif, week).splitlines()
+    assert "GK  Pickford      —  62 mins" in _text(whatif, week).splitlines()
 
 
 def test_an_old_hand_with_thin_minutes_is_not_a_newcomer_and_gets_no_note():
     week = _week(xmins={**{pid: 90.0 for pid in NAMES}, 8: 40.0})
 
-    assert "Bruno (40 mins)" not in _text(_wildcard(), week)
+    assert "40 mins" not in _text(_wildcard(), week)
 
 
 def test_numbers_only_says_so_instead_of_promising_the_gaffer():

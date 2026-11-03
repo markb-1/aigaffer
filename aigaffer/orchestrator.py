@@ -622,6 +622,9 @@ def run_pipeline(
     # the card on the phone and the snapshot's Week plan then read numbers
     # rounded in one place. None on a draft or with no squad, which have no
     # transfer to explain. The builder is total, so it cannot fail the week.
+    # The fielded eleven and bench are asked for too, so the lineup table on
+    # the phone has a number beside every man: a free hit's temporary team
+    # can hold players outside both the squad and the candidate pool.
     rows = None
     if not solved.draft_mode and effective.squad is not None:
         squad_ids = list(effective.squad.player_ids)
@@ -639,7 +642,9 @@ def run_pipeline(
                     limit=multiweek.CANDIDATES_PER_POSITION,
                 )
             )
-            | set(squad_ids),
+            | set(squad_ids)
+            | set(lineup.xi)
+            | set(lineup.bench),
             selling_prices=prices,
         )
     cards = (
@@ -828,6 +833,7 @@ def run_pipeline(
                     selling_prices=prices,
                     standing=_standing(effective),
                     executed=executed,
+                    rows=rows,
                 ),
                 unconfigured=ALERT_NOT_CONFIGURED,
             )
@@ -1030,7 +1036,8 @@ def _run_reminder(
     # it stood at the full report, and the yardstick here is solver-then against
     # solver-now, each on its own day's calendar. The coming week's minutes
     # are the manager's to read, and the reminder never asks him, so they go
-    # unread here.
+    # unread here; the lineup tables' rows are built on the model's own
+    # (``week.xmins``), which they never print.
     week = prepare_week(cfg, client, store)
     inputs, ledger, effective, executed = (
         week.inputs, week.ledger, week.effective, week.executed
@@ -1041,11 +1048,11 @@ def _run_reminder(
 
     if executed is None:
         report, buzz, decision = _against_the_full_report(
-            effective, solved, projections, store, ledger, prices
+            effective, solved, projections, store, ledger, prices, week.xmins
         )
     else:
         report, buzz, decision = _against_the_entered_week(
-            effective, executed, solved, projections, store, ledger, prices
+            effective, executed, solved, projections, store, ledger, prices, week.xmins
         )
     # Last, so an ordinary week's record keeps the key order it always had.
     decision["chip_calendar"] = calendar.record() if calendar is not None else None
@@ -1084,6 +1091,7 @@ def _against_the_full_report(
     store: Store,
     ledger: Observation,
     selling_prices: dict[int, int],
+    xmins: dict[int, float],
 ) -> tuple[str, str, dict]:
     """The ordinary reminder: yesterday's solve against today's.
 
@@ -1109,6 +1117,8 @@ def _against_the_full_report(
     # The eleven the deadline verdict planned, derived from its record for the
     # calm text; the fresh solve's own is the changed text's.
     planned = _recorded_lineup(record, effective.players)
+    # One set of rows for both texts, so the calm buzz stays the alert.
+    rows = _lineup_rows(effective, projections, xmins, selling_prices, planned, lineup)
 
     report = render_reminder(
         event, fresh, stored, changes, effective.bootstrap,
@@ -1117,6 +1127,7 @@ def _against_the_full_report(
         free_transfers=effective.free_transfers,
         planned=planned,
         fresh_lineup=lineup,
+        rows=rows,
     )
     # The buzz is the digest — one checklist, what moved, a pointer — and on
     # the calm weeks it is the alert itself, byte for byte. The audit line
@@ -1128,6 +1139,7 @@ def _against_the_full_report(
         free_transfers=effective.free_transfers,
         planned=planned,
         fresh_lineup=lineup,
+        rows=rows,
     )
     report += _audit_line(ledger)
     buzz += _audit_line(ledger)
@@ -1150,6 +1162,7 @@ def _against_the_entered_week(
     store: Store,
     ledger: Observation,
     selling_prices: dict[int, int],
+    xmins: dict[int, float],
 ) -> tuple[str, str, dict]:
     """The reminder after "Transfers made": what he entered against a fresh look.
 
@@ -1200,12 +1213,14 @@ def _against_the_entered_week(
     if arrivals:
         changes["arrivals"] = arrivals
 
+    entered = _entered_lineup(executed, record, players)
     shared = dict(
         selling_prices=selling_prices,
         standing=_standing(effective),
         free_transfers=effective.free_transfers,
-        entered_lineup=_entered_lineup(executed, record, players),
+        entered_lineup=entered,
         fresh_lineup=lineup,
+        rows=_lineup_rows(effective, projections, xmins, selling_prices, entered, lineup),
     )
     report = render_entered_reminder(
         event, executed, baseline, fresh, changes, effective.bootstrap, **shared
@@ -1226,6 +1241,46 @@ def _against_the_entered_week(
         "executed_from": executed.verdicts,
     }
     return report, buzz, decision
+
+
+def _lineup_rows(
+    effective: PipelineInputs,
+    projections: dict[int, PlayerProjection],
+    xmins: dict[int, float],
+    prices: dict[int, int] | None,
+    *lineups: Lineup | None,
+) -> dict[int, dict]:
+    """The player rows a reminder's lineup tables read, for every man on show.
+
+    Every eleven and bench the text can print, planned or entered and fresh,
+    so the full alert and its buzz are handed the same rows and the calm buzz
+    stays the alert byte for byte. A lineup that cannot be rebuilt is None
+    and adds nobody. :func:`player_rows` is total, so a man who has dropped
+    out of the projections prints his name alone and costs nothing.
+
+    The numbers are this run's fresh projections, the stored lineup's
+    included: the honest figure at this moment, and the one the reminder's
+    diff is read on. So a calm reminder's table can show a bench player
+    out-projecting a starter, and figures that differ from the digest's
+    (which read the gaffer's minutes) and from the Week plan's snapshot. That
+    is expected, not a bug: the calm reminder compares formation, armbands,
+    chip and transfers, never the eleven, and the gaffer's override at the
+    full report is by design not news.
+    """
+    ids = {
+        pid
+        for lineup in lineups
+        if lineup is not None
+        for pid in [*lineup.xi, *lineup.bench]
+    }
+    return player_rows(
+        bootstrap=effective.bootstrap,
+        fixtures=effective.fixtures,
+        projections=projections,
+        xmins=xmins,
+        ids=ids,
+        selling_prices=prices,
+    )
 
 
 def _recorded_lineup(

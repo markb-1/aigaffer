@@ -65,6 +65,7 @@ from aigaffer.report.render import (
     NEWS_MOVED_ENTERED,
     NO_FULL_REPORT,
     RECORDED_CALM,
+    FREE_HIT_LINE,
     phone_lineup,
     REMINDER_UNCHANGED,
     chip_banner,
@@ -632,23 +633,30 @@ def test_no_chip_prints_no_chip_line():
 
 
 STARTING = replace(LINEUP, xi=[1, 3, 4, 5, 8, 9, 10, 11, 13, 14, 18], bench=[2, 12, 6, 15])
-STARTING_LINE = (
-    "Set lineup (3-4-3): Alvez; Costa, Dodd, Egan; Hume, Innes, Jonker, Kerr;"
-    " Moss, Nunes, Reid"
-)
+STARTING_LINE = "Set lineup: Reid starts — see the XI below"
 
 
-def test_a_signing_that_must_start_names_the_eleven():
+def test_a_signing_that_must_start_says_so():
     # Reid is bought and goes straight into the eleven, where the FPL app would
-    # have benched him: the block says to fix the lineup and names the whole
-    # eleven on the line, by position, because the phone gets this block
-    # without the team sheet that follows it in the report.
+    # have benched him: the block says to fix the lineup and names him, and
+    # points at the team sheet rather than repeating the eleven.
     block = section(report(lineup=STARTING), "Do this")
 
     assert STARTING_LINE in block
+    assert not any("Alvez" in line for line in block)
 
 
-def test_the_digest_names_the_eleven_when_a_signing_starts():
+def test_two_signings_that_must_start_are_named_in_the_order_bought():
+    # TWO buys Pike (16) and Reid (18); both go into the eleven, in place of
+    # Hume and Oduya. The eleven lists Reid first, so the line naming Pike
+    # first shows it follows ``choice.transfers_in``, not the eleven's order.
+    both = replace(STARTING, xi=[18, 1, 3, 4, 5, 16, 9, 10, 11, 13, 14], captain=16)
+    block = section(report(choice=TWO, lineup=both), "Do this")
+
+    assert "Set lineup: Pike, Reid start — see the XI below" in block
+
+
+def test_the_digest_says_so_when_a_signing_starts():
     text = digest(lineup=STARTING)
 
     assert STARTING_LINE in text
@@ -936,7 +944,9 @@ def test_the_do_this_block_builds_the_free_hit_team_and_says_it_reverts():
 
     assert "PLAY FREE HIT" in block
     built = next(line for line in block if line.startswith(FREE_HIT_LABEL))
-    assert "Tovey" in built and "Reid" in built
+    # The team is in the table below; the line points at it, naming no one.
+    assert built == FREE_HIT_LINE
+    assert "Tovey" not in built and "Reid" not in built
     assert "reverts next week" in built
     # It is a temporary build, not a swap on the standing squad: no roll line and
     # no sell/buy line belongs here.
@@ -2002,13 +2012,26 @@ def test_a_recorded_chip_reads_as_already_played_in_the_fresh_block_too():
 # LINEUP worked by hand: xi [1, 3, 4, 5, 8, 9, 10, 11, 13, 14, 15] is Alvez in
 # goal; Costa, Dodd, Egan at the back; Hume, Innes, Jonker, Kerr in midfield;
 # Moss, Nunes, Oduya up front — 3-4-3. Captain 8 Hume, vice 13 Moss. The bench
-# [2, 12, 6, 7] is Byrne, Lang, Fenn, Gale.
+# [2, 12, 6, 7] is Byrne, Lang, Fenn, Gale. No rows, so it is names only.
 PHONE_XI = """Starting XI (3-4-3)
+```
 GK  Alvez
-DEF Costa, Dodd, Egan
-MID Hume (C), Innes, Jonker, Kerr
-FWD Moss (V), Nunes, Oduya
-Bench: 1 Byrne \u00b7 2 Lang \u00b7 3 Fenn \u00b7 4 Gale"""
+DEF Costa
+    Dodd
+    Egan
+MID Hume C
+    Innes
+    Jonker
+    Kerr
+FWD Moss V
+    Nunes
+    Oduya
+
+B1  Byrne
+B2  Lang
+B3  Fenn
+B4  Gale
+```"""
 
 # Same eleven, but a fresh pick: Pike (16) for Hume, so the block differs.
 FRESH_LINEUP = replace(LINEUP, xi=[1, 3, 4, 5, 16, 9, 10, 11, 13, 14, 15], captain=16)
@@ -2025,16 +2048,16 @@ def test_phone_lineup_on_a_free_hit_week_says_so_in_the_heading():
     assert text.splitlines()[1:] == PHONE_XI.splitlines()[1:]
 
 
-def test_phone_lineup_puts_a_note_after_the_name_and_before_the_armband():
-    # Hume is captain (8) and doubtful: the note comes first, so the armband
-    # still ends the name -- "Hume (75%) (C)". A benched player (12 Lang) is
-    # noted too; a note for someone not in the team is ignored.
+def test_phone_lineup_prints_a_note_in_the_last_column():
+    # Hume is captain (8) and doubtful; a benched player (12 Lang) is noted
+    # too; a note for someone not in the team is ignored. The widest name is
+    # "Hume C" (6), so each note sits one space after a 6-wide name column.
     text = phone_lineup(LINEUP, BOOTSTRAP_PLAYERS, notes={8: "75%", 12: "doubtful", 99: "x"})
+    lines = text.splitlines()
 
-    assert text.splitlines()[3] == "MID Hume (75%) (C), Innes, Jonker, Kerr"
-    assert text.splitlines()[-1] == (
-        "Bench: 1 Byrne \u00b7 2 Lang (doubtful) \u00b7 3 Fenn \u00b7 4 Gale"
-    )
+    assert "MID Hume C 75%" in lines
+    assert "B2  Lang   doubtful" in lines
+    assert not any(line.endswith(" x") for line in lines)
 
 
 def test_phone_lineup_without_notes_is_unchanged():
@@ -2051,9 +2074,27 @@ def test_phone_lineup_takes_its_heading():
 def test_phone_lineup_names_a_bench_player_the_board_no_longer_knows():
     lineup = replace(LINEUP, bench=[2, 12, 6, 99])
 
-    assert phone_lineup(lineup, BOOTSTRAP_PLAYERS).splitlines()[-1] == (
-        "Bench: 1 Byrne \u00b7 2 Lang \u00b7 3 Fenn \u00b7 4 player 99"
-    )
+    lines = phone_lineup(lineup, BOOTSTRAP_PLAYERS).splitlines()
+
+    assert lines[-2:] == ["B4  player 99", "```"]
+
+
+def test_phone_lineup_with_rows_shows_fixture_and_xp():
+    # A row for Alvez (1) alone, at home to ASH in GW2. The name column is
+    # "Hume C"'s 6 wide, so Alvez is padded by one; the fixture and xP columns
+    # are his alone. Hume has no row and prints his name alone: a partial board
+    # costs nothing.
+    rows = {1: {"f": {2: [["ASH", "h"]]}, "x": {2: 4.0}}}
+    lines = phone_lineup(LINEUP, BOOTSTRAP_PLAYERS, rows=rows, gw=2).splitlines()
+
+    assert lines[1:3] == ["```", "GW2 fixture, xP"]
+    assert "GK  Alvez   ASH 4.0" in lines
+    assert "MID Hume C" in lines
+
+
+def test_a_digest_with_no_rows_still_prints_a_team_sheet():
+    # No cards, so no rows: the team sheet is names only, but it is there.
+    assert PHONE_XI in digest()
 
 
 def test_the_digest_carries_the_lineup_straight_after_do_this():
@@ -2090,7 +2131,7 @@ def test_a_free_hit_digest_carries_the_free_hit_heading():
 def test_a_draft_digest_has_no_lineup_block():
     text = render_digest("draft", EVENT, DRAFT, LINEUP, BOOTSTRAP, free_transfers=1)
 
-    assert "Starting XI" not in text and "Bench:" not in text
+    assert "Starting XI" not in text and "B1 " not in text
 
 
 def test_the_withheld_alert_carries_the_lineup_after_do_this():
@@ -2139,7 +2180,7 @@ def test_a_changed_reminder_shows_lineup_now_straight_after_what_changed():
 
     for text in (alert, buzz):
         assert fresh_block in text
-        assert "Pike (C)" in fresh_block
+        assert "Pike C" in fresh_block
         assert PHONE_XI not in text, "the plan is superseded by the fresh eleven"
         assert text.index(NEWS_MOVED) < text.index(fresh_block)
     assert alert.index(fresh_block) < alert.index(GAFFER_VERDICT)
@@ -2172,7 +2213,30 @@ def test_a_calm_entered_reminder_shows_the_entered_lineup():
     )
 
     assert PHONE_XI in text and buzz == text
-    assert text.index("Bench: Byrne") < text.index(PHONE_XI) < text.index(RECORDED_CALM)
+    # The table is his bench in order, so the checklist's Bench line goes.
+    assert "Bench: Byrne" not in text
+    assert text.index("Do this") < text.index(PHONE_XI) < text.index(RECORDED_CALM)
+
+
+def test_an_entered_reminder_with_no_lineup_keeps_its_bench_line():
+    # No entered table to print, so the Bench line is the only bench he gets.
+    text = render_entered_reminder(
+        EVENT, entered(), entered_actions(), entered_actions(), {}, BOOTSTRAP,
+        entered_lineup=None, fresh_lineup=FRESH_LINEUP,
+    )
+
+    assert "Bench: Byrne" in text
+
+
+def test_a_changed_entered_digest_keeps_his_bench_line():
+    # The table on a changed text is the fresh solve's, whose bench is not his.
+    text = render_entered_reminder(
+        EVENT, entered(), entered_actions(), entered_actions(),
+        {"arrivals": [[18, "a", "d"]]}, BOOTSTRAP,
+        digest=True, entered_lineup=LINEUP, fresh_lineup=FRESH_LINEUP,
+    )
+
+    assert "Bench: Byrne" in text
 
 
 def test_a_changed_entered_reminder_shows_lineup_now():

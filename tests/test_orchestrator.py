@@ -19,6 +19,7 @@ report, the store and the phone did with it.
 import argparse
 import copy
 import json
+import re
 import sys
 from types import SimpleNamespace
 from dataclasses import replace
@@ -749,6 +750,111 @@ def test_a_free_hit_the_solver_plans_reaches_the_report_and_the_record(
     assert "Free Hit XI (this week only)" in report
     assert "PLAY FREE HIT" in report
     assert store.last_runs(1)[0]["decision"]["chip"] == "free_hit"
+
+
+# --- the lineup table carries fixture and xP ---------------------------------
+
+ONE_DECIMAL_OR_BLANK = re.compile(r"(\d+\.\d|—)$")
+
+
+def _lineup_rows_of(text: str, gw: int = 2) -> list[str]:
+    """The XI rows of the table under ``GW{gw} fixture, xP``: from the label
+    row to the blank line before the bench."""
+    lines = text.splitlines()
+    start = lines.index(f"GW{gw} fixture, xP") + 1
+    return lines[start : lines.index("", start)]
+
+
+def _sent_digest(monkeypatch, tmp_path, store=None, mode="deadline", **kwargs) -> str:
+    sent = []
+    monkeypatch.setattr(orchestrator, "send_report", lambda *args, **kw: sent.append(args))
+    cfg = config(telegram_token=TOKEN, telegram_chat_id="42", state_dir=tmp_path / "state")
+    run_pipeline(
+        cfg, make_client(pipeline_routes()), store or Store(tmp_path / "aigaffer.db"),
+        mode, **kwargs,
+    )
+    [(_, _, message)] = sent
+    return message
+
+
+def test_the_digest_lineup_carries_fixture_and_xp(monkeypatch, tmp_path):
+    text = _sent_digest(monkeypatch, tmp_path)
+
+    assert "GW2 fixture, xP" in text and "```" in text
+    first = _lineup_rows_of(text)[0]
+    assert first.startswith("GK ")
+    assert re.search(r"\d+\.\d$", first), first
+
+
+def test_the_run_asks_for_rows_for_the_fielded_team(monkeypatch, tmp_path):
+    # A planned free hit, stubbed as the test above stubs it: the temporary
+    # fifteen is the fielded team, and the run's rows are asked for every one
+    # of them, so the digest's table has a number beside each man even when
+    # the free hit reaches outside the squad and the candidate pool.
+    inputs = fetch_inputs(config(state_dir=tmp_path / "state"), make_client(pipeline_routes()))
+    _, projections = build_projections(inputs, config())
+    standing = inputs.squad.player_ids
+    positions = {pid: p.element_type for pid, p in inputs.players.items()}
+    gw_xp = {pid: pr.per_gw.get(inputs.event.id, 0.0) for pid, pr in projections.items()}
+    choice = Plan(
+        squad=standing, xi=[], transfers_in=[], transfers_out=[], hits=0,
+        xp_total=0.0, objective=0.0,
+        path=PlannedPath(
+            moves=[], objective=0.0, weekly_xp={}, week1_chip="free_hit",
+            week1_freehit_squad=FH_SQUAD, week1_freehit_xi=FH_XI,
+        ),
+    )
+    solved = SolveResult(
+        plans=[choice], choice=choice, lineup=pick_lineup(standing, positions, gw_xp),
+        chips=NO_CHIPS, draft_mode=False,
+    )
+    monkeypatch.setattr(orchestrator, "solve", lambda *a, **k: solved)
+    # The pipeline board is small enough that every id would get a row through
+    # the histories or the candidate pool anyway. Narrow both to the standing
+    # squad, so only the fielded lineup can bring the free hit's own men in.
+    real_fetch = orchestrator.fetch_inputs
+
+    def squad_histories_only(*args, **kwargs):
+        fetched = real_fetch(*args, **kwargs)
+        kept = {pid: h for pid, h in fetched.histories.items() if pid in standing}
+        return replace(fetched, histories=kept)
+
+    monkeypatch.setattr(orchestrator, "fetch_inputs", squad_histories_only)
+    monkeypatch.setattr(orchestrator, "candidate_pool", lambda *a, **k: [])
+    outsiders = set(FH_SQUAD) - set(standing)
+    assert outsiders, "the free hit reaches outside the squad"
+    asked = []
+    real = orchestrator.player_rows
+
+    def spy(**kwargs):
+        asked.append(set(kwargs["ids"]))
+        return real(**kwargs)
+
+    monkeypatch.setattr(orchestrator, "player_rows", spy)
+
+    text = _sent_digest(monkeypatch, tmp_path)
+
+    assert any(set(FH_SQUAD) <= ids for ids in asked)
+    assert "free hit team" in text
+    rows = _lineup_rows_of(text)
+    assert len(rows) == 11
+    assert all(ONE_DECIMAL_OR_BLANK.search(row) for row in rows), rows
+
+
+def test_the_withheld_notice_lineup_carries_fixture_and_xp(monkeypatch, tmp_path):
+    sent = []
+    monkeypatch.setattr(orchestrator, "send_report", lambda *args, **kwargs: sent.append(args))
+    stub_gaffer(monkeypatch, unavailable)
+    cfg = gaffer_cfg(tmp_path, telegram_token=TOKEN, telegram_chat_id="42")
+
+    run_pipeline(
+        cfg, make_client(pipeline_routes()), Store(tmp_path / "aigaffer.db"), "deadline",
+        now=PAST_THE_FLOOR - timedelta(hours=15),
+    )
+
+    [(_, _, alert)] = sent
+    assert "The gaffer did not decide" in alert
+    assert "GW2 fixture, xP" in alert
 
 
 def test_the_record_keeps_the_squad_it_was_solved_from_and_the_bench(scout_run):
@@ -4100,8 +4206,7 @@ def test_a_recorded_free_hit_fields_the_entered_team_and_holds(tmp_path):
     # The sheet prints the eleven he entered, in his order, and his armbands —
     # not an eleven re-picked over his fifteen, and not the standing squad's.
     # Ferrer is captain and Reyes, whom only the free hit brings in, vice.
-    eleven = ", ".join(PLAYERS[pid].web_name for pid in FH_XI)
-    assert f"{render.FREE_HIT_XI}: {eleven}" in report
+    assert render.FREE_HIT_LINE in report
     assert "CAPTAIN Ferrer · VICE Reyes" in report
     assert "Ferrer (C)" in report and "Reyes (V)" in report
     assert decision["formation"] == "4-5-1"
@@ -4269,8 +4374,8 @@ def test_an_entered_week_with_nothing_new_gets_the_calm_alert(tmp_path):
     deadline = store.decision(2, "deadline")
     entered = _entered_lineup(row, deadline, PLAYERS)
     assert entered is not None
-    assert render.phone_lineup(entered, PLAYERS) in alert
-    assert alert.index("Bench:") < alert.index(render.RECORDED_CALM)
+    _assert_the_eleven_shown(alert, entered, "Starting XI (", render.RECORDED_CALM)
+    assert alert.index("B1 ") < alert.index(render.RECORDED_CALM)
     assert reminder["full_report_plan"]["transfers"] == []
     assert reminder["full_report_plan"]["captain"] == row.captain
     assert set(store.purchases()) == set(PICKS_15_IDS), "the ledger kept the API's truth"
@@ -4878,10 +4983,89 @@ def test_a_calm_reminder_carries_the_deadline_verdicts_lineup(tmp_path):
     alert = run_pipeline(cfg, client, store, "reminder", send=False)
 
     planned = _recorded_lineup(store.decision(2, "deadline"), PLAYERS)
-    assert render.phone_lineup(planned, PLAYERS) in alert
-    assert alert.index("## Do this") < alert.index("Bench:") < alert.index(
+    _assert_the_eleven_shown(alert, planned, "Starting XI (", render.REMINDER_UNCHANGED)
+    assert alert.index("## Do this") < alert.index("B1 ") < alert.index(
         render.REMINDER_UNCHANGED
     )
+
+
+def _assert_the_eleven_shown(text: str, lineup: Lineup, heading: str, after: str) -> None:
+    """Each of the eleven named between the table's heading and ``after``.
+
+    The table carries this run's numbers, so the block is no longer a string
+    the test can rebuild with ``phone_lineup`` alone; the names are what it
+    must hold."""
+    start = text.index(heading)
+    block = text[start : text.index(after, start)]
+    for pid in lineup.xi:
+        assert PLAYERS[pid].web_name in block
+
+
+def _sent_reminder(monkeypatch, tmp_path, *, entered: bool) -> tuple[str, str]:
+    """The reminder the runner returns and the buzz it sends, after a deadline
+    run (and "Transfers made", when ``entered``)."""
+    sent = []
+    monkeypatch.setattr(orchestrator, "send_report", lambda *args, **kw: sent.append(args))
+    cfg = config(telegram_token=TOKEN, telegram_chat_id="42", state_dir=tmp_path / "state")
+    store = Store(cfg.state_dir / "aigaffer.db")
+    client = make_client(pipeline_routes())
+    run_pipeline(cfg, client, store, "deadline", send=False)
+    if entered:
+        enter_latest(store)
+    alert = run_pipeline(cfg, client, store, "reminder")
+    [(_, _, buzz)] = sent
+    return alert, buzz
+
+
+def test_a_calm_reminder_shows_numbers_and_its_buzz_is_the_alert(monkeypatch, tmp_path):
+    alert, buzz = _sent_reminder(monkeypatch, tmp_path, entered=False)
+
+    assert render.REMINDER_UNCHANGED in alert
+    assert "GW2 fixture, xP" in alert
+    assert buzz == alert, "the calm buzz is the alert, byte for byte, numbers and all"
+
+
+def test_an_entered_reminder_shows_numbers(monkeypatch, tmp_path):
+    alert, buzz = _sent_reminder(monkeypatch, tmp_path, entered=True)
+
+    assert render.RECORDED_CALM in alert
+    assert "GW2 fixture, xP" in alert
+    assert buzz == alert
+
+
+@pytest.mark.parametrize("entered", [False, True])
+def test_a_reminder_asks_for_rows_for_the_shown_plan_not_only_the_fresh_one(
+    monkeypatch, tmp_path, entered
+):
+    # The pipeline's planned, entered and fresh elevens are the same men, so
+    # the shown plan is swapped for one with a stranger on its bench: an id in
+    # no fresh lineup. The run must still ask for his row, or a calm text would
+    # print him name-only while the rest of the table has numbers.
+    stranger = 21
+    rebuilt = "_entered_lineup" if entered else "_recorded_lineup"
+    real_rebuild = getattr(orchestrator, rebuilt)
+
+    def with_stranger(*args, **kwargs):
+        lineup = real_rebuild(*args, **kwargs)
+        return replace(lineup, bench=[*lineup.bench[:-1], stranger])
+
+    monkeypatch.setattr(orchestrator, rebuilt, with_stranger)
+    asked = []
+    real = orchestrator.player_rows
+
+    def spy(**kwargs):
+        asked.append(set(kwargs["ids"]))
+        return real(**kwargs)
+
+    monkeypatch.setattr(orchestrator, "player_rows", spy)
+
+    alert, _ = _sent_reminder(monkeypatch, tmp_path, entered=entered)
+
+    # One call for the deadline run, one for the reminder: the last is the
+    # reminder's own, not the deadline's (whose ids also hold the stranger).
+    assert len(asked) == 2
+    assert stranger in asked[-1], "the reminder's own rows cover the plan it shows"
+    assert PLAYERS[stranger].web_name in alert
 
 
 def test_a_reminder_with_no_full_report_carries_the_fresh_lineup(tmp_path):
@@ -4892,8 +5076,8 @@ def test_a_reminder_with_no_full_report_carries_the_fresh_lineup(tmp_path):
         cfg, make_client(pipeline_routes()), store, "reminder", send=False
     )
 
-    assert "Starting XI (" in alert and "Bench: 1 " in alert
-    assert alert.index("Bench:") < alert.index(render.NO_FULL_REPORT)
+    assert "Starting XI (" in alert and "B1 " in alert
+    assert alert.index("B1 ") < alert.index(render.NO_FULL_REPORT)
 
 
 def test_a_calm_reminder_after_a_free_hit_deadline_carries_the_free_hit_team(
@@ -4933,7 +5117,7 @@ def test_a_calm_reminder_after_a_free_hit_deadline_carries_the_free_hit_team(
     assert len(eleven) == 11
     assert render.REMINDER_UNCHANGED in alert
     block = alert[alert.index("Starting XI \u2014 free hit team"):]
-    shown = block[: block.index("Bench:")]
+    shown = block[: block.index("B1 ")]
     for pid in eleven:
         assert PLAYERS[pid].web_name in shown
     for pid in record["bench"]:

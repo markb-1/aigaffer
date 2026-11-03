@@ -35,6 +35,7 @@ beside a total for several.
 """
 
 from collections import defaultdict
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, NamedTuple
 
@@ -42,6 +43,7 @@ from aigaffer.chips import BENCH_BOOST, FREE_HIT, TRIPLE_CAPTAIN, WILDCARD
 from aigaffer.data.free_transfers import MAX_FREE_TRANSFERS, after_roll
 from aigaffer.data.models import Bootstrap, Event, Player, Standing
 from aigaffer.model.xp import PlayerProjection
+from aigaffer.report.lineup_table import lineup_table
 from aigaffer.report.transfer_card import (
     CardInputs,
     bank_left,
@@ -139,21 +141,22 @@ PLANNED_THIS_WEEK = (
 # is the temporary one the chip buys for a week, not the standing squad, and it
 # reverts — so the section and the checklist both say so, in the same words.
 FREE_HIT_XI = "Free Hit XI (this week only)"
+# The checklist's free-hit line. The eleven is in the table under it, so the
+# line points there rather than naming the team a second time.
+FREE_HIT_LINE = f"{FREE_HIT_XI}: see the XI below — a temporary team; it reverts next week"
 
 # The lineup block every phone text carries (see :func:`phone_lineup`). The
-# tags are padded to three characters and a space so the names line up on a
-# phone; the keeper's is the two-letter GK the checklist's players already say.
+# tags are the table's position labels; the keeper's is the two-letter GK the
+# checklist's players already say.
 PHONE_HEADING = "Starting XI"
 PHONE_CHANGED_HEADING = "Lineup now"
 PHONE_FREE_HIT = " \u2014 free hit team"
 PHONE_ROWS = (
-    (GOALKEEPER, "GK "),
+    (GOALKEEPER, "GK"),
     (DEFENDER, "DEF"),
     (MIDFIELDER, "MID"),
     (FORWARD, "FWD"),
 )
-PHONE_BENCH = "Bench: "
-PHONE_BENCH_JOIN = " \u00b7 "
 
 # What every document says, near the top, once the owner has texted
 # "Transfers made" for the week: which squad it is working from, so a report
@@ -438,6 +441,7 @@ def render_reminder(
     free_transfers: int | None = None,
     planned: Lineup | None = None,
     fresh_lineup: Lineup | None = None,
+    rows: Mapping[int, dict] | None = None,
 ) -> str:
     """The short alert, three hours out. Pure; no I/O.
 
@@ -487,6 +491,8 @@ def render_reminder(
     moved) and what a week with no full report shows, having nothing else.
     Both default to None, which leaves the block out — a legacy record whose
     plan cannot be rebuilt, and every caller that predates the block.
+    ``rows`` are this run's player rows for the men on show, so the table
+    carries each one's fixture and xP; None prints it as names.
     """
     players = {player.id: player for player in bootstrap.elements}
     clubs = {team.id: team.short_name for team in bootstrap.teams}
@@ -497,7 +503,12 @@ def render_reminder(
     def lineup_block(lineup: Lineup | None, actions: dict, heading: str) -> list[str]:
         if lineup is None:
             return []
-        return [phone_lineup(lineup, players, heading, actions["chip"] == FREE_HIT)]
+        return [
+            phone_lineup(
+                lineup, players, heading, actions["chip"] == FREE_HIT,
+                rows=rows, gw=event.id,
+            )
+        ]
 
     sections = [
         _header(
@@ -560,7 +571,8 @@ def render_digest(
     GitHub and the phone is where the lineup is set. ``lineup`` is already the
     fielded one — the temporary free-hit team on a free-hit week — so the
     block says "free hit team" in its heading then. A draft has no checklist
-    and no block: fifteen buys are not a lineup to field.
+    and no block: fifteen buys are not a lineup to field. The table reads
+    its fixtures and xP from ``cards.rows``; with no cards it is names only.
     """
     players = {player.id: player for player in bootstrap.elements}
     clubs = {team.id: team.short_name for team in bootstrap.teams}
@@ -583,7 +595,12 @@ def render_digest(
                 free_transfers, selling_prices, chip_entered=entered,
             )
         )
-        sections.append(phone_lineup(lineup, players, free_hit=free_hit))
+        sections.append(
+            phone_lineup(
+                lineup, players, free_hit=free_hit,
+                rows=cards.rows if cards else None, gw=event.id,
+            )
+        )
     sections.append(_recommendation(choice, players, clubs, cards=cards, chip=chip))
     if gaffer is not None:
         sections.append(_gaffer_digest(gaffer))
@@ -605,6 +622,7 @@ def render_withheld(
     selling_prices: dict[int, int] | None = None,
     standing: Standing | None = None,
     executed: "Executed | None" = None,
+    rows: Mapping[int, dict] | None = None,
 ) -> str:
     """The alert the phone gets for a withheld report. Pure; no I/O.
 
@@ -615,7 +633,8 @@ def render_withheld(
     the other thing that stops them, the most ticks the report can be held.
     ``standing`` and ``free_transfers`` open the alert the way they open the
     digest: a withheld week is still a text, and carries the same lineup block
-    after its checklist (:func:`phone_lineup`).
+    after its checklist (:func:`phone_lineup`), with fixtures and xP from
+    ``rows`` when the run has them.
     """
     players = {player.id: player for player in bootstrap.elements}
     clubs = {team.id: team.short_name for team in bootstrap.teams}
@@ -636,7 +655,9 @@ def render_withheld(
                 free_transfers, selling_prices, chip_entered=entered,
             )
         )
-        sections.append(phone_lineup(lineup, players, free_hit=free_hit))
+        sections.append(
+            phone_lineup(lineup, players, free_hit=free_hit, rows=rows, gw=event.id)
+        )
     return "\n\n".join(sections) + "\n"
 
 
@@ -667,6 +688,7 @@ def render_reminder_digest(
     free_transfers: int | None = None,
     planned: Lineup | None = None,
     fresh_lineup: Lineup | None = None,
+    rows: Mapping[int, dict] | None = None,
 ) -> str:
     """The reminder as the phone gets it. Pure; no I/O.
 
@@ -679,7 +701,7 @@ def render_reminder_digest(
     the solver's fresh answer; the judging reader the full alert addresses
     can open the repo, and the hurried one is no longer asked to judge.
 
-    ``planned`` and ``fresh_lineup`` are :func:`render_reminder`'s, passed
+    ``planned``, ``fresh_lineup`` and ``rows`` are :func:`render_reminder`'s, passed
     straight through so the calm digest stays that alert byte for byte; the
     changed digest shows the fresh eleven as ``Lineup now`` after what moved,
     in place of the fresh checklist it points at the repo for.
@@ -692,6 +714,7 @@ def render_reminder_digest(
             free_transfers=free_transfers,
             planned=planned,
             fresh_lineup=fresh_lineup,
+            rows=rows,
         )
     players = {player.id: player for player in bootstrap.elements}
     clubs = {team.id: team.short_name for team in bootstrap.teams}
@@ -708,7 +731,7 @@ def render_reminder_digest(
             else [
                 phone_lineup(
                     fresh_lineup, players, PHONE_CHANGED_HEADING,
-                    fresh["chip"] == FREE_HIT,
+                    fresh["chip"] == FREE_HIT, rows=rows, gw=event.id,
                 )
             ]
         ),
@@ -731,6 +754,7 @@ def render_entered_reminder(
     digest: bool = False,
     entered_lineup: Lineup | None = None,
     fresh_lineup: Lineup | None = None,
+    rows: Mapping[int, dict] | None = None,
 ) -> str:
     """The T-3h reminder after "Transfers made". Pure; no I/O.
 
@@ -750,16 +774,24 @@ def render_entered_reminder(
     (:func:`phone_lineup`): calm, ``entered_lineup`` — the team he entered,
     rebuilt by the orchestrator — straight after "Transfers made"; changed,
     ``fresh_lineup`` as ``Lineup now`` straight after what moved. None leaves
-    the block out.
+    the block out. ``rows`` give the table its fixtures and xP, as the
+    reminder's do.
+
+    The calm checklist drops its ``Bench:`` line when the entered table is
+    below it, the table being the bench in order; with no table (a record
+    that cannot be rebuilt) the line is the only bench he gets, so it stays.
+    The changed texts keep it: their table is the fresh solve's, and its
+    bench is not his.
     """
     players = {player.id: player for player in bootstrap.elements}
     clubs = {team.id: team.short_name for team in bootstrap.teams}
 
-    def block(heading: str, actions: dict, as_entered: bool) -> str:
+    def block(heading: str, actions: dict, as_entered: bool, bench_below: bool = False) -> str:
         return _actions_block(
             heading, event, actions, players, clubs, selling_prices,
             entered=as_entered,
             chip_entered=actions["chip"] == executed.chip != NO_CHIP,
+            bench_below=bench_below,
         )
 
     def moved() -> str:
@@ -777,16 +809,20 @@ def render_entered_reminder(
         if fresh_lineup is None
         else [
             phone_lineup(
-                fresh_lineup, players, PHONE_CHANGED_HEADING, fresh["chip"] == FREE_HIT
+                fresh_lineup, players, PHONE_CHANGED_HEADING, fresh["chip"] == FREE_HIT,
+                rows=rows, gw=event.id,
             )
         ]
     )
     if not changes:
-        sections += [block("## Do this", baseline, True)]
+        sections += [
+            block("## Do this", baseline, True, bench_below=entered_lineup is not None)
+        ]
         if entered_lineup is not None:
             sections += [
                 phone_lineup(
-                    entered_lineup, players, free_hit=baseline["chip"] == FREE_HIT
+                    entered_lineup, players, free_hit=baseline["chip"] == FREE_HIT,
+                    rows=rows, gw=event.id,
                 )
             ]
         sections += [RECORDED_CALM]
@@ -924,6 +960,7 @@ def _actions_block(
     *,
     entered: bool = False,
     chip_entered: bool = False,
+    bench_below: bool = False,
 ) -> str:
     """One plan as the ⏰ checklist, under ``heading``.
 
@@ -939,6 +976,8 @@ def _actions_block(
     the bench he set is shown, because its order is one of the few things
     left to change. ``chip_entered`` is a fresh plan whose chip is the one
     he has already played: it reads as played, never as "PLAY".
+    ``bench_below`` says the same text prints this plan's lineup table, so the
+    ``Bench:`` line would only repeat it and is left out.
     """
     top = (
         f"⏰ Deadline {deadline(event)} — GW{event.id}"
@@ -964,7 +1003,7 @@ def _actions_block(
     )
     if actions.get("formation"):
         lines.append(f"Formation: {actions['formation']}")
-    if entered and actions.get("bench"):
+    if entered and actions.get("bench") and not bench_below:
         lines.append(f"Bench: {_names(actions['bench'], players)}")
     return "\n".join(lines)
 
@@ -1253,16 +1292,17 @@ def _do_this(
 
     ``chip`` is the chip this week plays, ``"none"`` for most weeks. A free-hit
     week is its own checklist: the chip fields a whole temporary team that
-    reverts, so there is no swap on the standing squad to make — the block names
-    the eleven to build and says it is for one week, and ``lineup`` is already
-    that temporary team rather than the standing one.
+    reverts, so there is no swap on the standing squad to make — the block
+    points at the eleven to build and says it is for one week, and ``lineup``
+    is already that temporary team rather than the standing one.
 
     A signing that starts is the one lineup change worth flagging here: the app
     drops a transferred-in player onto the bench, so an eleven that needs him in
-    it needs the bench reordered by hand. The line names the shape and the
-    whole eleven by position, on one line: this block is what the phone gets,
-    without the team sheet that follows it in the report, and "set the lineup"
-    with no names is a nudge nobody can act on at a deadline.
+    it needs the bench reordered by hand. The line names the signings who must
+    start and points at the eleven rather than repeating it: every text that
+    carries this block carries the team sheet below or beside it (the lineup
+    table on the phone, the Starting XI in the report), and a team named twice
+    reads as two things to check.
 
     ``chip_entered`` says the chip came from what he entered, and the line says
     so instead of telling him to play it.
@@ -1273,10 +1313,7 @@ def _do_this(
     if chip != NO_CHIP:
         lines.append(_chip_order(chip, chip_entered))
     if free_hit:
-        lines.append(
-            f"{FREE_HIT_XI}: {_eleven(lineup, players)}"
-            " — a temporary team; it reverts next week"
-        )
+        lines.append(FREE_HIT_LINE)
         lines.append(
             f"CAPTAIN {_who(lineup.captain, players)}"
             f" · VICE {_who(lineup.vice, players)}"
@@ -1287,10 +1324,10 @@ def _do_this(
     lines.append(
         f"CAPTAIN {_who(lineup.captain, players)} · VICE {_who(lineup.vice, players)}"
     )
-    if set(choice.transfers_in) & set(lineup.xi):
-        lines.append(
-            f"Set lineup ({formation(lineup, players)}): {_by_position(lineup, players)}"
-        )
+    starting = [pid for pid in choice.transfers_in if pid in lineup.xi]
+    if starting:
+        verb = "starts" if len(starting) == 1 else "start"
+        lines.append(f"Set lineup: {_names(starting, players)} {verb} — see the XI below")
     return "\n".join(lines)
 
 
@@ -1300,16 +1337,27 @@ def phone_lineup(
     heading: str = PHONE_HEADING,
     free_hit: bool = False,
     notes: dict[int, str] | None = None,
+    *,
+    rows: Mapping[int, dict] | None = None,
+    gw: int | None = None,
 ) -> str:
-    """The eleven and the bench as plain lines, for every text the phone gets.
+    """The eleven and the bench as a table, for every text the phone gets.
 
     The full report holds the team sheet, but it lives on GitHub; the phone
     had only the checklist, so the owner scrolled back for the eleven and could
     field one that was a day out of date. This is the lineup to field, short
-    enough to ride every update text. A row a position, within a row in
-    ``lineup.xi`` order, ``(C)``/``(V)`` after the armbands, the bench numbered
-    in substitution order. No markdown heading: ``send_message`` bolds and
-    escapes the text itself.
+    enough to ride every update text. The first line is the heading and the
+    shape; the rest is the fenced :func:`~aigaffer.report.lineup_table.lineup_table`,
+    a position at a time in ``lineup.xi`` order with ``C``/``V`` after the
+    armbands, then the bench in substitution order. No markdown heading:
+    ``send_message`` bolds and escapes the text itself.
+
+    ``rows`` are the run's snapshot-shaped player rows
+    (:func:`aigaffer.detailed.snapshot.player_rows`) and ``gw`` the gameweek
+    the text is about: with them each row carries that week's fixture and xP.
+    Without them, or with no row for anyone in the eleven, it is a table of
+    names, so a week with no numbers still gets its team sheet. A man with no
+    row prints his name alone.
 
     ``free_hit`` appends " \u2014 free hit team" to the heading, the phone's
     version of :data:`FREE_HIT_XI` (which reads as a label on the full
@@ -1319,48 +1367,26 @@ def phone_lineup(
     be on the board, as :func:`formation` needs their positions.
 
     ``notes`` maps a player id to a short doubt (``75%``, ``60 mins``) printed
-    in brackets after his name, eleven or bench: the what-if text uses it to
-    flag a newcomer he might field. The note comes before the armband, so a
-    doubtful captain reads ``Guehi (75%) (C)`` and the armband still ends the
-    name. Omitted, or for an id not in the team, it changes nothing: the
-    other texts' output is byte-identical to what it was.
+    in a last column, eleven or bench: the what-if text uses it to flag a
+    newcomer he might field. Omitted, or for an id not in the team, it
+    changes nothing.
     """
-    notes = notes or {}
-
-    def noted(pid: int) -> str:
-        return f"{_who(pid, players)} ({notes[pid]})" if pid in notes else _who(pid, players)
-
-    rows: dict[int, list[str]] = defaultdict(list)
+    by_type: dict[int, list[int]] = defaultdict(list)
     for pid in lineup.xi:
-        marker = {lineup.captain: " (C)", lineup.vice: " (V)"}.get(pid, "")
-        rows[players[pid].element_type].append(f"{noted(pid)}{marker}")
+        by_type[players[pid].element_type].append(pid)
+    groups = [(tag, by_type[position]) for position, tag in PHONE_ROWS if by_type[position]]
     suffix = PHONE_FREE_HIT if free_hit else ""
-    lines = [f"{heading}{suffix} ({formation(lineup, players)})"]
-    lines += [f"{tag} {', '.join(rows[position])}" for position, tag in PHONE_ROWS]
-    lines.append(
-        PHONE_BENCH
-        + PHONE_BENCH_JOIN.join(
-            f"{order} {noted(pid)}"
-            for order, pid in enumerate(lineup.bench, start=1)
-        )
+    table = lineup_table(
+        groups,
+        lineup.bench,
+        captain=lineup.captain,
+        vice=lineup.vice,
+        name=lambda pid: _who(pid, players),
+        rows=rows,
+        gw=gw,
+        notes=notes,
     )
-    return "\n".join(lines)
-
-
-def _by_position(lineup: Lineup, players: dict[int, Player]) -> str:
-    """The eleven on one line, keeper to forwards, a semicolon between the
-    lines of the formation — the shape names the groups, so the positions
-    need no labels of their own."""
-    rows: dict[int, list[str]] = defaultdict(list)
-    for pid in lineup.xi:
-        rows[players[pid].element_type].append(players[pid].web_name)
-    return "; ".join(", ".join(rows[position]) for position in POSITIONS)
-
-
-def _eleven(lineup: Lineup, players: dict[int, Player]) -> str:
-    """The eleven by name, for a checklist that has to name a whole team at once
-    — the free-hit build, where the standing squad is not the one that plays."""
-    return ", ".join(players[pid].web_name for pid in lineup.xi)
+    return "\n".join([f"{heading}{suffix} ({formation(lineup, players)})", *table])
 
 
 def _moves(
