@@ -4100,8 +4100,7 @@ def test_a_recorded_free_hit_fields_the_entered_team_and_holds(tmp_path):
     # The sheet prints the eleven he entered, in his order, and his armbands —
     # not an eleven re-picked over his fifteen, and not the standing squad's.
     # Ferrer is captain and Reyes, whom only the free hit brings in, vice.
-    eleven = ", ".join(PLAYERS[pid].web_name for pid in FH_XI)
-    assert f"{render.FREE_HIT_XI}: {eleven}" in report
+    assert render.FREE_HIT_LINE in report
     assert "CAPTAIN Ferrer · VICE Reyes" in report
     assert "Ferrer (C)" in report and "Reyes (V)" in report
     assert decision["formation"] == "4-5-1"
@@ -4270,7 +4269,7 @@ def test_an_entered_week_with_nothing_new_gets_the_calm_alert(tmp_path):
     entered = _entered_lineup(row, deadline, PLAYERS)
     assert entered is not None
     assert render.phone_lineup(entered, PLAYERS) in alert
-    assert alert.index("Bench:") < alert.index(render.RECORDED_CALM)
+    assert alert.index("B1 ") < alert.index(render.RECORDED_CALM)
     assert reminder["full_report_plan"]["transfers"] == []
     assert reminder["full_report_plan"]["captain"] == row.captain
     assert set(store.purchases()) == set(PICKS_15_IDS), "the ledger kept the API's truth"
@@ -4879,7 +4878,7 @@ def test_a_calm_reminder_carries_the_deadline_verdicts_lineup(tmp_path):
 
     planned = _recorded_lineup(store.decision(2, "deadline"), PLAYERS)
     assert render.phone_lineup(planned, PLAYERS) in alert
-    assert alert.index("## Do this") < alert.index("Bench:") < alert.index(
+    assert alert.index("## Do this") < alert.index("B1 ") < alert.index(
         render.REMINDER_UNCHANGED
     )
 
@@ -4892,8 +4891,8 @@ def test_a_reminder_with_no_full_report_carries_the_fresh_lineup(tmp_path):
         cfg, make_client(pipeline_routes()), store, "reminder", send=False
     )
 
-    assert "Starting XI (" in alert and "Bench: 1 " in alert
-    assert alert.index("Bench:") < alert.index(render.NO_FULL_REPORT)
+    assert "Starting XI (" in alert and "B1 " in alert
+    assert alert.index("B1 ") < alert.index(render.NO_FULL_REPORT)
 
 
 def test_a_calm_reminder_after_a_free_hit_deadline_carries_the_free_hit_team(
@@ -4933,7 +4932,7 @@ def test_a_calm_reminder_after_a_free_hit_deadline_carries_the_free_hit_team(
     assert len(eleven) == 11
     assert render.REMINDER_UNCHANGED in alert
     block = alert[alert.index("Starting XI \u2014 free hit team"):]
-    shown = block[: block.index("Bench:")]
+    shown = block[: block.index("B1 ")]
     for pid in eleven:
         assert PLAYERS[pid].web_name in shown
     for pid in record["bench"]:

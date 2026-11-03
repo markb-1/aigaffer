@@ -119,11 +119,24 @@ VERDICT = {"event": 6, "transfers_in": [], "transfers_out": [], "adjustments": [
 # GK 2; DEF 5, 6, 7; MID 8, 9, 10, 11; FWD 13, 14, 15. Bank: 10 + sales (Diop
 # at his ledger price 40, the other three at 50: 190) - buys (4 x 50 = 200) = 0.
 WC_TEAM = """If you played it — C Kinsky · V Guehi · bank £0.0m:
-GK  Kinsky (C)
-DEF Guehi (V), Calafiori, Vuskovic
-MID Bruno, Mbeumo, Gross, LewisPotter
-FWD Haaland, CalvertLewin, JoaoPedro
-Bench: 1 Pickford · 2 Gvardiol · 3 Mitchell · 4 Tavernier"""
+```
+GK  Kinsky C
+DEF Guehi V
+    Calafiori
+    Vuskovic
+MID Bruno
+    Mbeumo
+    Gross
+    LewisPotter
+FWD Haaland
+    CalvertLewin
+    JoaoPedro
+
+B1  Pickford
+B2  Gvardiol
+B3  Mitchell
+B4  Tavernier
+```"""
 FOOTER = 'Not recorded — if you play it, don\'t send "Transfers made". Gaffer\'s view next.'
 
 
@@ -222,11 +235,24 @@ def test_a_free_hit_leads_with_its_one_week_gain_and_fields_the_free_hit_team():
         "Deadline Sat 10 Oct 11:00 Irish (in 1d 15h)\n"
         "\n"
         "If you played it — your free-hit team · C Kinsky · V Muharemovic:\n"
-        "GK  Kinsky (C)\n"
-        "DEF Muharemovic (V), Guehi, Calafiori, Vuskovic\n"
-        "MID Bruno, Mbeumo, Gross, LewisPotter\n"
-        "FWD Haaland, CalvertLewin\n"
-        "Bench: 1 JoaoPedro · 2 Pickford · 3 Gvardiol · 4 Schade\n"
+        "```\n"
+        "GK  Kinsky C\n"
+        "DEF Muharemovic V\n"
+        "    Guehi\n"
+        "    Calafiori\n"
+        "    Vuskovic\n"
+        "MID Bruno\n"
+        "    Mbeumo\n"
+        "    Gross\n"
+        "    LewisPotter\n"
+        "FWD Haaland\n"
+        "    CalvertLewin\n"
+        "\n"
+        "B1  JoaoPedro\n"
+        "B2  Pickford\n"
+        "B3  Gvardiol\n"
+        "B4  Schade\n"
+        "```\n"
         "\n" + FOOTER
     )
 
@@ -263,13 +289,29 @@ def test_a_doubtful_newcomer_is_noted_after_his_name_not_in_a_warning_line(monke
 
     text = _text(whatif, week)
 
-    assert text.split("\n\n")[1] == (
+    # The notes are a last column, one space after the 12-wide name column
+    # (CalvertLewin); Mitchell's minutes are no doubt on the bench.
+    team = text.split("\n\n", 1)[1].split("\n\n" + FOOTER)[0]
+    assert team == (
         "If you played it — C Bruno · V Mbeumo · bank £0.0m:\n"
+        "```\n"
         "GK  Kinsky\n"
-        "DEF Guehi, Calafiori, Gvardiol (doubtful)\n"
-        "MID Bruno (C), Mbeumo (V), Gross, Tavernier (75%)\n"
-        "FWD Haaland, CalvertLewin, JoaoPedro\n"
-        "Bench: 1 Pickford · 2 Vuskovic · 3 LewisPotter · 4 Mitchell"
+        "DEF Guehi\n"
+        "    Calafiori\n"
+        "    Gvardiol     doubtful\n"
+        "MID Bruno C\n"
+        "    Mbeumo V\n"
+        "    Gross\n"
+        "    Tavernier    75%\n"
+        "FWD Haaland\n"
+        "    CalvertLewin\n"
+        "    JoaoPedro\n"
+        "\n"
+        "B1  Pickford\n"
+        "B2  Vuskovic\n"
+        "B3  LewisPotter\n"
+        "B4  Mitchell\n"
+        "```"
     )
     assert "⚠️" not in text
 
@@ -280,13 +322,13 @@ def test_a_newcomer_in_the_eleven_on_thin_minutes_is_noted_in_mins():
     whatif = replace(whatif, on=replace(whatif.on, lineup=lineup))
     week = _week(xmins={**{pid: 90.0 for pid in NAMES}, 21: 62.0})
 
-    assert "GK  Pickford (62 mins)" in _text(whatif, week).splitlines()
+    assert "GK  Pickford     62 mins" in _text(whatif, week).splitlines()
 
 
 def test_an_old_hand_with_thin_minutes_is_not_a_newcomer_and_gets_no_note():
     week = _week(xmins={**{pid: 90.0 for pid in NAMES}, 8: 40.0})
 
-    assert "Bruno (40 mins)" not in _text(_wildcard(), week)
+    assert "40 mins" not in _text(_wildcard(), week)
 
 
 def test_numbers_only_says_so_instead_of_promising_the_gaffer():
