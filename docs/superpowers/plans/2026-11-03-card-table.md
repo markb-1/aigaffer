@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - The table is fenced with lines that are exactly ```` ``` ````. No language tag.
-- Columns: GW (width 2), two-space gap, Out cell, two-space gap, In cell. Header `GW  Out  In`. The totals row is labelled `=`.
+- Columns: GW (width 2), two-space gap, Out cell, two-space gap, In cell. In the header row, `Out` is padded to the Out cell's width, then the gap, then `In`, as in `GW  Out      In`. The totals row is labelled `=`.
 - Cell: the fixture (`phone_games`) is left-padded to the column's widest fixture, then one space, then the 1dp points right-aligned to the column's widest number *including the column's sum*. A blank shows `—` with an empty points slot. Every row is `rstrip`ped.
 - Sums are plain `_window` sums (stored 2dp values), never decayed.
 - Width: a double on both sides with points under 10 is exactly 30 characters. The measured phone ceiling is 32. Nothing truncates.
@@ -104,7 +104,7 @@ def test_a_double_on_both_sides_fits_thirty_characters():
 - [ ] **Step 4: Run the tests and see them fail**
 
 Run: `.venv/bin/pytest tests/test_transfer_card.py tests/test_render.py tests/test_weekplan.py -q`
-Expected: FAIL on the shape, double, blank, width, next-best, club, render-card and week-plan card tests. `covers` fails with ImportError.
+Expected: `tests/test_transfer_card.py` fails at collection with an ImportError, because it imports `covers` at the top. That's expected and not a broken plan. In the other two files, the render-card and week-plan card tests FAIL.
 
 - [ ] **Step 5: Implement the table in `transfer_card.py`**
 
@@ -171,6 +171,8 @@ git commit -m "feat(render): the count line carries the bank once a week"
 **Interfaces:**
 - Produces: `_units(text: str) -> Iterator[tuple[str, str]]`, which yields `(plain, html)` pairs in order. `_chunks` iterates over these instead of `_lines` plus `_as_html`. It keeps packing by `_utf16_len(html)` and keeps joining both renderings with `\n`. `_lines` and `_as_html` are unchanged and still serve ordinary lines.
 
+This supersedes the spec's wording, in which `_lines` yields the unit and `_as_html` renders it (spec, Delivery, first two bullets). The outcome is the same. Write the docstrings to the code.
+
 `_units` algorithm (the tests don't pin the scan, so here it is):
 
 ```
@@ -194,6 +196,7 @@ In the oversize fallback, a body line starting `# ` would be bolded by `_as_html
 - [ ] **Step 1: Write the failing tests**
 
 ```python
+# Not aligned to the card rules: these tests check escaping and units, not layout.
 TABLE = "Gale → Reid · FWD · £9.5m\n```\nGW  Out  In\n2   A&B 1.0  <x> 4.0\n```\n- +3.0 this week"
 
 def test_a_fenced_block_arrives_as_one_pre_with_the_fences_dropped():
@@ -244,7 +247,7 @@ Expected: the new fence tests FAIL (fences arrive literally) and the existing te
 
 - [ ] **Step 3: Implement `_units` and switch `_chunks` to it, as in the Interfaces block**
 
-Rewrite the module docstring paragraph about "every tag opens and closes on its own line" so it covers units. In the stray-fence paragraph, record why a bare fence in model prose can't precede a card: render.py:347-350 and 583-584, and weekplan.py:415-427. Update the test module's docstring in the same way.
+Update `_chunks`'s own docstring: it packs units now, not whole lines. Rewrite the module docstring paragraph about "every tag opens and closes on its own line" so it covers units. In the stray-fence paragraph, record why a bare fence in model prose can't precede a card: render.py:347-350 and 583-584, and weekplan.py:415-427. Update the test module's docstring in the same way.
 
 - [ ] **Step 4: Run the tests and see them pass**
 
@@ -261,5 +264,5 @@ git commit -m "feat(telegram): a fenced block goes as one pre, never cut"
 ## Final verification (after Task 3)
 
 - `.venv/bin/pytest -q`: everything passes.
-- Render one digest from a frozen GW9 snapshot fixture through `_chunks`. Print the HTML and check by eye that the `<pre>` is whole, with the bullets after it.
+- Feed `render_week_plan(load_snapshots(GW9_WEDNESDAY, 9), NOW, None)[2]` (as in tests/test_weekplan.py:748) through `telegram._chunks`. Print the HTML and check by eye that the `<pre>` is whole, with the bullets after it.
 - After merge, the next live digest is the real check on the phone. Ask Mark for a screenshot of the first one.
