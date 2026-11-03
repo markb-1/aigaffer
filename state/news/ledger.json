@@ -39,7 +39,7 @@
   },
   "165": {
     "category": "injured",
-    "checked_at": "2026-10-28T23:35:03.552418+00:00",
+    "checked_at": "2026-11-03T18:35:08.627395+00:00",
     "expected_minutes": 0.0,
     "fpl": {
       "chance_of_playing_next_round": 0,
@@ -47,14 +47,14 @@
       "news_added": "2026-10-24T16:30:09.687729Z",
       "status": "i"
     },
-    "gw": 9,
-    "note": "Xabi Alonso confirmed on Tuesday that Jo\u00e3o Pedro is out for 'a few weeks' with a thigh injury.",
+    "gw": 10,
+    "note": "Thigh injury, reported 3 Nov as out 'for several weeks' and missing the trip to Sunderland; injury tracker puts return around 21 Nov (approx GW12).",
     "player_id": 165,
-    "quote_date": "2026-10-27",
+    "quote_date": "2026-11-03",
     "return_gw": 12,
-    "run": "scout",
-    "source": "ESPN / Heavy / Evening Standard reporting Alonso",
-    "tier": 1
+    "run": "early",
+    "source": "Chelsea news report (3 Nov 2026) / injury tracker citing club",
+    "tier": 2
   },
   "173": {
     "category": "doubt",
