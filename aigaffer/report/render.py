@@ -42,7 +42,13 @@ from aigaffer.chips import BENCH_BOOST, FREE_HIT, TRIPLE_CAPTAIN, WILDCARD
 from aigaffer.data.free_transfers import MAX_FREE_TRANSFERS, after_roll
 from aigaffer.data.models import Bootstrap, Event, Player, Standing
 from aigaffer.model.xp import PlayerProjection
-from aigaffer.report.transfer_card import CardInputs, pair_moves, transfer_cards
+from aigaffer.report.transfer_card import (
+    CardInputs,
+    bank_left,
+    covers,
+    pair_moves,
+    transfer_cards,
+)
 from aigaffer.solver.lineup import ChipEvs, Lineup
 from aigaffer.solver.optimizer import (
     DEFENDER,
@@ -1446,8 +1452,12 @@ def _recommendation(
     Given ``cards`` the bare Out/In bullets are replaced by one transfer card
     per move (:mod:`aigaffer.report.transfer_card`), which is what the phone
     needs to judge the move without opening the app. The count-and-cost line
-    stays above them. A Wildcard week keeps the bullets, because fifteen cards
-    is a wall, and adds the card module's pointer line at the detailed report.
+    stays above them and is where the bank lives now: once a week, "£x.xm left
+    in the bank", rather than repeated on every card. It is only printed when
+    the cards cover every move (a bank worked from a partial set of rows would
+    be wrong); otherwise the line is the bare count and cost. A Wildcard week
+    keeps the bullets, because fifteen cards is a wall, and adds the card
+    module's pointer line at the detailed report.
     A Free Hit week arrives with no transfers on ``choice`` (the temporary team
     lives on the path), so it prints "Roll the transfer." and no pointer, by
     design. With no ``cards``, or when the card module has none to give (a
@@ -1466,7 +1476,11 @@ def _recommendation(
 
     moves = plural(len(choice.transfers_in), "transfer")
     cost = f"-{choice.hits * HIT_POINTS} pts in hits" if choice.hits else "no hit"
-    lines += [f"{moves}, {cost}.", ""]
+    if cards is not None and covers(cards, choice.transfers_out, choice.transfers_in):
+        bank = price(bank_left(cards, choice.transfers_out, choice.transfers_in))
+        lines += [f"{moves}, {cost}, {bank} left in the bank.", ""]
+    else:
+        lines += [f"{moves}, {cost}.", ""]
     rendered = (
         []
         if cards is None

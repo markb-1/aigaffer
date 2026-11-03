@@ -1218,7 +1218,7 @@ def test_digest_carries_the_card_under_recommendation():
                          cards=CARDS)
 
     # The digest has no gaffer here, so the pointer line is the section's tail.
-    assert section(text, "Recommendation")[:9] == ["1 transfer, no hit.", *CARD.splitlines()]
+    assert section(text, "Recommendation")[:9] == ["1 transfer, no hit, £2.5m left in the bank.", *CARD.splitlines()]
     assert "- Out:" not in text
 
 
@@ -1266,13 +1266,25 @@ def test_wildcard_keeps_the_bullets_and_adds_the_pointer():
     assert lines == [
         "## Recommendation",
         "",
-        "1 transfer, no hit.",
+        "1 transfer, no hit, £2.5m left in the bank.",
         "",
         "- Out: Gale (DEF, CRV, £4.0m)",
         "- In: Reid (FWD, CRV, £9.5m)",
         "",
         WILDCARD_POINTER.format(count=1),
     ]
+
+
+def test_hits_and_bank_share_the_count_line():
+    # One move taken as a hit: -4 pts, and the bank is still 80 + 40 - 95 = 25.
+    hit = replace(ONE, hits=1)
+
+    text = render_digest("deadline", EVENT, hit, LINEUP, BOOTSTRAP, free_transfers=1,
+                         cards=CARDS)
+
+    assert section(text, "Recommendation")[0] == (
+        "1 transfer, -4 pts in hits, £2.5m left in the bank."
+    )
 
 
 # --- the phone digest ------------------------------------------------------
