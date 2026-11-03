@@ -16,6 +16,14 @@ to that where it is tightest, a line that is nothing but ampersands.
 The report itself is lines, and the split has to keep them: a message that
 begins mid-sentence is worse than one more message. The exception is a line
 longer than a whole message, which can only be cut.
+
+A block between two bare ``` lines is the exception to "line by line": it is
+one unit, sent as a single ``<pre>`` with the fences dropped and the content
+escaped but never read for headings, and a cut falls before it or after it,
+never through it. The tests hold that to its edges: a tagged fence and an
+unclosed one are ordinary lines, an empty block sends nothing, a block too
+big for one message degrades to ordinary lines rather than being cut, and a
+chunk Telegram rejects falls back to the table without its backticks.
 """
 
 import json
@@ -186,6 +194,59 @@ def test_an_emoji_heavy_line_is_budgeted_in_utf16_units():
     assert len(chunks) > 1
     assert all(_utf16_len(chunk) <= LIMIT for chunk in chunks)
     assert "".join(chunks) == line
+
+
+# Not aligned to the card rules: these tests check escaping and units, not layout.
+TABLE = "Gale → Reid · FWD · £9.5m\n```\nGW  Out  In\n2   A&B 1.0  <x> 4.0\n```\n- +3.0 this week"
+
+
+def test_a_fenced_block_arrives_as_one_pre_with_the_fences_dropped():
+    assert texts(send(TABLE)) == [
+        "Gale → Reid · FWD · £9.5m\n<pre>GW  Out  In\n2   A&amp;B 1.0  &lt;x&gt; 4.0</pre>\n- +3.0 this week"
+    ]
+
+
+def test_a_heading_inside_a_fence_is_not_bolded():
+    assert texts(send("```\n# not a heading\n```")) == ["<pre># not a heading</pre>"]
+
+
+def test_a_tagged_fence_is_ordinary_lines():
+    text = "```python\nx = 1\n```"
+    assert texts(send(text)) == ["```python\nx = 1\n```"]
+
+
+def test_an_unclosed_fence_after_a_card_leaves_the_card_whole():
+    text = TABLE + "\n```\nthe gaffer's stray line"
+    [html] = texts(send(text))
+    assert html.count("<pre>") == 1 and html.endswith("\n```\nthe gaffer's stray line")
+
+
+def test_two_fenced_blocks_are_two_pres():
+    assert texts(send("```\na\n```\n```\nb\n```")) == ["<pre>a</pre>\n<pre>b</pre>"]
+
+
+def test_an_empty_fenced_block_sends_nothing_for_it():
+    assert texts(send("before\n```\n```\nafter")) == ["before\nafter"]
+
+
+def test_a_fenced_block_at_a_chunk_boundary_moves_whole():
+    # Fill the first message to within 20 units of the limit, then a 3-line
+    # block: it cannot fit, so it opens the second message intact.
+    filler = "x" * (LIMIT - 20)
+    first, second = texts(send(filler + "\n```\naaaaaaaaaa\nbbbbbbbbbb\n```"))
+    assert first == filler
+    assert second == "<pre>aaaaaaaaaa\nbbbbbbbbbb</pre>"
+
+
+def test_a_rejected_chunk_with_a_table_falls_back_without_backticks():
+    requests = send_html_rejected(TABLE)
+    assert texts(requests)[1] == "Gale → Reid · FWD · £9.5m\nGW  Out  In\n2   A&B 1.0  <x> 4.0\n- +3.0 this week"
+
+
+def test_an_oversized_fenced_block_degrades_to_ordinary_lines():
+    body = [f"{i:03d} " + "x" * 95 for i in range(45)]          # ~4500 units
+    sent = texts(send("```\n" + "\n".join(body) + "\n```"))
+    assert len(sent) == 2 and "<pre>" not in "".join(sent) and "```" not in "".join(sent)
 
 
 def test_blank_report_sends_nothing():

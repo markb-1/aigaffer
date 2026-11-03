@@ -7,6 +7,7 @@ from aigaffer.chips import FREE_HIT, WILDCARD
 from aigaffer.report.transfer_card import (
     WILDCARD_POINTER,
     CardInputs,
+    covers,
     pair_moves,
     transfer_cards,
 )
@@ -76,11 +77,17 @@ def cards_for(rows, out_ids, in_ids, squad, bank, chip=NO_CHIP, events=(9, 10)):
 def test_card_matches_the_approved_shape():
     [card] = cards_for(board(), [1], [2], [1, 3], 59)
 
+    # Out points slot is 3 wide (4.4 is its widest); In is 4 (10.7), hence the
+    # two spaces in "liv  4.8".
     assert card.splitlines() == [
-        "Calafiori → Gabriel · DEF · £7.9m (bank £3.7m left)",
-        "Out  liv 0.8 · HUL 3.6 = 4.4",
-        "In   liv 4.8 · HUL 5.9 = 10.7",
-        "+4.0 this week, +6.2 over 2 weeks",
+        "Calafiori → Gabriel · DEF · £7.9m",
+        "```",
+        "GW  Out      In",
+        "9   liv 0.8  liv  4.8",
+        "10  HUL 3.6  HUL  5.9",
+        "=       4.4      10.7",
+        "```",
+        "- +4.0 this week, +6.2 over 2 weeks",
     ]
 
 
@@ -94,6 +101,9 @@ def test_a_missing_row_gives_no_cards_at_all():
 
     assert cards_for(rows, [1, 3], [2, 99], [1, 3], 59) == []
     assert cards_for(rows, [1, 3], [2, 4], [1, 3], 59) != []
+    inputs = CardInputs(rows, [9, 10], [1, 3], 59)
+    assert not covers(inputs, [2, 99], [1])
+    assert covers(inputs, [2, 4], [1])
 
 
 def test_double_shows_the_weeks_number_once():
@@ -105,7 +115,12 @@ def test_double_shows_the_weeks_number_once():
     [card] = cards_for(rows, [1], [2], [1, 3], 59)
 
     # 7.1 + 5.86 = 12.96, printed 13.0: the double is one number, not two.
-    assert card.splitlines()[2] == "In   BHA+ars 7.1 · HUL 5.9 = 13.0"
+    # The In fixture column is 7 wide (BHA+ars) and the points slot 4 (13.0).
+    assert card.splitlines()[3:6] == [
+        "9   liv 0.8  BHA+ars  7.1",
+        "10  HUL 3.6  HUL      5.9",
+        "=       4.4          13.0",
+    ]
 
 
 def test_blank_cell_is_a_dash():
@@ -115,8 +130,13 @@ def test_blank_cell_is_a_dash():
 
     [card] = cards_for(rows, [1], [2], [1, 3], 59)
 
-    # 4.82 + 0.0 = 4.82, printed 4.8.
-    assert card.splitlines()[2] == "In   liv 4.8 · — = 4.8"
+    # 4.82 + 0.0 = 4.82, printed 4.8. The blank has no points, so its row
+    # is rstripped back to the dash.
+    assert card.splitlines()[3:6] == [
+        "9   liv 0.8  liv 4.8",
+        "10  HUL 3.6  —",
+        "=       4.4      4.8",
+    ]
 
 
 def alt(name, price, total, club="XXX", pos="DEF", x=None):
@@ -125,7 +145,7 @@ def alt(name, price, total, club="XXX", pos="DEF", x=None):
 
 
 def next_best(card):
-    return next(line for line in card.splitlines() if line.startswith("Next best:"))
+    return next(line for line in card.splitlines() if line.startswith("- Next best:"))
 
 
 def test_next_best_excludes_the_outgoing_player_on_a_downgrade():
@@ -141,7 +161,7 @@ def test_next_best_excludes_the_outgoing_player_on_a_downgrade():
 
     [card] = cards_for(rows, [1], [2], [1], 0)
 
-    assert next_best(card) == "Next best: Mid 8.0 (£5.5m)"
+    assert next_best(card) == "- Next best: Mid 8.0 (£5.5m)"
 
 
 def test_next_best_affordability_boundary():
@@ -156,7 +176,7 @@ def test_next_best_affordability_boundary():
 
     [card] = cards_for(rows, [1], [2], [1], 20)
 
-    assert next_best(card) == "Next best: Edge 9.0 (£7.0m)"
+    assert next_best(card) == "- Next best: Edge 9.0 (£7.0m)"
 
 
 def test_next_best_uses_listed_price_when_no_selling_price():
@@ -173,8 +193,7 @@ def test_next_best_uses_listed_price_when_no_selling_price():
 
     [card] = cards_for(rows, [1], [2], [1], 10)
 
-    assert "bank £-1.0m left" in card
-    assert next_best(card) == "Next best: Edge 9.0 (£7.0m)"
+    assert next_best(card) == "- Next best: Edge 9.0 (£7.0m)"
 
 
 def test_next_best_respects_three_per_club():
@@ -192,7 +211,7 @@ def test_next_best_respects_three_per_club():
 
     [card] = cards_for(rows, [1], [2], squad, 0)
 
-    assert next_best(card) == "Next best: ThirdW 8.0 (£5.0m)"
+    assert next_best(card) == "- Next best: ThirdW 8.0 (£5.0m)"
 
 
 def test_higher_projected_alternative_is_still_listed_in_rank_order():
@@ -207,7 +226,7 @@ def test_higher_projected_alternative_is_still_listed_in_rank_order():
 
     [card] = cards_for(rows, [1], [2], [1], 0)
 
-    assert next_best(card) == "Next best: Alt 12.0 (£5.0m) · Next 8.0 (£5.0m)"
+    assert next_best(card) == "- Next best: Alt 12.0 (£5.0m), Next 8.0 (£5.0m)"
 
 
 def test_injured_player_with_stale_total_does_not_lead():
@@ -222,13 +241,13 @@ def test_injured_player_with_stale_total_does_not_lead():
 
     [card] = cards_for(rows, [1], [2], [1], 0)
 
-    assert next_best(card) == "Next best: Real 2.0 (£5.0m) · Injured 0.0 (£5.0m)"
+    assert next_best(card) == "- Next best: Real 2.0 (£5.0m), Injured 0.0 (£5.0m)"
 
 
 def test_no_next_best_line_when_nobody_is_eligible():
     [card] = cards_for(board(), [1], [2], [1, 3], 59)
 
-    assert not any(line.startswith("Next best:") for line in card.splitlines())
+    assert not any(line.startswith("- Next best:") for line in card.splitlines())
 
 
 def test_club_line_only_at_three():
@@ -240,13 +259,13 @@ def test_club_line_only_at_three():
     # Squad 1 (out), 3 -> after the move 2, 3: two Arsenal.
     [two] = cards_for(rows, [1], [2], [1, 3], 59)
 
-    assert three.splitlines()[-1] == "3 from Arsenal now (Gabriel, Rice, Zed)"
+    assert three.splitlines()[-1] == "- 3 from Arsenal now: Gabriel, Rice, Zed"
     assert not any("from Arsenal" in line for line in two.splitlines())
 
 
-def test_two_moves_share_one_bank_figure():
+def test_two_moves_head_their_own_cards():
     # Out 1 (DEF, sp 57) and 4 (MID, sp 70); in 2 (DEF, pr 79) and 5 (MID, pr 80).
-    # Bank 50: 50 + 57 + 70 - 79 - 80 = 18, £1.8m on both cards.
+    # Each card heads with its own mover and the incoming price; no bank.
     rows = {
         1: {**alt("DefOut", 59, 4.0, "AAA"), "sp": 57},
         2: alt("DefIn", 79, 6.0, "BBB"),
@@ -257,8 +276,8 @@ def test_two_moves_share_one_bank_figure():
     cards = cards_for(rows, [1, 4], [5, 2], [1, 4], 50)
 
     assert [card.splitlines()[0] for card in cards] == [
-        "DefOut → DefIn · DEF · £7.9m (bank £1.8m left)",
-        "MidOut → MidIn · MID · £8.0m (bank £1.8m left)",
+        "DefOut → DefIn · DEF · £7.9m",
+        "MidOut → MidIn · MID · £8.0m",
     ]
 
 
@@ -270,3 +289,20 @@ def test_wildcard_gives_the_pointer_and_free_hit_gives_nothing():
     ]
     assert cards_for(rows, [1], [2], [1, 3], 59, chip=FREE_HIT) == []
     assert cards_for(rows, [], [], [1, 3], 59) == []
+
+
+def test_a_double_on_both_sides_fits_thirty_characters():
+    # Six double weeks of 9.9 each side: sums 59.4, so each points slot is 4
+    # wide and each cell is 7 + 1 + 4 = 12. A row is 2 + 2 + 12 + 2 + 12 = 30.
+    events = list(range(10, 16))
+    doubles = lambda a, b: {gw: [(a, "h"), (b, "a")] for gw in events}
+    rows = {
+        1: row("Out", "DEF", "AAA", 50, doubles("BHA", "ARS"), {gw: 9.9 for gw in events}),
+        2: row("In", "DEF", "BBB", 50, doubles("MCI", "TOT"), {gw: 9.9 for gw in events}),
+    }
+
+    [card] = cards_for(rows, [1], [2], [1], 0, events=events)
+    table = card.splitlines()[2:10]
+
+    assert table[1] == "10  BHA+ars  9.9  MCI+tot  9.9"
+    assert max(len(line) for line in table) == 30

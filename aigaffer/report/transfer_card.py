@@ -1,9 +1,13 @@
 """The transfer card: one block per transfer, so the move can be judged on the phone.
 
 What the owner does with a suggested transfer is open the FPL app and look at
-both players' fixtures. The card puts that in the text: each fixture the window
-holds for the man going and the man coming, next to its projected points, then
-the totals, the gain, and the next best alternatives. It only arranges numbers
+both players' fixtures. The card puts that in the text as a table with one row
+per gameweek: the man going and the man coming side by side, each cell a
+fixture and its projected points, then a totals row, the gain, and the next
+best alternatives. Reading across a row compares the two men in the same week,
+which is what the owner's eye does anyway. The table sits in a fenced block so
+a proportional font cannot break its columns: GitHub draws the fence as code,
+and the Telegram sender turns it into ``<pre>``. It only arranges numbers
 the run already made; nothing here projects anything, and no model writes a
 word of it, so it cannot get a fixture wrong.
 
@@ -110,9 +114,10 @@ def bank_left(cards: CardInputs, out_ids: Sequence[int], in_ids: Sequence[int]) 
     """The bank after all of this week's moves, in tenths.
 
     ``bank + Σ sale(out) − Σ price(in)``: the figure the owner sees once he
-    has made them, the same on every card of the week, and the one the
-    alternatives' affordability uses. The Week plan's first text prints it
-    too, so it and the card cannot disagree.
+    has made them, the same for every move of the week, and the one the
+    alternatives' affordability uses. The card no longer prints it: the count
+    line does, and so does the Week plan's first text, so the figure appears
+    once per message and they cannot disagree.
     """
     rows = cards.rows
     return (
@@ -122,16 +127,57 @@ def bank_left(cards: CardInputs, out_ids: Sequence[int], in_ids: Sequence[int]) 
     )
 
 
-def _cell(row: dict, gw: int) -> str:
-    games = row["f"].get(gw) or []
-    if not games:
-        return phone_games(games)
-    return f"{phone_games(games)} {row['x'].get(gw, 0.0):.1f}"
+def covers(cards: CardInputs, out_ids: Sequence[int], in_ids: Sequence[int]) -> bool:
+    """Whether the run holds a row for every man moved, on either side.
+
+    The card is all or nothing on this: one missing row and the move cannot be
+    priced or tabled. :func:`transfer_cards` asks it before building anything,
+    and the count line asks it before printing a bank it would otherwise get
+    wrong.
+    """
+    return all(pid in cards.rows for pid in [*out_ids, *in_ids])
 
 
-def _line(label: str, row: dict, events: Sequence[int]) -> str:
-    cells = " · ".join(_cell(row, gw) for gw in events)
-    return f"{label}{cells} = {_window(row, events):.1f}"
+FENCE = "```"
+
+
+def _column(row: dict, events: Sequence[int]) -> list[tuple[str, str]]:
+    """The (fixture, points) pair for each gameweek, then the window's sum.
+
+    A blank gameweek is the dash with an empty points slot; the sum is the
+    plain :func:`_window` total, never the decayed one."""
+    cells = []
+    for gw in events:
+        games = row["f"].get(gw) or []
+        cells.append((phone_games(games), f"{row['x'].get(gw, 0.0):.1f}" if games else ""))
+    return cells + [("", f"{_window(row, events):.1f}")]
+
+
+def _table(out_row: dict, in_row: dict, events: Sequence[int]) -> list[str]:
+    """The fenced per-gameweek table: ``GW  Out  In``, a row per gameweek, ``=``.
+
+    Each cell is the fixture left-padded to its column's widest, one space,
+    then the points right-aligned to the column's widest number *including
+    the sum*, so the totals row lines up under the digits it adds. The GW
+    label is two wide, the gaps two spaces. Every row is rstripped, so a blank
+    gameweek ends at its dash. Nothing truncates: a double on both sides with
+    points under ten is exactly 30 characters, which a phone holds."""
+    columns = [_column(out_row, events), _column(in_row, events)]
+    fixture_w = [max(len(fix) for fix, _ in col) for col in columns]
+    points_w = [max(len(pts) for _, pts in col) for col in columns]
+
+    def cell(side: int, index: int) -> str:
+        fix, pts = columns[side][index]
+        return f"{fix:<{fixture_w[side]}} {pts:>{points_w[side]}}"
+
+    def line(label: str, index: int) -> str:
+        return f"{label:<2}  {cell(0, index)}  {cell(1, index)}".rstrip()
+
+    out_w = fixture_w[0] + 1 + points_w[0]
+    rows = [f"{'GW':<2}  {'Out':<{out_w}}  In"]
+    rows += [line(str(gw), i) for i, gw in enumerate(events)]
+    rows.append(line("=", len(events)))
+    return [FENCE, *rows, FENCE]
 
 
 def _alternatives(
@@ -179,17 +225,22 @@ def transfer_cards(
     where up to fifteen cards would be a wall on a phone. Otherwise the cards
     come in :func:`pair_moves` order.
 
+    Each card is a header (who replaces whom, the position and the incoming
+    price; the bank lives on the count line, not here), the fenced table, and
+    bullets: the gain, the next best alternatives when there are any, and the
+    club line at the limit.
+
     All or nothing: if the run holds no row for any man moved, there are no
     cards and the caller prints its plain bullets. Dropping only the pair
-    with the hole would leave the others printing a bank that ignores it, and
-    raising would cost the digest that carries them.
+    with the hole would leave the others tabled while the count line's bank
+    ignores it, and raising would cost the digest that carries them.
     """
     if not out_ids and not in_ids or chip == FREE_HIT:
         return []
     if chip == WILDCARD:
         return [WILDCARD_POINTER.format(count=len(in_ids))]
     rows = cards.rows
-    if not all(pid in rows for pid in [*out_ids, *in_ids]):
+    if not covers(cards, out_ids, in_ids):
         return []
     pairs = pair_moves(out_ids, in_ids, lambda pid: rows[pid]["p"])
     left = bank_left(cards, out_ids, in_ids)
@@ -201,19 +252,17 @@ def transfer_cards(
         out_sum, in_sum = _window(out_row, events), _window(in_row, events)
         this_week = in_row["x"].get(events[0], 0.0) - out_row["x"].get(events[0], 0.0)
         lines = [
-            f"{out_row['n']} → {in_row['n']} · {in_row['p']} · {_money(in_row['pr'])}"
-            f" (bank {_money(left)} left)",
-            _line("Out  ", out_row, events),
-            _line("In   ", in_row, events),
-            f"{this_week:+.1f} this week, {in_sum - out_sum:+.1f} over {len(events)} weeks",
+            f"{out_row['n']} → {in_row['n']} · {in_row['p']} · {_money(in_row['pr'])}",
+            *_table(out_row, in_row, events),
+            f"- {this_week:+.1f} this week, {in_sum - out_sum:+.1f} over {len(events)} weeks",
         ]
         best = _alternatives(cards, came, new_squad, out_ids, left)
         if best:
-            lines.append("Next best: " + " · ".join(best))
+            lines.append("- Next best: " + ", ".join(best))
         mates = sorted(
             rows[pid]["n"] for pid in new_squad if pid in rows and rows[pid]["c"] == in_row["c"]
         )
         if len(mates) == CLUB_LIMIT:
-            lines.append(f"{CLUB_LIMIT} from {in_row['cf']} now ({', '.join(mates)})")
+            lines.append(f"- {CLUB_LIMIT} from {in_row['cf']} now: {', '.join(mates)}")
         out_cards.append("\n".join(lines))
     return out_cards
