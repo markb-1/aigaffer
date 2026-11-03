@@ -1,0 +1,51 @@
+{
+  "arrival_status": {
+    "31": "a"
+  },
+  "bank_after": 8,
+  "buy_prices": {
+    "31": 47
+  },
+  "captain": 411,
+  "chip": "none",
+  "freehit_squad": null,
+  "freehit_xi": null,
+  "ft_after": 0,
+  "ft_before": 1,
+  "gw": 10,
+  "mode": "early",
+  "recorded_at": "2026-11-03T21:51:02.001600+00:00",
+  "sell_prices": {
+    "173": 40
+  },
+  "squad_after": [
+    4,
+    13,
+    31,
+    68,
+    86,
+    109,
+    124,
+    165,
+    334,
+    346,
+    388,
+    411,
+    427,
+    504,
+    572
+  ],
+  "transfers_in": [
+    31
+  ],
+  "transfers_out": [
+    173
+  ],
+  "verdicts": [
+    [
+      "early",
+      "2026-11-03T18:37:45.463655+00:00"
+    ]
+  ],
+  "vice": 4
+}
