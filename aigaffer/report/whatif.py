@@ -20,6 +20,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from aigaffer.chips import FREE_HIT, WILDCARD
+from aigaffer.detailed.snapshot import player_rows
 from aigaffer.orchestrator import PreparedWeek
 from aigaffer.report.render import STATUS_WORDS, phone_lineup, price
 from aigaffer.whatif import HOLD, MARGINAL, PLAY, WhatIf
@@ -153,8 +154,14 @@ def _team(whatif: WhatIf, week: PreparedWeek) -> str:
     :func:`~aigaffer.report.render.phone_lineup` draws the eleven and the
     bench; its first line (the formation heading every other text carries) is
     swapped for the ``If you played it`` line, which names the armbands and,
-    for a wildcard, the bank — the formation can be read off the rows. On a
+    for a wildcard, the bank — the formation can be read off the rows. The
+    swap removes the heading alone and leaves the table's fence whole. On a
     free hit ``whatif.on.lineup`` is already the free-hit team.
+
+    Each row carries this week's fixture and xP, read off
+    :func:`~aigaffer.detailed.snapshot.player_rows` over the week's own
+    projections, so the what-if's numbers are rounded the way every other
+    text's are.
     """
     players = week.effective.players
     lineup = whatif.on.lineup
@@ -165,7 +172,17 @@ def _team(whatif: WhatIf, week: PreparedWeek) -> str:
         heading = PLAY_WILDCARD.format(
             captain=captain, vice=vice, bank=price(_bank_after(whatif.on.plan, week)),
         )
-    body = phone_lineup(lineup, players, notes=_notes(whatif, week)).split("\n", 1)[1]
+    rows = player_rows(
+        bootstrap=week.effective.bootstrap,
+        fixtures=week.effective.fixtures,
+        projections=week.projections,
+        xmins=week.xmins,
+        ids=[*lineup.xi, *lineup.bench],
+        selling_prices=week.prices,
+    )
+    body = phone_lineup(
+        lineup, players, notes=_notes(whatif, week), rows=rows, gw=week.effective.event.id,
+    ).split("\n", 1)[1]
     return f"{heading}\n{body}"
 
 
