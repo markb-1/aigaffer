@@ -19,22 +19,22 @@
     "tier": 1
   },
   "13": {
-    "category": "doubt",
-    "checked_at": "2026-10-30T17:35:03.267078+00:00",
-    "expected_minutes": 70.0,
+    "category": "nailed",
+    "checked_at": "2026-11-04T06:35:03.985589+00:00",
+    "expected_minutes": 86.0,
     "fpl": {
-      "chance_of_playing_next_round": 75,
-      "news": "Unspecified injury - 75% chance of playing",
+      "chance_of_playing_next_round": 100,
+      "news": "",
       "news_added": "2026-10-28T00:00:08.477333Z",
-      "status": "d"
+      "status": "a"
     },
-    "gw": 9,
-    "note": "Fresh entry from earlier run: doubt but expected to play most of the game.",
+    "gw": 10,
+    "note": "Started and starred (assist for Havertz) in the 1-0 win at Liverpool on Sun 1 Nov. The earlier doubt is gone. Trimmed slightly for Thursday's Europa tie v Slavia Prague.",
     "player_id": 13,
-    "quote_date": "2026-10-29",
+    "quote_date": "2026-11-01",
     "return_gw": null,
-    "run": "deadline",
-    "source": "Earlier run (tier 2 report)",
+    "run": "scout",
+    "source": "Yahoo Sports / Sofascore Liverpool 0-1 Arsenal player ratings",
     "tier": 2
   },
   "165": {
@@ -77,7 +77,7 @@
   },
   "31": {
     "category": "nailed",
-    "checked_at": "2026-10-30T17:35:03.267078+00:00",
+    "checked_at": "2026-11-04T06:35:03.985589+00:00",
     "expected_minutes": 88.0,
     "fpl": {
       "chance_of_playing_next_round": 100,
@@ -85,13 +85,13 @@
       "news_added": "2026-10-05T09:30:09.853316Z",
       "status": "a"
     },
-    "gw": 9,
-    "note": "Fresh entry from earlier run: nailed starter.",
+    "gw": 10,
+    "note": "Started and was player of the match (Sofascore 8.7) in the clean sheet at Anfield on 1 Nov. Saliba is back in full training (Arseblog, 3 Nov) but is short of sessions, and Konsa's form should keep him in. Small rotation risk only.",
     "player_id": 31,
-    "quote_date": "2026-10-24",
+    "quote_date": "2026-11-01",
     "return_gw": null,
-    "run": "deadline",
-    "source": "Earlier run (tier 2 report)",
+    "run": "scout",
+    "source": "Sofascore / Yahoo Sports match reports; Arseblog 3 Nov",
     "tier": 2
   },
   "346": {
@@ -134,21 +134,21 @@
   },
   "4": {
     "category": "nailed",
-    "checked_at": "2026-10-30T17:35:03.267078+00:00",
-    "expected_minutes": 88.0,
+    "checked_at": "2026-11-04T06:35:03.985589+00:00",
+    "expected_minutes": 90.0,
     "fpl": {
       "chance_of_playing_next_round": null,
       "news": "",
       "news_added": null,
       "status": "a"
     },
-    "gw": 9,
-    "note": "Fresh entry from earlier run: nailed starter at ARS.",
+    "gw": 10,
+    "note": "Started at Anfield on 1 Nov in a clean sheet and is ever-present.",
     "player_id": 4,
-    "quote_date": "2026-10-24",
+    "quote_date": "2026-11-01",
     "return_gw": null,
-    "run": "deadline",
-    "source": "Earlier run (tier 2 report)",
+    "run": "scout",
+    "source": "Yahoo Sports Liverpool 0-1 Arsenal player ratings",
     "tier": 2
   },
   "411": {
@@ -191,7 +191,7 @@
   },
   "68": {
     "category": "nailed",
-    "checked_at": "2026-10-30T17:35:03.267078+00:00",
+    "checked_at": "2026-11-04T06:35:03.985589+00:00",
     "expected_minutes": 85.0,
     "fpl": {
       "chance_of_playing_next_round": null,
@@ -199,14 +199,14 @@
       "news_added": null,
       "status": "a"
     },
-    "gw": 9,
-    "note": "Fresh entry from earlier run: nailed starter.",
+    "gw": 10,
+    "note": "Started and was not substituted in Bournemouth's 2-0 win over Leeds on 31 Oct (official line-up).",
     "player_id": 68,
-    "quote_date": "2026-10-25",
+    "quote_date": "2026-10-31",
     "return_gw": null,
-    "run": "deadline",
-    "source": "Earlier run (tier 2 report)",
-    "tier": 2
+    "run": "scout",
+    "source": "leedsunited.com full-time report line-ups",
+    "tier": 1
   },
   "8": {
     "category": "doubt",
