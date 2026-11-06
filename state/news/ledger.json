@@ -20,7 +20,7 @@
   },
   "13": {
     "category": "nailed",
-    "checked_at": "2026-11-04T06:35:03.985589+00:00",
+    "checked_at": "2026-11-06T00:35:03.438174+00:00",
     "expected_minutes": 86.0,
     "fpl": {
       "chance_of_playing_next_round": 100,
@@ -29,12 +29,12 @@
       "status": "a"
     },
     "gw": 10,
-    "note": "Started and starred (assist for Havertz) in the 1-0 win at Liverpool on Sun 1 Nov. The earlier doubt is gone. Trimmed slightly for Thursday's Europa tie v Slavia Prague.",
+    "note": "Carried from earlier run: nailed starter.",
     "player_id": 13,
     "quote_date": "2026-11-01",
     "return_gw": null,
-    "run": "scout",
-    "source": "Yahoo Sports / Sofascore Liverpool 0-1 Arsenal player ratings",
+    "run": "deadline",
+    "source": "earlier run",
     "tier": 2
   },
   "165": {
@@ -76,60 +76,60 @@
     "tier": 1
   },
   "31": {
-    "category": "nailed",
-    "checked_at": "2026-11-04T06:35:03.985589+00:00",
-    "expected_minutes": 88.0,
+    "category": "doubt",
+    "checked_at": "2026-11-06T00:35:03.438174+00:00",
+    "expected_minutes": 60.0,
     "fpl": {
-      "chance_of_playing_next_round": 100,
-      "news": "",
-      "news_added": "2026-10-05T09:30:09.853316Z",
-      "status": "a"
+      "chance_of_playing_next_round": 75,
+      "news": "Knee injury - 75% chance of playing",
+      "news_added": "2026-11-05T20:30:09.025008Z",
+      "status": "d"
     },
     "gw": 10,
-    "note": "Started and was player of the match (Sofascore 8.7) in the clean sheet at Anfield on 1 Nov. Saliba is back in full training (Arseblog, 3 Nov) but is short of sessions, and Konsa's form should keep him in. Small rotation risk only.",
+    "note": "Came off in the Champions League win in Prague; Standard says not thought serious but his place is uncertain, and Saliba is back in the squad. Predicted XIs split between Konsa and Mosquera.",
     "player_id": 31,
-    "quote_date": "2026-11-01",
+    "quote_date": "2026-11-05",
     "return_gw": null,
-    "run": "scout",
-    "source": "Sofascore / Yahoo Sports match reports; Arseblog 3 Nov",
+    "run": "deadline",
+    "source": "Standard via match-centre injury report; Sports Mole",
     "tier": 2
   },
   "346": {
-    "category": "nailed",
-    "checked_at": "2026-10-30T10:37:59.231400+00:00",
-    "expected_minutes": 86.0,
+    "category": "doubt",
+    "checked_at": "2026-11-06T00:35:03.438174+00:00",
+    "expected_minutes": 60.0,
     "fpl": {
-      "chance_of_playing_next_round": 100,
-      "news": "",
-      "news_added": "2026-10-23T13:00:09.444671Z",
-      "status": "a"
+      "chance_of_playing_next_round": 75,
+      "news": "Foot injury - 75% chance of playing",
+      "news_added": "2026-11-05T18:30:07.960444Z",
+      "status": "d"
     },
-    "gw": 9,
-    "note": "Farke: Calvert-Lewin had a normal training week, 'fully available' if nothing happens. Model minutes stand.",
+    "gw": 10,
+    "note": "Farke at Thursday presser: foot setback, missed Thursday training, 'carefully optimistic', hoped to train Friday. Minor doubt.",
     "player_id": 346,
-    "quote_date": "2026-10-29",
+    "quote_date": "2026-11-05",
     "return_gw": null,
-    "run": "scout",
-    "source": "leedsunited.com Farke presser",
+    "run": "deadline",
+    "source": "Farke press conference (MOT Leeds News / Leeds Live)",
     "tier": 1
   },
   "388": {
     "category": "rotation",
-    "checked_at": "2026-10-30T17:35:03.267078+00:00",
-    "expected_minutes": 65.0,
+    "checked_at": "2026-11-06T00:35:03.438174+00:00",
+    "expected_minutes": 75.0,
     "fpl": {
       "chance_of_playing_next_round": null,
       "news": "",
       "news_added": null,
       "status": "a"
     },
-    "gw": 9,
-    "note": "Re-check: Gu\u00e9hi captained City in the midweek Carabao Cup win over Brighton (28 Oct) while the other first-choice CBs rested. Most 30 Oct predicted XIs (Sports Mole, HardTackle, 101GG, Khel Now) still start him, but the Evening Standard/AOL line-up predicts him rested for Khusanov after poor form. Real rotation risk.",
+    "gw": 10,
+    "note": "Predicted to start at Forest alongside Dias in Brit Brief predicted XI.",
     "player_id": 388,
-    "quote_date": "2026-10-30",
+    "quote_date": "2026-11-06",
     "return_gw": null,
     "run": "deadline",
-    "source": "Sports Mole / AOL predicted XIs; mancity.com cup line-up",
+    "source": "Brit Brief predicted lineup",
     "tier": 3
   },
   "4": {
@@ -172,26 +172,7 @@
   },
   "572": {
     "category": "rotation",
-    "checked_at": "2026-10-30T17:35:03.267078+00:00",
-    "expected_minutes": 80.0,
-    "fpl": {
-      "chance_of_playing_next_round": null,
-      "news": "",
-      "news_added": null,
-      "status": "a"
-    },
-    "gw": 9,
-    "note": "Fresh entry from earlier run: some rotation risk.",
-    "player_id": 572,
-    "quote_date": "2026-10-29",
-    "return_gw": null,
-    "run": "deadline",
-    "source": "Earlier run (tier 2 report)",
-    "tier": 2
-  },
-  "68": {
-    "category": "nailed",
-    "checked_at": "2026-11-04T06:35:03.985589+00:00",
+    "checked_at": "2026-11-06T00:35:03.438174+00:00",
     "expected_minutes": 85.0,
     "fpl": {
       "chance_of_playing_next_round": null,
@@ -200,12 +181,31 @@
       "status": "a"
     },
     "gw": 10,
-    "note": "Started and was not substituted in Bournemouth's 2-0 win over Leeds on 31 Oct (official line-up).",
+    "note": "Predicted to start v Arsenal; Butland could return to the squad after arm injury but is still building fitness.",
+    "player_id": 572,
+    "quote_date": "2026-11-06",
+    "return_gw": null,
+    "run": "deadline",
+    "source": "Sports Mole predicted lineup",
+    "tier": 3
+  },
+  "68": {
+    "category": "nailed",
+    "checked_at": "2026-11-06T00:35:03.438174+00:00",
+    "expected_minutes": 85.0,
+    "fpl": {
+      "chance_of_playing_next_round": null,
+      "news": "",
+      "news_added": null,
+      "status": "a"
+    },
+    "gw": 10,
+    "note": "Carried from earlier run: nailed starter.",
     "player_id": 68,
     "quote_date": "2026-10-31",
     "return_gw": null,
-    "run": "scout",
-    "source": "leedsunited.com full-time report line-ups",
+    "run": "deadline",
+    "source": "earlier run",
     "tier": 1
   },
   "8": {
