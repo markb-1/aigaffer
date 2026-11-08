@@ -17,7 +17,9 @@ words, with what would change the gaffer's mind, and the plan still stands.
 
 **What an answer must be,** checked here rather than hoped for in the prompt:
 plain text (Telegram shows it as typed, so a table or a heading arrives as
-pipes and hashes), under 120 words, and naming its gameweek as ``GW{n}`` —
+pipes and hashes), asked for under 120 words and turned away at 150 (the
+gaffer lands either side of a target, and an answer of 124 words is still a
+short text), and naming its gameweek as ``GW{n}`` —
 between a deadline and the next early run the newest snapshot is the finished
 gameweek's, and an answer that does not say which week it means can be read
 as being about the wrong one. An answer that fails gets one more go inside the
@@ -63,8 +65,12 @@ ANSWER = "answer"
 MAX_TURNS = 6
 # The answer tool may be wrong once; the second wrong answer ends it.
 ANSWER_TRIES = 2
-# "Under 120 words": 119 is the most an answer may have.
+# "Under 120 words" is what the gaffer is asked for: the target.
 ANSWER_WORDS = 120
+# What is turned away: 150 words or more. The gaffer lands either side of the
+# target, and live (6 Nov) drafts of 120, 121 and 124 words were refused and
+# the owner told to ask again, so the limit sits well clear of the target.
+WORD_LIMIT = 150
 
 NOT_PROJECTED = "not projected this week"
 
@@ -147,8 +153,19 @@ _MARKDOWN = re.compile(r"(?m)^\s*(?:#|\||[-*\u2022]\s|\d+\.\s)|\*\*|__|`|<!--")
 
 class AskUnavailable(Exception):
     """No valid answer within the turns, or the API could not be reached. The
-    message is ours — a stop reason or an error's class name — never the
-    API's own words, so it is safe for the log."""
+    message is ours — a stop reason, an error's class name, or which rule an
+    answer broke — never the API's or the gaffer's own words, so it is safe
+    for the log."""
+
+
+class InvalidAnswer(ToolError):
+    """An answer the checks turned away: the message is for the gaffer, the
+    ``rule`` (``"no gameweek"``, ``"markdown"``, ``"160 words"``, ``"empty"``)
+    for the log."""
+
+    def __init__(self, message: str, rule: str) -> None:
+        super().__init__(message)
+        self.rule = rule
 
 
 # --- the lookups -----------------------------------------------------------------
@@ -264,23 +281,34 @@ def plan_detail(snapshot: dict, plan_id: Any) -> dict:
 # --- the answer ------------------------------------------------------------------
 
 
-def validate_answer(text: Any, gw: int, max_words: int = ANSWER_WORDS) -> str:
-    """The answer, flattened to one line, or a ToolError that says what to fix.
+def validate_answer(text: Any, gw: int, max_words: int = WORD_LIMIT) -> str:
+    """The answer, flattened to one line, or an InvalidAnswer that says what
+    to fix.
 
     ``max_words`` is the exclusive limit: the handler lowers it by the words
     of the "plan changed" prefix it will add afterwards, so the answer that
-    goes out is still under 120.
+    goes out is still under :data:`WORD_LIMIT`. An answer over it is asked
+    for at the target, :data:`ANSWER_WORDS`, not at the limit: told "keep it
+    under 120", the gaffer trimmed one word a try and ran out of tries.
     """
     if not isinstance(text, str) or not text.strip():
-        raise ToolError("The answer must be a few plain sentences.")
+        raise InvalidAnswer("The answer must be a few plain sentences.", "empty")
     if _MARKDOWN.search(text) or MARKUP.search(text):
-        raise ToolError("Write plain text: no tables, headings, lists, bold or code — Telegram shows them raw.")
+        raise InvalidAnswer(
+            "Write plain text: no tables, headings, lists, bold or code — Telegram shows them raw.", "markdown"
+        )
     flat = " ".join(text.split())
     words = len(flat.split())
     if words >= max_words:
-        raise ToolError(f"That is {words} words; keep it under {max_words}.")
+        raise InvalidAnswer(
+            f"That is {words} words, and the most is {max_words - 1}. Rewrite it under {ANSWER_WORDS}"
+            " words: drop a whole point, not a word or two.",
+            f"{words} words",
+        )
     if not re.search(rf"\bGW{gw}\b", flat, re.IGNORECASE):
-        raise ToolError(f"Name the gameweek: say GW{gw} in the answer, e.g. \"For GW{gw}'s plan: …\".")
+        raise InvalidAnswer(
+            f"Name the gameweek: say GW{gw} in the answer, e.g. \"For GW{gw}'s plan: …\".", "no gameweek"
+        )
     return flat
 
 
@@ -342,13 +370,14 @@ def _changed(snapshot: dict, thread: list[dict]) -> bool:
 
 def answer(
     cfg: Config, snapshot: dict, report_md: str, thread: list[dict], question: str, client: Any,
-    max_words: int = ANSWER_WORDS,
+    max_words: int = WORD_LIMIT,
 ) -> str:
     """The gaffer's answer to ``question``, or AskUnavailable.
 
     ``thread`` is the earlier exchanges this gameweek, already capped by the
     handler; ``client`` is the handler's, built lazily there.
-    ``max_words`` is the answer's exclusive word limit, lower than 120 when the handler will add a prefix.
+    ``max_words`` is the answer's exclusive word limit, lower than :data:`WORD_LIMIT` when the
+    handler will add a prefix.
     """
     conversation = _Conversation(client, cfg, snapshot, report_md, thread, question, max_words)
     try:
@@ -363,7 +392,7 @@ class _Conversation:
 
     def __init__(
         self, client: Any, cfg: Config, snapshot: dict, report_md: str,
-        thread: list[dict], question: str, max_words: int = ANSWER_WORDS,
+        thread: list[dict], question: str, max_words: int = WORD_LIMIT,
     ) -> None:
         self.max_words = max_words
         self.client = client
@@ -378,6 +407,7 @@ class _Conversation:
         }]
         self.requests = 0
         self.wrong = 0
+        self.broken = ""
 
     def run(self) -> str:
         reason = "no answer"
@@ -397,7 +427,7 @@ class _Conversation:
             if text is not None:
                 return text
             if self.wrong >= ANSWER_TRIES:
-                raise AskUnavailable("invalid answer")
+                raise AskUnavailable(f"invalid answer: {self.broken}")
             if not results:
                 reason = "no tool call"
                 self._join_ask()
@@ -424,8 +454,9 @@ class _Conversation:
                 if name == ANSWER:
                     try:
                         return validate_answer(given.get("text"), self.snapshot["gw"], self.max_words), results
-                    except ToolError:
+                    except InvalidAnswer as error:
                         self.wrong += 1
+                        self.broken = error.rule
                         raise
                 if name == PLAYER:
                     found = find_player(self.snapshot, given.get("name_or_id"))
