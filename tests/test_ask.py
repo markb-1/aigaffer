@@ -54,6 +54,7 @@ from aigaffer.manager.ask_writer import (
     PLAN,
     PLAYER,
     SYSTEM_PROMPT,
+    WORD_LIMIT,
     AskUnavailable,
     answer,
     find_player,
@@ -520,7 +521,7 @@ def test_the_plan_tool_shows_a_plan_by_id():
     assert "0" in results[1]["content"] and "1" in results[1]["content"]
 
 
-def test_an_answer_must_name_its_gameweek_and_fit_120_words():
+def test_an_answer_must_name_its_gameweek_and_fit_the_word_limit():
     assert validate_answer(GOOD, 8) == GOOD
     assert validate_answer("  For gw8:\n Cucurella's   double.  ", 8) == "For gw8: Cucurella's double."
     with pytest.raises(ToolError, match="GW8"):
@@ -528,11 +529,17 @@ def test_an_answer_must_name_its_gameweek_and_fit_120_words():
     # GW80 and GW18 are not GW8.
     with pytest.raises(ToolError, match="GW8"):
         validate_answer("In GW80 and GW18 Cucurella has a double.", 8)
-    # Under 120: 119 words pass, 120 do not.
-    words = ["GW8"] + ["word"] * 118
-    assert validate_answer(" ".join(words), 8)
-    with pytest.raises(ToolError, match="120"):
-        validate_answer(" ".join(words + ["more"]), 8)
+    # The prompt asks for under 120, but the gaffer lands either side of it:
+    # live on 6 Nov, drafts of 120, 121 and 124 words were turned away and
+    # the owner got "ask again". Anything under the limit of 150 passes.
+    assert WORD_LIMIT == 150
+    for n in (119, 120, 124, 149):
+        assert validate_answer(" ".join(["GW8"] + ["word"] * (n - 1)), 8)
+    # 150 do not, and the gaffer is told to cut to the target, not to the
+    # limit — "keep it under 120" got one word trimmed a try, live.
+    with pytest.raises(ToolError, match="150 words") as raised:
+        validate_answer(" ".join(["GW8"] + ["word"] * 149), 8)
+    assert "under 120" in str(raised.value)
     # Plain text: no tables, headings, bold or code.
     for marked in (
         "| GW8 | Cucurella |\n|---|---|",
@@ -546,24 +553,45 @@ def test_an_answer_must_name_its_gameweek_and_fit_120_words():
         validate_answer("", 8)
 
 
-def test_the_changed_plan_prefix_fits_inside_the_120_words(tmp_path):
+def test_the_changed_plan_prefix_fits_inside_the_word_limit(tmp_path):
     cfg, inbox = setup(tmp_path, board())
     write_thread(inbox, [{"q": "Why Isak?", "a": "For GW8's plan: Isak.", "ts": SENT.isoformat(),
                           "plan_moves": {"out": [3], "in": [8]}}])
-    # 119 words alone pass, but the 7-word prefix would take them to 126; the
+    # 149 words alone pass, but the 7-word prefix would take them to 156; the
     # gaffer is told it is too long and answers again, shorter.
-    long = " ".join(["GW8"] + ["word"] * 118)
+    long = " ".join(["GW8"] + ["word"] * 148)
     client = FakeClient([answered(long, "tu_1"), answered(GOOD, "tu_2")])
 
     result, _ = ask(cfg, inbox, client)
 
     assert result == CHANGED + GOOD
-    assert len(result.split()) < 120
+    assert len(result.split()) < WORD_LIMIT
     assert len(client.requests) == 2
-    # The budget is 120 less the prefix's seven words: 112 pass, 113 do not.
-    assert validate_answer(" ".join(["GW8"] + ["word"] * 111), 8, max_words=113)
-    with pytest.raises(ToolError, match="113"):
-        validate_answer(" ".join(["GW8"] + ["word"] * 112), 8, max_words=113)
+    # The limit is 150 less the prefix's seven words: 142 pass, 143 do not.
+    assert validate_answer(" ".join(["GW8"] + ["word"] * 141), 8, max_words=143)
+    with pytest.raises(ToolError, match="143"):
+        validate_answer(" ".join(["GW8"] + ["word"] * 142), 8, max_words=143)
+
+
+def test_the_log_names_what_was_wrong_with_the_answer(tmp_path, capsys):
+    # Live, two questions failed as "no answer (invalid answer)" and nothing
+    # said which rule; the log now names it — our words, never the gaffer's.
+    cfg, inbox = setup(tmp_path, board())
+    long = " ".join(["GW8", "secretword"] + ["word"] * 158)
+    client = FakeClient([
+        answered(long, "tu_1"), answered(long, "tu_2"),
+        answered("No week here.", "tu_3"), answered("**For GW8:** bold.", "tu_4"),
+    ])
+
+    assert ask(cfg, inbox, client)[0] == ASK_WRONG
+
+    out = capsys.readouterr().out
+    assert "no answer (invalid answer: 160 words)" in out
+    assert "no answer (invalid answer: markdown)" in out
+    assert "secretword" not in out and "bold" not in out
+    with pytest.raises(AskUnavailable, match="invalid answer: no gameweek"):
+        answer(CFG, board(), "report", [], QUESTION,
+               FakeClient([answered("No week.", "tu_1"), answered("Still none.", "tu_2")]))
 
 
 def test_an_answer_may_not_be_a_list():

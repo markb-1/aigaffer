@@ -144,11 +144,12 @@ def _handle(
     thread = _thread(thread_path)[-THREAD_KEEP:]
 
     # Decided before the writer, because the prefix is added after validation
-    # and an answer of 119 words would otherwise go out at 126: the writer is
-    # held to 120 less the prefix's words when it will apply.
+    # and an answer of 149 words would otherwise go out at 156: the writer is
+    # held to the word limit less the prefix's words when it will apply.
     moves = plan_moves(snapshot)
     changed = bool(thread) and thread[-1].get("plan_moves") not in (None, moves)
-    max_words = ask_writer.ANSWER_WORDS - len(PLAN_CHANGED.split()) if changed else ask_writer.ANSWER_WORDS
+    limit = ask_writer.WORD_LIMIT
+    max_words = limit - len(PLAN_CHANGED.split()) if changed else limit
 
     budget = _Metered(gaffer, MAX_TURNS)
     text = None
