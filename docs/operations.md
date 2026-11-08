@@ -209,8 +209,9 @@ is a typo that gets the help, not a question.
 - He answers from the newest run's snapshots, rendered as that gameweek's
   detailed report. The run's own data is the whole of what he reads, and the
   plan is never changed.
-- An answer is under 120 words, in plain text, from a conversation of at
-  most six requests. A failed answer is retried once inside those six.
+- He is asked for under 120 words of plain text; an answer of 150 words or
+  more is turned away. It comes from a conversation of at most six requests,
+  and a failed answer is retried once inside those six.
 - The gameweek's thread keeps the last ten exchanges, so follow-ups work. If
   the plan has changed since your last question, the answer says so first.
 - Before the week's first run there's no report, and he says so instead.

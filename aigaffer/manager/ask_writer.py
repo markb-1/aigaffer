@@ -407,6 +407,7 @@ class _Conversation:
         }]
         self.requests = 0
         self.wrong = 0
+        # The rule the last refused draft broke, for the log.
         self.broken = ""
 
     def run(self) -> str:
@@ -454,6 +455,8 @@ class _Conversation:
                 if name == ANSWER:
                     try:
                         return validate_answer(given.get("text"), self.snapshot["gw"], self.max_words), results
+                    # validate_answer raises only InvalidAnswer; a plain ToolError would
+                    # not count as a wrong draft and only MAX_TURNS would stop it.
                     except InvalidAnswer as error:
                         self.wrong += 1
                         self.broken = error.rule
