@@ -76,61 +76,61 @@
     "tier": 1
   },
   "31": {
-    "category": "doubt",
-    "checked_at": "2026-11-06T00:35:03.438174+00:00",
-    "expected_minutes": 60.0,
+    "category": "nailed",
+    "checked_at": "2026-11-09T18:35:03.362480+00:00",
+    "expected_minutes": 90.0,
     "fpl": {
-      "chance_of_playing_next_round": 75,
-      "news": "Knee injury - 75% chance of playing",
-      "news_added": "2026-11-05T20:30:09.025008Z",
-      "status": "d"
-    },
-    "gw": 10,
-    "note": "Came off in the Champions League win in Prague; Standard says not thought serious but his place is uncertain, and Saliba is back in the squad. Predicted XIs split between Konsa and Mosquera.",
-    "player_id": 31,
-    "quote_date": "2026-11-05",
-    "return_gw": null,
-    "run": "deadline",
-    "source": "Standard via match-centre injury report; Sports Mole",
-    "tier": 2
-  },
-  "346": {
-    "category": "doubt",
-    "checked_at": "2026-11-06T00:35:03.438174+00:00",
-    "expected_minutes": 60.0,
-    "fpl": {
-      "chance_of_playing_next_round": 75,
-      "news": "Foot injury - 75% chance of playing",
-      "news_added": "2026-11-05T18:30:07.960444Z",
-      "status": "d"
-    },
-    "gw": 10,
-    "note": "Farke at Thursday presser: foot setback, missed Thursday training, 'carefully optimistic', hoped to train Friday. Minor doubt.",
-    "player_id": 346,
-    "quote_date": "2026-11-05",
-    "return_gw": null,
-    "run": "deadline",
-    "source": "Farke press conference (MOT Leeds News / Leeds Live)",
-    "tier": 1
-  },
-  "388": {
-    "category": "rotation",
-    "checked_at": "2026-11-06T00:35:03.438174+00:00",
-    "expected_minutes": 75.0,
-    "fpl": {
-      "chance_of_playing_next_round": null,
+      "chance_of_playing_next_round": 100,
       "news": "",
-      "news_added": null,
+      "news_added": "2026-11-05T20:30:09.025008Z",
       "status": "a"
     },
-    "gw": 10,
-    "note": "Predicted to start at Forest alongside Dias in Brit Brief predicted XI.",
-    "player_id": 388,
-    "quote_date": "2026-11-06",
+    "gw": 11,
+    "note": "Knee knock from Slavia game cleared by Arteta (06 Nov, arsenal.com); started v Hull on 07 Nov. Fit and nailed.",
+    "player_id": 31,
+    "quote_date": "2026-11-07",
     "return_gw": null,
-    "run": "deadline",
-    "source": "Brit Brief predicted lineup",
-    "tier": 3
+    "run": "early",
+    "source": "arsenal.com / Arsenal v Hull team news",
+    "tier": 1
+  },
+  "346": {
+    "category": "nailed",
+    "checked_at": "2026-11-09T18:35:03.362480+00:00",
+    "expected_minutes": 89.0,
+    "fpl": {
+      "chance_of_playing_next_round": 100,
+      "news": "",
+      "news_added": "2026-11-05T18:30:07.960444Z",
+      "status": "a"
+    },
+    "gw": 11,
+    "note": "Foot problem cleared; started for Leeds v Spurs on 07 Nov after Farke said he was 'carefully optimistic'.",
+    "player_id": 346,
+    "quote_date": "2026-11-07",
+    "return_gw": null,
+    "run": "early",
+    "source": "Leeds v Spurs team news (FFS-style live page)",
+    "tier": 2
+  },
+  "388": {
+    "category": "doubt",
+    "checked_at": "2026-11-09T18:35:03.362480+00:00",
+    "expected_minutes": 20.0,
+    "fpl": {
+      "chance_of_playing_next_round": 75,
+      "news": "Unspecified injury - 75% chance of playing",
+      "news_added": "2026-11-07T21:30:08.741792Z",
+      "status": "d"
+    },
+    "gw": 11,
+    "note": "Sky Sports Man City page (09 Nov) reports Gu\u00e9hi ruled out of England duty with an injury, Burn called up in his place. Nature and length unknown; international break gives ~12 days to recover, so a doubt rather than out. Cut from 40 to 20.",
+    "player_id": 388,
+    "quote_date": "2026-11-08",
+    "return_gw": null,
+    "run": "early",
+    "source": "Sky Sports Man City news page",
+    "tier": 2
   },
   "4": {
     "category": "nailed",
