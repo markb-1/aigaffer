@@ -2944,7 +2944,12 @@ def _write_report(cfg: Config, event_id: int, mode: str, report: str) -> None:
     which is what keeps a test run from leaving verdicts in the real repo.
 
     ``LATEST.md`` beside it is the same verdict under a name that never
-    moves, so the repo's homepage URL can point at it and stay current.
+    moves, so the repo's homepage URL can point at it and stay current. It
+    is the verdict as reported, not the diary page: the Looking back review
+    is appended to ``GW{n}.md`` only (``review.append_review``), so for the
+    few hours between a week's review and the next week's first report
+    LATEST.md lacks it. That is deliberate, the review being an appendix to
+    a closed week, and the next report run replaces the file anyway.
     """
     path = cfg.state_dir / "reports" / f"gw{event_id}-{mode}.md"
     path.parent.mkdir(parents=True, exist_ok=True)

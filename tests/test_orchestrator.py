@@ -3405,6 +3405,7 @@ def test_the_reminder_never_touches_the_root_verdict(tmp_path):
     alert = run_pipeline(cfg, client, store, "reminder", send=False)
 
     assert (tmp_path / "GW2.md").read_text(encoding="utf-8") == full
+    assert (tmp_path / "LATEST.md").read_text(encoding="utf-8") == full
     reports = cfg.state_dir / "reports"
     assert (reports / "gw2-reminder.md").read_text(encoding="utf-8") == alert
     assert store.has_run(2, "reminder") is True

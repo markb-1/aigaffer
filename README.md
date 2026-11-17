@@ -45,6 +45,8 @@ line.
   went well, what went wrong, and the lessons the next week's gaffer reads.
   See [GW7.md](GW7.md) for a real verdict, and [GW6.md](GW6.md) for one with
   its review.
+- `LATEST.md`, beside them: the most recent verdict under a name that never
+  moves (without the review), which is what the repo's homepage link opens.
 - `reports/GW{n} Detailed Report.md`: the long read. It has every transfer
   beside its fixtures and xP, the squad, the armbands, the transfers it
   skipped and why each lost, and what changed between the week's runs.
