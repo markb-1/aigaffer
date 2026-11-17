@@ -462,6 +462,18 @@ def test_the_root_gw_file_carries_the_report(tmp_path):
     assert (tmp_path / "GW2.md").read_text(encoding="utf-8") == report
 
 
+def test_latest_md_carries_the_same_report(tmp_path):
+    # The repo's homepage URL needs one address that never goes stale, and
+    # GW{n}.md moves every week. LATEST.md is the same verdict under a fixed
+    # name, written beside it.
+    cfg = config(state_dir=tmp_path / "state")
+    store = Store(cfg.state_dir / "aigaffer.db")
+
+    report = run_pipeline(cfg, make_client(pipeline_routes()), store, "scout")
+
+    assert (tmp_path / "LATEST.md").read_text(encoding="utf-8") == report
+
+
 def test_the_readme_points_at_the_latest_verdict(tmp_path):
     # GitHub's tab row cannot host GW{n}.md, so the README carries one
     # marked line the run rewrites: a link to the verdict the homepage

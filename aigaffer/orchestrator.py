@@ -2942,11 +2942,15 @@ def _write_report(cfg: Config, event_id: int, mode: str, report: str) -> None:
     the same place, since the run starts at the checkout root with
     ``state_dir="state"``, and in a test they are the tmp_path the test owns,
     which is what keeps a test run from leaving verdicts in the real repo.
+
+    ``LATEST.md`` beside it is the same verdict under a name that never
+    moves, so the repo's homepage URL can point at it and stay current.
     """
     path = cfg.state_dir / "reports" / f"gw{event_id}-{mode}.md"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(report, encoding="utf-8")
     (cfg.state_dir.parent / f"GW{event_id}.md").write_text(report, encoding="utf-8")
+    (cfg.state_dir.parent / "LATEST.md").write_text(report, encoding="utf-8")
     _point_readme(cfg.state_dir.parent, event_id)
 
 
