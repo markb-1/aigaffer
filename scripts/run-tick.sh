@@ -61,6 +61,8 @@ main() {
   # state/ includes state/executed/, the inbox's recorded weeks.
   git add state/
   if ls GW*.md >/dev/null 2>&1; then git add GW*.md; fi
+  # LATEST.md: the same verdict under a fixed name, for the homepage URL.
+  if [ -f LATEST.md ]; then git add LATEST.md; fi
   # The detailed reports ("GW{n} Detailed Report.md"), when a run has
   # written any: a box that has not run one yet has no reports/ to add.
   if [ -d reports ]; then git add "reports/"; fi
