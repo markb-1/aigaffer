@@ -1,4 +1,4 @@
-# AI Gaffer — GW11 early scout
+# AI Gaffer — GW11 scout
 
 Deadline: Sat 21 Nov 2026 11:00 UTC
 
@@ -30,27 +30,33 @@ GW  Out      In
 ## The Gaffer's view
 
 WHAT I DID
-I used the free transfer to sell João Pedro (injured) for Nicolas Jackson (Aston Villa, home to Sunderland). No hit. Haaland is captain (Fulham at home) and Jackson is vice. No chip. Triple captain is worth +5.8 this week, under its 6.8 bar, so I'm keeping it for GW19 as planned.
+One free transfer: João Pedro (Chelsea, injured) out, N.Jackson (Aston Villa, £7.1m) in. No hit. Haaland is captain (Man City v Fulham, home) and Jackson is vice (Aston Villa v Sunderland, home). No chip.
 
 WHAT I LEARNED
-- João Pedro: still out with a thigh injury. He missed Chelsea's games against Man United and Sunderland, and Alonso has only given "weeks" as a timescale. The model already had him at 0 minutes, so selling him for a fit forward is a real gain.
-- Jackson: in form and starting every week. He scored in the 4th minute against Man United on Sunday 8 Nov, his 6th league goal in 9 games. I checked him before buying.
-- Guéhi: Sky reports he has pulled out of the England squad injured and Burn has replaced him. I don't know how bad it is, and he has the international break to recover. I cut his GW11 minutes from 40 to 20. He sits 4th on the bench either way.
-- Konsa: Arteta cleared his knee knock on 6 Nov and he started against Hull on 7 Nov. I set him at 90 minutes, which is what the model already had.
-- Calvert-Lewin: his foot problem is settled and he started against Spurs on 7 Nov. Kept at 89.
-- Gabriel and Rice both started against Hull. Haaland scored the late winner at Leipzig in midweek. Tavernier played on Sunday against Ipswich. None of these changed a number.
-- Still unsure: I couldn't confirm Tzolakis's start against Arsenal before the search tool ran out, so his minutes are left as they were. Guéhi's injury could turn out to be nothing or several weeks.
+- João Pedro: he has been out with a thigh injury since 23 Oct. Sports Mole (18 Nov) gives him only a slight chance against Leeds, and other Chelsea injury lists have him out. I kept him at 0 minutes. He is dead weight in the squad.
+- Guéhi: he came off at Forest with a hip/groin problem and pulled out of the England squad (13 Nov). This week's previews call him a major doubt for Fulham. I cut his minutes from 40 to 10. He sits 4th on the bench in this plan, so it costs us nothing this week.
+- N.Jackson: this was the transfer target, so I checked him first. Villa's injury news for Sunderland (The Athletic via the Sunderland Echo, Yahoo, The Sports Bank) names Cash (concussion) and Manzambi (calf) but not Jackson. He is Villa's top scorer and I found nothing against him.
+- Haaland: predicted XIs have him starting after international duty, with no fitness news. City have lost three league games in a row, which worries me a little, but not about his minutes.
+- Tzolakis: predicted XIs have him starting for Hull against Brighton, and he is in good form.
+- Calvert-Lewin: he had a foot setback before the Spurs game two weeks ago. I found nothing new since. Leeds are being linked with a January striker, but that is not a rotation worry now.
+- Not confirmed: Arsenal (Gabriel, Rice, Konsa) and Bournemouth (Tavernier). My searches only turned up old articles, with no current injury news for any of them. I left their minutes at the model's numbers. Of my starters, they are the ones I could not check.
 
 WHY THIS PLAN
-After my changes the solver's top pick was plan 4, swapping Guéhi for Van Hecke. That scored 255.8 net, against 255.9 for this plan before the re-run, so it's a tie within the noise. I chose the Jackson move for two reasons. It removes a player who is definitely out, not one who is only doubtful. And Jackson was the only incoming player I had checked; I never got to search Spurs, so buying Van Hecke would have meant trusting a player I hadn't checked. The solver's own plan also brings Jackson in next week. Rolling (plan 5) scores slightly lower, and it would mean João Pedro's spot does nothing this week. The hit plans (6 and 7) come out 1.3 to 4.6 points worse than rolling. Guéhi can go next week if his injury turns out to be real, when we'll have more transfers banked. Jackson's price is rising (227k net transfers in), so he may already have cost a little more by the deadline than he does today.
+After I resolved with my changes, the solver's top pick became plan 4 (Guéhi out, Van Hecke in). It scores the same 255.8 net as this plan. Plan 0's numbers were worked out before my Guéhi change, but that change only moves a man who sits 4th on the bench, so the comparison should hold.
+I chose plan 0 for three reasons:
+- It gets rid of a player who is certainly out (Pedro). Plan 4 sells one who is only doubtful and sitting on the bench.
+- It buys a player I actually checked. I did not search Spurs, so Van Hecke would have been an unchecked buy.
+- Every path on the board buys Jackson next week anyway. Over 390k managers are buying him and his price has already risen, so waiting could cost money.
+Rolling (plan 5) scores 1.2 net less. That is within the noise, but the transfer fixes a real injury rather than chasing a projection, so it is worth making. We still keep the free transfers banked for the Le Fée and Ødegaard moves the path plans.
+Plans 6 and 7 take hits for gains the solver itself prices below rolling, so I left them.
+No chip: triple captain on Haaland is worth +5.8, below this week's 6.8 bar, and it is being saved for GW19. Bench boost is not held this week.
 
 Minutes he overruled:
 
-- Set Guéhi to 20 mins — Sky Sports Man City page (09 Nov) reports Guéhi ruled out of England duty with an injury, Burn called up in his place. Nature and length unknown; international break gives ~12 days to recover, so a doubt rather than out. Cut from 40 to 20.
-- Set Konsa to 90 mins — Knee knock from Slavia game cleared by Arteta (06 Nov, arsenal.com); started v Hull on 07 Nov. Fit and nailed.
-- Set Calvert-Lewin to 89 mins — Foot problem cleared; started for Leeds v Spurs on 07 Nov after Farke said he was 'carefully optimistic'.
+- Set Guéhi to 10 mins — Guéhi was taken off in the defeat at Forest with a hip/groin problem and pulled out of the England squad because of it. Reports this week (premierleaguenewsnow, LiveScore, RotoWire) call him a major doubt for Fulham. He is unlikely to start.
+- Set João Pedro to 0 mins — Thigh injury, out since 23 Oct. Sports Mole gives only a slight chance of a return against Leeds, and the YEP and 3AddedMinutes list him as out. Keeping him at 0.
 
-8 web searches. Decided by the gaffer.
+12 web searches. Decided by the gaffer.
 
 ## Starting XI (3-4-3)
 
@@ -64,9 +70,9 @@ Minutes he overruled:
 
 xP and net are the whole window, decayed and with the armband in; net is after hits, any bench-buy charge and a small cost a transfer, plus a credit for free transfers kept; transfers and hits shown are this week's unless the row says otherwise.
 
-- 1 transfer | 0 hits | 254.6 xP | 255.9 net  <- recommended
-- 0 transfers | 0 hits | 253.4 xP | 254.7 net
-- 2 transfers | 1 hit | 257.5 xP | 253.3 net
+- 1 transfer | 0 hits | 254.6 xP | 255.8 net  <- recommended
+- 0 transfers | 0 hits | 253.4 xP | 254.6 net
+- 2 transfers | 1 hit | 257.5 xP | 253.2 net
 - 3 transfers | 2 hits | 257.8 xP | 250.0 net
 
 ## The road ahead
