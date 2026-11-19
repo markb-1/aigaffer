@@ -1,8 +1,8 @@
 """Ask the gaffer: the owner's question, answered from this week's report.
 
-The inbox hands a question here — any text that is not a command and reads as
-a question (:func:`aigaffer.inbox.is_question`) — as the owner typed it, and
-sends whatever this returns. The answer is the gaffer's, from the newest
+The inbox hands a text here — any text that is not a command, a near-miss of
+one or a single word (:func:`aigaffer.inbox.route`) — as the owner typed it,
+and sends whatever this returns. The answer is the gaffer's, from the newest
 detailed report and its snapshot, through the short conversation in
 :mod:`aigaffer.manager.ask_writer`; this module is the handler around it: the
 order things happen in, the day's cap, the thread, and the one retry.
@@ -42,6 +42,11 @@ thread, and the marker the inbox itself keeps. Never the repo, which is
 public, and never ``state/``: the owner's questions and the answers are his.
 The store, the snapshots and the reports are read, at most, and never opened
 for writing.
+
+**A simulation's questions** (:func:`make_simulated_ask`, behind ``python -m
+aigaffer inbox --simulate TEXT --ask``) go through the same order and the
+same conversation, but keep their cap and thread in memory and set no marker:
+they never spend the owner's thirty, never read his thread and never join it.
 """
 
 import json
@@ -67,7 +72,7 @@ from aigaffer.statesync import REPORT_RUNNING, STATE_LOCK, state_lock
 
 __all__ = [
     "ASK_WRONG", "CAP_REACHED", "DAILY_CAP", "MAX_TURNS", "NO_SNAPSHOT",
-    "THREAD_KEEP", "make_ask",
+    "THREAD_KEEP", "make_ask", "make_simulated_ask",
 ]
 
 DAILY_CAP = 30
@@ -99,12 +104,8 @@ def make_ask(cfg: Config, inbox_dir: Path, client: Any = None) -> Callable[[str,
     review's client is built on the first question that needs it, once, and
     kept for the rest of the inbox tick.
     """
-    clients: list[Any] = [] if client is None else [client]
-
-    def gaffer() -> Any:
-        if not clients:
-            clients.append(build_review_client(cfg))
-        return clients[0]
+    gaffer = _lazy_client(cfg, client)
+    book = _FileBook(inbox_dir / ASK_DIR)
 
     def ask(raw: str, update_id: int, sent_at: datetime, reply: Reply) -> str | None:
         try:
@@ -113,7 +114,7 @@ def make_ask(cfg: Config, inbox_dir: Path, client: Any = None) -> Callable[[str,
             else:
                 inbox_dir.mkdir(parents=True, exist_ok=True)
                 mark_failed(inbox_dir, update_id)
-                text = _handle(cfg, inbox_dir, gaffer, raw, sent_at, reply)
+                text = _handle(cfg, inbox_dir / STATE_LOCK, book, gaffer, raw, sent_at, reply)
         except Exception as error:  # R15: never raises; the class, never the words
             print(NO_ANSWER.format(reason=type(error).__name__))
             text = ASK_WRONG
@@ -123,16 +124,89 @@ def make_ask(cfg: Config, inbox_dir: Path, client: Any = None) -> Callable[[str,
     return ask
 
 
+def make_simulated_ask(
+    cfg: Config, inbox_dir: Path, client: Any = None
+) -> Callable[[str, int, datetime, Reply], str | None]:
+    """A simulation's ``ask``: the same order and conversation as
+    :func:`make_ask`, with the cap and the thread in memory and no marker.
+    The only file it touches is the tick's lock, taken to read the snapshots
+    as every reader does. Never raises, as the real one never does.
+    """
+    gaffer = _lazy_client(cfg, client)
+    book = _MemoryBook()
+
+    def ask(raw: str, update_id: int, sent_at: datetime, reply: Reply) -> str | None:
+        try:
+            return _handle(cfg, inbox_dir / STATE_LOCK, book, gaffer, raw, sent_at, reply)
+        except Exception as error:  # the class, never the words
+            print(NO_ANSWER.format(reason=type(error).__name__))
+            return ASK_WRONG
+
+    return ask
+
+
+def _lazy_client(cfg: Config, client: Any) -> Callable[[], Any]:
+    """The client, built on the first question that needs it and kept."""
+    clients: list[Any] = [] if client is None else [client]
+
+    def gaffer() -> Any:
+        if not clients:
+            clients.append(build_review_client(cfg))
+        return clients[0]
+
+    return gaffer
+
+
+class _FileBook:
+    """The owner's cap and threads: ``ask/cap.json`` and ``ask/gw{n}.jsonl``."""
+
+    def __init__(self, folder: Path) -> None:
+        self.folder = folder
+
+    def count(self, day: str) -> int:
+        return _count(self.folder / CAP_FILE, day)
+
+    def thread(self, gw: int) -> list[dict]:
+        return _thread(self.folder / f"gw{gw}.jsonl")
+
+    def record(self, day: str, gw: int, entry: dict) -> None:
+        _write_json(self.folder / CAP_FILE, {"day": day, "n": self.count(day) + 1})
+        _append(self.folder / f"gw{gw}.jsonl", entry)
+
+
+class _MemoryBook:
+    """A simulation's cap and threads, for the one process and nowhere else."""
+
+    def __init__(self) -> None:
+        self.days: dict[str, int] = {}
+        self.threads: dict[int, list[dict]] = {}
+
+    def count(self, day: str) -> int:
+        return self.days.get(day, 0)
+
+    def thread(self, gw: int) -> list[dict]:
+        return list(self.threads.get(gw, []))
+
+    def record(self, day: str, gw: int, entry: dict) -> None:
+        self.days[day] = self.count(day) + 1
+        self.threads.setdefault(gw, []).append(entry)
+
+
 def _handle(
-    cfg: Config, inbox_dir: Path, gaffer: Callable[[], Any], raw: str, sent_at: datetime, reply: Reply
+    cfg: Config,
+    lock: Path,
+    book: "_FileBook | _MemoryBook",
+    gaffer: Callable[[], Any],
+    raw: str,
+    sent_at: datetime,
+    reply: Reply,
 ) -> str:
     """Steps 2 to 7 of the order in the module docstring, after the marker."""
-    folder = inbox_dir / ASK_DIR
     day = sent_at.astimezone(UTC).date().isoformat()
-    if _count(folder / CAP_FILE, day) >= DAILY_CAP:
+    if book.count(day) >= DAILY_CAP:
         return CAP_REACHED
 
-    with state_lock(inbox_dir / STATE_LOCK, on_wait=lambda: _say(reply, REPORT_RUNNING)):
+    with state_lock(lock, on_wait=lambda: _say(reply, REPORT_RUNNING)):
         newest = latest_snapshot(cfg.state_dir)
         snapshots = [] if newest is None else load_snapshots(cfg.state_dir, newest["gw"])
     if not snapshots:
@@ -140,8 +214,7 @@ def _handle(
     snapshot = snapshots[-1]
     report_md = render_detailed(snapshots, snapshot.get("deadline") or NO_DEADLINE)
 
-    thread_path = folder / f"gw{snapshot['gw']}.jsonl"
-    thread = _thread(thread_path)[-THREAD_KEEP:]
+    thread = book.thread(snapshot["gw"])[-THREAD_KEEP:]
 
     # Decided before the writer, because the prefix is added after validation
     # and an answer of 149 words would otherwise go out at 156: the writer is
@@ -171,8 +244,7 @@ def _handle(
     try:
         # Answered is answered: a disk that will not take the cap or the
         # thread costs the bookkeeping, never the answer already paid for.
-        _write_json(folder / CAP_FILE, {"day": day, "n": _count(folder / CAP_FILE, day) + 1})
-        _append(thread_path, {"q": raw, "a": text, "ts": sent_at.isoformat(), "plan_moves": moves})
+        book.record(day, snapshot["gw"], {"q": raw, "a": text, "ts": sent_at.isoformat(), "plan_moves": moves})
     except Exception as error:
         print(NOT_RECORDED.format(reason=type(error).__name__))
     return text

@@ -31,7 +31,9 @@ and never to stdout.
 ``inbox`` is the VM's other timer, once a minute: it reads what the owner has
 texted the bot and answers (:mod:`aigaffer.inbox`). It wants no schedule and no
 report; it does want the team and the store, because "Transfers made" is
-written down.
+written down. ``inbox --simulate TEXT`` routes one made-up text instead and
+prints what would happen, reading and sending nothing; ``--ask`` lets it ask
+the gaffer, with a cap and a thread of its own, in memory.
 
 Failure is loud here and nowhere else. A run on a schedule has no one
 watching it, so a run that dies has to say so twice: on stdout for the log,
@@ -52,13 +54,13 @@ from pathlib import Path
 
 import httpx
 
-from aigaffer.ask import make_ask
+from aigaffer.ask import make_ask, make_simulated_ask
 from aigaffer.backtest import backtest_gw, finished_gameweeks
 from aigaffer.chip_forecast import chip_forecast
 from aigaffer.config import SCOUT_HORIZON_HOURS, Config
 from aigaffer.data.fpl_api import FplClient
 from aigaffer.data.models import Bootstrap, Event
-from aigaffer.inbox import inbox_dir, run_inbox
+from aigaffer.inbox import inbox_dir, run_inbox, simulate
 from aigaffer.orchestrator import (
     DEADLINE_MODE,
     EARLY_MODE,
@@ -147,6 +149,8 @@ def main(argv: list[str] | None = None) -> int:
         except httpx.HTTPError as error:
             return _failed(None, error, event_id=None, stage=BACKTEST_STAGE)
     if args.command == INBOX:
+        if args.simulate is not None:
+            return _simulate(args.simulate, args.ask)
         return _inbox(client)
     if args.command == REVIEW:
         return _review(args, client)
@@ -317,7 +321,23 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         default=min(8, os.cpu_count() or 1),
         help="replay: solver processes to run at once",
     )
-    return parser.parse_args(argv)
+    parser.add_argument(
+        "--simulate",
+        metavar="TEXT",
+        help="inbox: route TEXT as if the owner had sent it and print the route,"
+        " sending and recording nothing",
+    )
+    parser.add_argument(
+        "--ask",
+        action="store_true",
+        help="inbox --simulate: really ask the gaffer (a cap and thread of its own)",
+    )
+    args = parser.parse_args(argv)
+    if args.simulate is not None and args.command != INBOX:
+        parser.error("--simulate is for the inbox")
+    if args.ask and args.simulate is None:
+        parser.error("--ask needs --simulate")
+    return args
 
 
 def _managers(text: str) -> tuple[int, int]:
@@ -495,6 +515,17 @@ def _inbox(client: FplClient) -> int:
         cfg.telegram_token, cfg.telegram_chat_id, directory, handler, whatif,
         forecast, ask=ask, week_plan=plan,
     )
+
+
+def _simulate(text: str, live: bool) -> int:
+    """Route one made-up text through the inbox's own routing and print what
+    would happen (:func:`aigaffer.inbox.simulate`). The gaffer is wired as the
+    inbox would wire him; ``live`` asks him for real, with a cap and a thread
+    kept in memory, so the owner's thirty and his thread are never touched.
+    """
+    cfg = Config.from_env()
+    gaffer = make_simulated_ask(cfg, inbox_dir()) if live and cfg.manager_enabled else None
+    return simulate(text, cfg.telegram_chat_id, ask_wired=cfg.manager_enabled, ask=gaffer)
 
 
 def _mode(

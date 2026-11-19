@@ -15,8 +15,14 @@ when the bot currently plans to play each chip (:mod:`aigaffer.chip_forecast`):
 no solve and no gaffer, so a read of a few rows and one text back. "Week plan"
 (or "plan") sends the newest detailed plan as five short texts
 (:mod:`aigaffer.weekplan`), just as instantly and just as free, and replies for
-itself like the what-if. Anything else — "help", a typo, a sticker — gets the
-help.
+itself like the what-if. "help", a near-miss of one of those, a single word
+or a sticker gets the help; any other text is a question for the gaffer
+(:mod:`aigaffer.ask`), when one is configured. :func:`route` decides, in one
+place, for the reply and for the apology alike.
+
+**What the log says.** One line per update: its id, the route and a fixed
+reason code (:data:`REASONS`) — never a word of the message, and for another
+chat not even its id.
 
 **Where it is.** The last handled ``update_id`` lives in
 ``$AIGAFFER_INBOX_DIR/offset`` (default ``~/.aigaffer/``), outside the
@@ -41,6 +47,7 @@ the process was killed mid-what-if, and the handler picks up what it left
 (see :mod:`aigaffer.whatif_handler`).
 """
 
+import difflib
 import os
 import string
 from collections.abc import Callable
@@ -74,15 +81,47 @@ CHIP_KINDS = {
 }
 CHIP_WORDS = frozenset(CHIP_KINDS)
 
-# Words that open a question even when the mark is forgotten ("why saka").
-# Matched against the whole first word, so "island" is not "is".
-QUESTION_WORDS = (
-    "why", "what", "how", "should", "is", "was", "would", "could", "can",
-    "and", "who", "which", "when",
-)
+# The routes a message can take, and the fixed reason codes the log gives for
+# each choice. A reason is one of these and nothing else: never a word of the
+# message, which is the owner's.
+TRANSFERS_ROUTE = "transfers-made"
+FORECAST_ROUTE = "chip-forecast"
+WEEK_PLAN_ROUTE = "week-plan"
+WHATIF_ROUTE = "whatif"
+ASK_ROUTE = "ask"
+HELP_ROUTE = "help"
+IGNORED_ROUTE = "ignored"
+ROUTES = frozenset({
+    TRANSFERS_ROUTE, FORECAST_ROUTE, WEEK_PLAN_ROUTE, WHATIF_ROUTE, ASK_ROUTE,
+    HELP_ROUTE, IGNORED_ROUTE,
+})
+
+COMMAND = "command"            # an exact command, as the buttons send it
+NO_TEXT = "no-text"            # a sticker, a photo, or only punctuation
+HELP_ASKED = "help-word"       # "help" itself
+QUESTION_MARK = "question-mark"  # a "?" (or a full-width "？") anywhere
+COMMAND_TYPO = "command-typo"  # a near-miss of a command
+ONE_WORD = "one-word"          # a single word that is none of the above
+FREE_TEXT = "free-text"        # anything else: the gaffer's
+ASK_OFF = "ask-off"            # the gaffer's, but no gaffer is configured
+OTHER_CHAT = "other-chat"      # not the owner's chat: not obeyed, not logged
+NO_MESSAGE = "no-message"      # an update that carries no message
+REASONS = frozenset({
+    COMMAND, NO_TEXT, HELP_ASKED, QUESTION_MARK, COMMAND_TYPO, ONE_WORD,
+    FREE_TEXT, ASK_OFF, OTHER_CHAT, NO_MESSAGE,
+})
+
+HELP_WORD = "help"
+QUESTION_MARKS = ("?", "\uff1f")  # the ASCII mark and the full-width one
+# Every command's normalised wording, for catching a near-miss. A near-miss
+# is only looked for among phrases of the same number of words, so "the plan"
+# is never a typo of "plan" and "wildcard now" never one of "wildcard".
+COMMAND_PHRASES = (TRANSFERS_MADE, CHIP_FORECAST, *sorted(WEEK_PLAN_WORDS), *CHIP_KINDS, HELP_WORD)
+TYPO_CUTOFF = 0.8
+
 ASK_LINE = (
-    "Ask the gaffer anything about this week's plan — end with a question"
-    " mark, e.g. 'Why Saka?'"
+    "Anything else you text goes to the gaffer, who explains this week's"
+    " plan, e.g. 'Why Saka?'"
 )
 
 HELP = (
@@ -126,6 +165,16 @@ NOT_CONFIGURED = "aigaffer inbox: telegram not configured — nothing to read"
 UNREACHABLE = "aigaffer inbox: telegram unreachable ({reason})"
 FAILED = "aigaffer inbox: an update failed ({reason})"
 SKIPPED = "aigaffer inbox: an update skipped ({reason})"
+ROUTED = "aigaffer inbox: update {uid} -> {route} ({reason})"
+
+# Which apology fits a route that fell over: a what-if is asked again, a
+# recording is tried again, and so on. Anything not named gets the general one.
+APOLOGIES = {
+    WHATIF_ROUTE: WHATIF_WRONG,
+    FORECAST_ROUTE: FORECAST_WRONG,
+    WEEK_PLAN_ROUTE: WEEK_PLAN_WRONG,
+    ASK_ROUTE: ASK_WRONG,
+}
 
 
 def inbox_dir() -> Path:
@@ -140,16 +189,49 @@ def normalise(text: str) -> str:
     return collapsed.rstrip(string.punctuation + " ")
 
 
-def is_question(raw: str) -> bool:
-    """Whether the RAW text reads as a question: it ends with "?" or its first
-    word is an interrogative. Raw, not normalised, because ``normalise``
-    strips the very mark that says so. Commands are tried before this, so a
-    typo of one ("transfer made") is not a question and still gets help."""
-    text = raw.strip()
-    if text.endswith("?"):
-        return True
-    words = text.lower().split()
-    return bool(words) and words[0].strip(string.punctuation) in QUESTION_WORDS
+def route(command: str, raw: str, ask_wired: bool) -> tuple[str, str]:
+    """Where a message goes, and the reason code that says why.
+
+    ``command`` is the normalised text, ``raw`` the text as typed — the
+    question mark is looked for in the raw, because ``normalise`` strips it.
+    In order, each step only for what the ones before it left:
+
+    1. an exact command goes to its button, so "plan?" is the week plan;
+    2. no text at all (a sticker, only punctuation), or "help", gets the help;
+    3. a "?" anywhere, or a full-width "？", goes to the gaffer — before the
+       typo check, so "Transfers made yet?" is a question, not a near-miss;
+    4. a near-miss of a command ("chip forcast") gets the help;
+    5. a single word ("hello", "thanks") gets the help;
+    6. anything else goes to the gaffer.
+
+    With no gaffer wired (``ask_wired`` False), what would go to him gets the
+    help instead, with its own reason.
+    """
+    if command == TRANSFERS_MADE:
+        return TRANSFERS_ROUTE, COMMAND
+    if command == CHIP_FORECAST:
+        return FORECAST_ROUTE, COMMAND
+    if command in WEEK_PLAN_WORDS:
+        return WEEK_PLAN_ROUTE, COMMAND
+    if command in CHIP_KINDS:
+        return WHATIF_ROUTE, COMMAND
+    if not command:
+        return HELP_ROUTE, NO_TEXT
+    if command == HELP_WORD:
+        return HELP_ROUTE, HELP_ASKED
+    if any(mark in raw for mark in QUESTION_MARKS):
+        return _to_the_gaffer(QUESTION_MARK, ask_wired)
+    words = len(command.split())
+    alike = [phrase for phrase in COMMAND_PHRASES if len(phrase.split()) == words]
+    if difflib.get_close_matches(command, alike, n=1, cutoff=TYPO_CUTOFF):
+        return HELP_ROUTE, COMMAND_TYPO
+    if words == 1:
+        return HELP_ROUTE, ONE_WORD
+    return _to_the_gaffer(FREE_TEXT, ask_wired)
+
+
+def _to_the_gaffer(reason: str, ask_wired: bool) -> tuple[str, str]:
+    return (ASK_ROUTE, reason) if ask_wired else (HELP_ROUTE, ASK_OFF)
 
 
 def dispatch(
@@ -174,25 +256,23 @@ def dispatch(
     ``week_plan`` None and the week plan, which replies for itself (five texts
     through ``reply``) and so returns None.
     """
-    if command == TRANSFERS_MADE:
+    chosen, _ = route(command, raw, ask is not None)
+    if chosen == TRANSFERS_ROUTE:
         return transfers_made(sent_at)
-    if command == CHIP_FORECAST:
+    if chosen == FORECAST_ROUTE:
         if chip_forecast is None:
             return CHIP_FORECAST_OFF
         return chip_forecast(sent_at)
-    if command in WEEK_PLAN_WORDS:
+    if chosen == WEEK_PLAN_ROUTE:
         if week_plan is None:
             return WEEK_PLAN_OFF
         week_plan(sent_at, reply)
         return None
-    kind = CHIP_KINDS.get(command)
-    if kind is not None:
+    if chosen == WHATIF_ROUTE:
         if chip_whatif is None:
             return WHATIFS_OFF
-        return chip_whatif(kind, update_id, sent_at, reply)
-    # Commands win; only then is the raw text a question for the gaffer. With
-    # no gaffer wired (ask None) a question gets the help, as anything else.
-    if ask is not None and is_question(raw):
+        return chip_whatif(CHIP_KINDS[command], update_id, sent_at, reply)
+    if chosen == ASK_ROUTE and ask is not None:
         return ask(raw, update_id, sent_at, reply)
     return HELP
 
@@ -255,22 +335,16 @@ def run_inbox(
         # so a message too malformed to read still gets the general one.
         apology = SOMETHING_WRONG
         try:
-            ours = (
-                message is not None
-                and str(message.get("chat", {}).get("id")) == str(chat_id)
-            )
-            if ours:
-                sent_at = datetime.fromtimestamp(message["date"], UTC)
-                raw = message.get("text") or ""
+            incoming = None if message is None else _incoming(message, chat_id)
+            if incoming is None:
+                reason = NO_MESSAGE if message is None else OTHER_CHAT
+                print(ROUTED.format(uid=uid, route=IGNORED_ROUTE, reason=reason))
+            else:
+                sent_at, raw = incoming
                 command = normalise(raw)
-                if command in CHIP_KINDS:
-                    apology = WHATIF_WRONG
-                elif command == CHIP_FORECAST:
-                    apology = FORECAST_WRONG
-                elif command in WEEK_PLAN_WORDS:
-                    apology = WEEK_PLAN_WRONG
-                elif command != TRANSFERS_MADE and ask is not None and is_question(raw):
-                    apology = ASK_WRONG
+                chosen, reason = route(command, raw, ask is not None)
+                print(ROUTED.format(uid=uid, route=chosen, reason=reason))
+                apology = APOLOGIES.get(chosen, SOMETHING_WRONG)
                 answer = dispatch(
                     command, uid, sent_at, reply, transfers_made, chip_whatif,
                     chip_forecast, ask, raw, week_plan,
@@ -286,6 +360,14 @@ def run_inbox(
         _write_int(directory / OFFSET_FILE, uid)
         (directory / FAILED_FILE).unlink(missing_ok=True)
     return 0
+
+
+def _incoming(message: dict, chat_id: str | None) -> tuple[datetime, str] | None:
+    """The message's time and raw text when it comes from the owner's chat,
+    else None. A non-text message (a sticker, a photo) is the empty text."""
+    if str(message.get("chat", {}).get("id")) != str(chat_id):
+        return None
+    return datetime.fromtimestamp(message["date"], UTC), message.get("text") or ""
 
 
 def _id_fault(update: object) -> str | None:
@@ -345,3 +427,61 @@ def confirm_handled(directory: Path, update_id: int) -> None:
     cannot bring it round a third time; the inbox's own write of the same
     value afterwards is harmless."""
     _write_int(directory / OFFSET_FILE, update_id)
+
+
+# What a simulation says in place of running a handler: nothing is recorded,
+# no what-if is solved, and the gaffer is asked only when that was asked for.
+NOT_RUN = "(not run in a simulation: {what})"
+NOT_ASKED = "(route only: the gaffer was not asked — add --ask to ask him)"
+
+
+def simulate(
+    raw: str,
+    chat_id: str | None,
+    *,
+    ask_wired: bool,
+    ask: Ask | None = None,
+    now: datetime | None = None,
+) -> int:
+    """Route one made-up text as if the owner had sent it, and print the
+    route, the reason and what would be replied — ``python -m aigaffer inbox
+    --simulate``.
+
+    The text goes through the same :func:`route` and :func:`dispatch` as a
+    real one, from the owner's own chat, but nothing is read from or sent to
+    Telegram, the offset and the marker are never touched, and no button's
+    handler runs: each says it was not run. The gaffer is asked only when
+    ``ask`` is given — the CLI's ``--ask``, which hands in one whose cap and
+    thread live in memory — and otherwise, if one is configured
+    (``ask_wired``), says he was not asked.
+    """
+    sent_at = now or datetime.now(UTC)
+    message = {"date": int(sent_at.timestamp()), "chat": {"id": chat_id}, "text": raw}
+    incoming = _incoming(message, chat_id)
+    assert incoming is not None, "a simulated text is always the owner's"
+    sent_at, raw = incoming
+    command = normalise(raw)
+    chosen, reason = route(command, raw, ask_wired)
+    print(f"route: {chosen}")
+    print(f"reason: {reason}")
+
+    def reply(text: str) -> None:
+        print(f"reply: {text}")
+
+    gaffer = ask
+    if gaffer is None and ask_wired:
+        def gaffer(raw: str, update_id: int, sent_at: datetime, reply: Reply) -> str:
+            return NOT_ASKED
+
+    answer = dispatch(
+        command, 0, sent_at, reply,
+        transfers_made=lambda sent_at: NOT_RUN.format(what="Transfers made would be recorded"),
+        chip_whatif=lambda kind, update_id, sent_at, reply: NOT_RUN.format(what=f"the {kind} what-if"),
+        chip_forecast=lambda sent_at: NOT_RUN.format(what="the chip forecast"),
+        ask=gaffer,
+        raw=raw,
+        week_plan=lambda sent_at, reply: reply(NOT_RUN.format(what="the week plan")),
+    )
+    if answer is not None:
+        reply(answer)
+    return 0

@@ -43,6 +43,7 @@ from aigaffer.ask import (
     THREAD_KEEP,
     MAX_TURNS,
     make_ask,
+    make_simulated_ask,
 )
 from aigaffer.config import Config
 from aigaffer.detailed.render import render_detailed
@@ -680,3 +681,82 @@ def test_the_system_prompt_keeps_the_plan_and_names_the_week():
     for needed in ("never change", "fixtures", "numbers", "fair point", "change your mind",
                    "fresh news", "gameweek", "120 words", "plain text", ANSWER):
         assert needed in prompt
+
+
+def test_the_system_prompt_handles_a_text_that_is_not_a_question():
+    # The inbox now sends the gaffer any text that is not a button, so "thanks"
+    # or "I made the transfers" reaches him: he says briefly it is not a
+    # question and points at the buttons, since he can neither record
+    # transfers nor play chips — and still names the gameweek, which the
+    # answer check requires of every answer.
+    prompt = SYSTEM_PROMPT.lower()
+    for needed in ("not a question", "record transfers", "play chips", "buttons",
+                   "still name the gameweek"):
+        assert needed in prompt
+
+
+# --- the simulation's gaffer: real conversation, nothing of the owner's touched --
+
+
+def simulated(cfg, inbox, client, question=QUESTION, sent=SENT):
+    replies: list[str] = []
+    result = make_simulated_ask(cfg, inbox, client)(question, 0, sent, replies.append)
+    return result, replies
+
+
+def test_a_simulated_question_is_answered_and_writes_nothing_of_the_owners(tmp_path):
+    cfg, inbox = setup(tmp_path, board())
+    inbox.mkdir()
+    (inbox / "state.lock").touch()  # the tick's lock, as on the box
+
+    result, _ = simulated(cfg, inbox, FakeClient([answered()]))
+
+    assert result == GOOD
+    assert cap(inbox) is None
+    assert thread(inbox) == []
+    assert not (inbox / FAILED_FILE).exists()
+    assert sorted(p.name for p in inbox.iterdir()) == ["state.lock"]
+
+
+def test_a_simulated_question_ignores_the_owners_spent_cap(tmp_path):
+    cfg, inbox = setup(tmp_path, board())
+    (inbox / "ask").mkdir(parents=True)
+    spent = json.dumps({"day": TODAY, "n": DAILY_CAP})
+    (inbox / "ask" / "cap.json").write_text(spent)
+
+    assert simulated(cfg, inbox, FakeClient([answered()]))[0] == GOOD
+    assert (inbox / "ask" / "cap.json").read_text() == spent
+
+
+def test_a_simulated_question_never_reads_the_owners_thread(tmp_path):
+    cfg, inbox = setup(tmp_path, board())
+    write_thread(inbox, [{"q": "Owner's earlier question?", "a": "Owner's answer.",
+                          "ts": SENT.isoformat(), "plan_moves": {"out": [4], "in": [7]}}])
+    before = (inbox / "ask" / "gw8.jsonl").read_text()
+    client = FakeClient([answered()])
+
+    simulated(cfg, inbox, client)
+
+    assert "Owner's earlier question?" not in request_text(client.requests[0])
+    assert (inbox / "ask" / "gw8.jsonl").read_text() == before
+
+
+def test_simulated_questions_keep_a_thread_of_their_own_in_memory(tmp_path):
+    cfg, inbox = setup(tmp_path, board())
+    client = FakeClient([answered(), answered()])
+    gaffer = make_simulated_ask(cfg, inbox, client)
+
+    gaffer("Why Cucurella?", 0, SENT, lambda text: None)
+    gaffer("And Palmer?", 0, SENT, lambda text: None)
+
+    assert "Why Cucurella?" in request_text(client.requests[1])
+    assert thread(inbox) == []
+
+
+def test_a_simulated_question_that_fails_says_ask_again_and_does_not_raise(tmp_path, capsys):
+    cfg, inbox = setup(tmp_path, board())
+    client = FakeClient([connection_error(), RuntimeError("boom with private words")])
+
+    assert simulated(cfg, inbox, client)[0] == ASK_WRONG
+    assert not (inbox / FAILED_FILE).exists()
+    assert "private words" not in capsys.readouterr().out

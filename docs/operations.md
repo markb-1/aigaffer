@@ -201,10 +201,35 @@ checked against what happened.
 
 ## Asking the gaffer
 
-Any other text that reads as a question goes to the gaffer: it ends with "?",
-or its first word is one of why, what, how, should, is, was, would, could,
-can, and, who, which or when. Commands are matched first, so "transfer made"
-is a typo that gets the help, not a question.
+Any other text goes to the gaffer. The inbox decides in this order:
+
+1. A command, exactly as a button sends it, does that command, so "plan?" is
+   the week plan.
+2. No text at all (a sticker, a photo), or "help", gets the help.
+3. A "?" anywhere in the text, including a full-width "？", goes to the gaffer.
+   So "Wildcard now?" is a question, not the what-if button.
+4. A near-miss of a command, such as "transfer made" or "chip forcast", gets
+   the help.
+5. A single word, such as "hello", gets the help.
+6. Anything else goes to the gaffer, mark or no mark: "What's the lineup",
+   "Thoughts on the bench".
+
+A text that isn't a question, such as "thanks", gets a short reply saying so.
+The gaffer can't record transfers or play chips, so he points you at the
+buttons.
+
+Each message adds one line to the inbox's journal (`journalctl -u
+aigaffer-inbox`) with its update id, the route it took and a fixed reason
+code. The line never includes a word of the message. A message from another
+chat shows as `ignored (other-chat)`, without the chat's id.
+
+**Trying the routing without a phone.** `python -m aigaffer inbox --simulate
+"Thoughts on the bench"` prints the route, the reason and the reply that would
+go out. It doesn't read Telegram or send anything, it doesn't move the inbox's
+place or set its marker, and no button's command runs. By default it doesn't
+ask the gaffer either. Add `--ask` to ask him for real: that question keeps its
+own count and thread in memory, so it doesn't use up the day's thirty or
+appear in your thread.
 
 - He answers from the newest run's snapshots, rendered as that gameweek's
   detailed report. The run's own data is the whole of what he reads, and the
