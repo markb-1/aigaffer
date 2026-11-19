@@ -525,7 +525,7 @@ def _simulate(text: str, live: bool) -> int:
     """
     cfg = Config.from_env()
     gaffer = make_simulated_ask(cfg, inbox_dir()) if live and cfg.manager_enabled else None
-    return simulate(text, cfg.telegram_chat_id, ask_wired=cfg.manager_enabled, ask=gaffer)
+    return simulate(text, ask_wired=cfg.manager_enabled, ask=gaffer)
 
 
 def _mode(

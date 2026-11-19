@@ -184,9 +184,10 @@ def inbox_dir() -> Path:
 
 
 def normalise(text: str) -> str:
-    """Lowercase, one space between words, no trailing punctuation."""
+    """Lowercase, one space between words, no trailing punctuation — the
+    full-width "？" included, so "Wildcard？" is the button as "Wildcard?" is."""
     collapsed = " ".join(text.lower().split())
-    return collapsed.rstrip(string.punctuation + " ")
+    return collapsed.rstrip(string.punctuation + "\uff1f ")
 
 
 def route(command: str, raw: str, ask_wired: bool) -> tuple[str, str]:
@@ -437,7 +438,6 @@ NOT_ASKED = "(route only: the gaffer was not asked — add --ask to ask him)"
 
 def simulate(
     raw: str,
-    chat_id: str | None,
     *,
     ask_wired: bool,
     ask: Ask | None = None,
@@ -448,7 +448,7 @@ def simulate(
     --simulate``.
 
     The text goes through the same :func:`route` and :func:`dispatch` as a
-    real one, from the owner's own chat, but nothing is read from or sent to
+    real one, as if from the owner's own chat, but nothing is read from or sent to
     Telegram, the offset and the marker are never touched, and no button's
     handler runs: each says it was not run. The gaffer is asked only when
     ``ask`` is given — the CLI's ``--ask``, which hands in one whose cap and
@@ -456,10 +456,6 @@ def simulate(
     (``ask_wired``), says he was not asked.
     """
     sent_at = now or datetime.now(UTC)
-    message = {"date": int(sent_at.timestamp()), "chat": {"id": chat_id}, "text": raw}
-    incoming = _incoming(message, chat_id)
-    assert incoming is not None, "a simulated text is always the owner's"
-    sent_at, raw = incoming
     command = normalise(raw)
     chosen, reason = route(command, raw, ask_wired)
     print(f"route: {chosen}")

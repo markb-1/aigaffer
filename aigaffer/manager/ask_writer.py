@@ -6,8 +6,8 @@ here by the inbox (:func:`aigaffer.inbox.route`) through the handler in
 is only the conversation: the gameweek's detailed report goes in, rendered in
 memory from its snapshots, with the earlier questions this gameweek and the
 new one; one short plain-text answer comes out through the ``answer`` tool.
-Any text that is not a button reaches him, so a "thanks" or an "I made the
-transfers" is told briefly that it is not a question, and pointed at the
+Any text that is not a button reaches him, so a "thanks a lot" or an "I made
+the transfers" is told briefly that it is not a question, and pointed at the
 buttons.
 
 **Explain-only.** The plan is final and the conversation cannot touch it:
@@ -94,7 +94,9 @@ SYSTEM_PROMPT = (
     " text is a question: if his is not one — thanks, or news such as \"I made"
     " the transfers\" — say briefly that it is not a question for you, and"
     " still name the gameweek; you cannot record transfers or play chips, so"
-    " point him at the buttons (Transfers made, Wildcard?, Free hit?). Name the"
+    " point him at the buttons: Transfers made only if he entered this week's"
+    " recommendation exactly, Wildcard? or Free hit? to see what a chip would"
+    " do. Name the"
     " gameweek you are talking about, as the report does (\"For GW8's plan:"
     " …\" in gameweek 8), since the newest report can be the week just played."
     f" Answer in under {ANSWER_WORDS} words of plain text: no markdown,"

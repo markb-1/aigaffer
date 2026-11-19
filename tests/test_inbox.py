@@ -166,7 +166,7 @@ def test_the_help_lists_the_commands():
     assert "coming soon" not in HELP
 
 
-def test_another_chat_is_ignored_silently_and_passed(tmp_path):
+def test_another_chat_is_ignored_and_passed(tmp_path):
     phone = Phone([update(10, "Transfers made", chat="7")])
 
     run(tmp_path, phone, handler=lambda _: pytest.fail("a stranger is never obeyed"))
@@ -693,8 +693,6 @@ def test_ask_off_gives_help():
     assert dispatch("why saka", 7, sent_at, no_reply, recorded, raw="Why Saka?") == HELP
 
 
-
-
 def test_a_question_that_raises_gets_the_ask_apology(tmp_path):
     def broken_ask(raw, update_id, sent_at, reply):
         raise RuntimeError("gaffer down")
@@ -841,7 +839,9 @@ def routed(text: str, ask_wired: bool = True) -> tuple[str, str]:
         ("Chip forecast", ("chip-forecast", "command")),
         ("Week plan", ("week-plan", "command")),
         ("plan?", ("week-plan", "command")),
+        ("plan？", ("week-plan", "command")),
         ("Wildcard?", ("whatif", "command")),
+        ("Wildcard？", ("whatif", "command")),
         ("Free hit?", ("whatif", "command")),
         ("fh", ("whatif", "command")),
     ],
@@ -856,6 +856,7 @@ def test_the_commands_route_first(text, expected):
         ("", "no-text"),
         ("   ", "no-text"),
         ("?!", "no-text"),
+        ("？", "no-text"),
         ("help", "help-word"),
         ("Help?", "help-word"),
     ],
@@ -921,7 +922,7 @@ def test_ordinary_text_goes_to_the_gaffer(text):
 
 
 @pytest.mark.parametrize(
-    "text", ["transfer made", "chip forcast", "week pln", "free hits", "transfer mode"]
+    "text", ["transfer made", "chip forcast", "week pln", "free hits", "transfer mode", "wildcrad"]
 )
 def test_a_near_miss_of_a_command_gets_the_help(text):
     assert routed(text) == ("help", "command-typo")
@@ -1037,7 +1038,7 @@ def test_the_route_is_logged_before_a_handler_that_fails(tmp_path, capsys):
 
 def test_a_simulation_prints_the_route_and_asks_nobody_by_default(tmp_path, capsys, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    assert simulate("Thoughts on the lineup", CHAT, ask_wired=True) == 0
+    assert simulate("Thoughts on the lineup", ask_wired=True) == 0
     out = capsys.readouterr().out
     assert "route: ask" in out and "reason: free-text" in out
     assert "--ask" in out, "says the gaffer was not asked, and how to ask him"
@@ -1045,30 +1046,30 @@ def test_a_simulation_prints_the_route_and_asks_nobody_by_default(tmp_path, caps
 
 
 def test_a_simulation_shows_the_help_it_would_send(capsys):
-    simulate("hello", CHAT, ask_wired=True)
+    simulate("hello", ask_wired=True)
     out = capsys.readouterr().out
     assert "route: help" in out and "reason: one-word" in out
     assert HELP in out
 
 
 def test_a_simulated_command_is_never_run(capsys):
-    simulate("Transfers made", CHAT, ask_wired=True)
+    simulate("Transfers made", ask_wired=True)
     out = capsys.readouterr().out
     assert "route: transfers-made" in out and "reason: command" in out
     assert "not run" in out
-    simulate("Wildcard?", CHAT, ask_wired=True)
+    simulate("Wildcard?", ask_wired=True)
     assert "route: whatif" in capsys.readouterr().out
 
 
 def test_a_simulation_without_a_gaffer_routes_as_the_box_would(capsys):
-    simulate("Why Saka?", CHAT, ask_wired=False)
+    simulate("Why Saka?", ask_wired=False)
     out = capsys.readouterr().out
     assert "route: help" in out and "reason: ask-off" in out
 
 
 def test_a_simulation_with_ask_hands_the_raw_text_to_the_gaffer(capsys):
     ask = AskStub()
-    simulate("Thoughts on the lineup", CHAT, ask_wired=True, ask=ask)
+    simulate("Thoughts on the lineup", ask_wired=True, ask=ask)
     assert [c[0] for c in ask.calls] == ["Thoughts on the lineup"]
     assert "reply: because fixtures" in capsys.readouterr().out
 
@@ -1078,7 +1079,7 @@ def test_a_simulation_prints_what_the_gaffer_says_for_himself(capsys):
         reply("waiting for the report")
         return "the answer"
 
-    simulate("Why Saka?", CHAT, ask_wired=True, ask=chatty)
+    simulate("Why Saka?", ask_wired=True, ask=chatty)
     out = capsys.readouterr().out
     assert out.index("reply: waiting for the report") < out.index("reply: the answer")
 

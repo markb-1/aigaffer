@@ -214,9 +214,10 @@ Any other text goes to the gaffer. The inbox decides in this order:
 6. Anything else goes to the gaffer, mark or no mark: "What's the lineup",
    "Thoughts on the bench".
 
-A text that isn't a question, such as "thanks", gets a short reply saying so.
-The gaffer can't record transfers or play chips, so he points you at the
-buttons.
+A text that isn't a question, such as "thanks a lot" or "I made the
+transfers", gets a short reply saying so. The gaffer can't record transfers or
+play chips, so he points you at the buttons. Transfers made is still only for
+when you entered the recommendation exactly.
 
 Each message adds one line to the inbox's journal (`journalctl -u
 aigaffer-inbox`) with its update id, the route it took and a fixed reason
