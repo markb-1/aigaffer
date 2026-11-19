@@ -25,11 +25,13 @@ this repository, or any other checkout it is told of, is refused with one
 journal line: a misconfigured ``AIGAFFER_INBOX_DIR`` must not put the owner's
 words where a commit could pick them up.
 
-**Private.** The folder is made 0700 and each file created 0600, through
-``os.open``, so there is no moment when it exists with looser permissions.
+**Private.** The folder is kept at 0700 (made so, or put back if it was
+looser) and each file is created 0600 through ``os.open`` — never through a
+symlink — so there is no moment when it exists with looser permissions.
 
-**Kept three months** (:data:`RETENTION_MONTHS`). Each write drops month files
-older than that; a name that is not ``YYYY-MM.jsonl`` is never touched.
+**Kept three months** (:data:`RETENTION_MONTHS`): this month's file and the
+three before it, so at least three full months. Each write drops older month
+files; a name that is not ``YYYY-MM.jsonl`` is never touched.
 
 **Never the inbox's problem.** Every write swallows its own failure and says
 so in one journal line naming the class — never the words — so a full disk
@@ -92,10 +94,11 @@ class MessageLog:
     ) -> None:
         """Log one update from the owner's chat, before it is handled."""
         try:
+            now = self.now()
             content, text = content_of(message)
             entry: dict = {
                 "event": RECEIVED,
-                "ts": self.now().isoformat(),
+                "ts": now.isoformat(),
                 "sent_at": sent_at.isoformat(),
                 "update_id": update_id,
                 "content": content,
@@ -104,31 +107,37 @@ class MessageLog:
                 entry["text"] = text
             entry["route"] = route
             entry["reason"] = reason
-            self._append(entry)
+            self._append(entry, now)
         except Exception as error:  # the record is lost, never the reply
             print(NOT_LOGGED.format(reason=type(error).__name__))
 
     def failed(self, update_id: int, error: str) -> None:
         """Log that handling the update raised ``error`` (a class name)."""
         try:
+            now = self.now()
             self._append({
-                "event": FAILED, "ts": self.now().isoformat(),
+                "event": FAILED, "ts": now.isoformat(),
                 "update_id": update_id, "error": error,
-            })
+            }, now)
         except Exception as failure:
             print(NOT_LOGGED.format(reason=type(failure).__name__))
 
-    def _append(self, entry: dict) -> None:
+    def _append(self, entry: dict, now: datetime) -> None:
+        """One line into ``now``'s month file — the same ``now`` as the
+        line's own timestamp, so a line never lands in the wrong month."""
         folder = self.directory / MESSAGES_DIR
         resolved = folder.resolve()
         if any(resolved.is_relative_to(checkout.resolve()) for checkout in self.checkouts):
             print(NOT_LOGGED.format(reason=INSIDE_CHECKOUT))
             return
         os.makedirs(folder, mode=0o700, exist_ok=True)
-        now = self.now()
+        os.chmod(folder, 0o700)
         path = folder / f"{now:%Y-%m}.jsonl"
-        descriptor = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
-        with os.fdopen(descriptor, "a", encoding="utf-8") as handle:
+        flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW
+        descriptor = os.open(path, flags, 0o600)
+        # backslashreplace: a lone surrogate in a text is kept escaped, not
+        # the reason the whole line is lost.
+        with os.fdopen(descriptor, "a", encoding="utf-8", errors="backslashreplace") as handle:
             handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
         try:
             prune(folder, now)

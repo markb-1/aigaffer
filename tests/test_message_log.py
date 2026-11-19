@@ -243,3 +243,47 @@ def test_an_existing_file_keeps_its_permissions_and_is_appended(tmp_path):
     assert [line["update_id"] for line in lines(tmp_path)] == [1, 2]
     path = tmp_path / MESSAGES_DIR / "2026-11.jsonl"
     assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
+
+
+def test_a_month_file_that_is_a_symlink_is_never_written_through(tmp_path, capsys):
+    folder = tmp_path / MESSAGES_DIR
+    folder.mkdir(mode=0o700)
+    target = tmp_path / "elsewhere.jsonl"
+    target.write_text("")
+    (folder / "2026-11.jsonl").symlink_to(target)
+
+    log_in(tmp_path).received(1, SENT, text_message("Zorblax?"), "ask", "question-mark")
+
+    assert target.read_text() == ""
+    assert "message not logged" in capsys.readouterr().out
+
+
+def test_an_existing_looser_folder_is_made_private(tmp_path):
+    folder = tmp_path / MESSAGES_DIR
+    folder.mkdir()
+    folder.chmod(0o755)
+
+    log_in(tmp_path).received(1, SENT, text_message("Zorblax?"), "ask", "question-mark")
+
+    assert stat.S_IMODE(folder.stat().st_mode) == 0o700
+
+
+def test_a_lone_surrogate_still_logs_the_line(tmp_path):
+    log_in(tmp_path).received(1, SENT, text_message("odd \ud800 text"), "ask", "free-text")
+
+    (line,) = lines(tmp_path)
+    assert line["update_id"] == 1 and line["text"].startswith("odd ")
+
+
+def test_the_line_lands_in_the_month_of_its_own_timestamp(tmp_path):
+    ticks = iter([
+        datetime(2026, 11, 30, 23, 59, 59, 999999, tzinfo=UTC),
+        datetime(2026, 12, 1, tzinfo=UTC),
+        datetime(2026, 12, 1, tzinfo=UTC),
+    ])
+    log = MessageLog(tmp_path, checkouts=(), now=lambda: next(ticks))
+
+    log.received(1, SENT, text_message("Zorblax?"), "ask", "question-mark")
+
+    (line,) = lines(tmp_path, "2026-11")
+    assert line["ts"].startswith("2026-11-30")

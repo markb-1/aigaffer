@@ -480,7 +480,9 @@ def test_the_cli_inbox_reads_the_inbox_directory(monkeypatch, tmp_path):
     assert plan.args[1] == tmp_path / "inbox" / "state.lock", "read under the tick's lock"
     log = seen["log"]
     assert log.directory == tmp_path / "inbox"
-    assert Path.cwd().resolve() in log.checkouts, "the clone holding state/ is refused too"
+    assert Path.cwd().resolve() in {c.resolve() for c in log.checkouts}, (
+        "the clone holding state/ is refused too"
+    )
 
 
 def test_the_inbox_wires_ask_only_with_a_manager(monkeypatch, tmp_path):
@@ -1224,3 +1226,24 @@ def test_the_journal_still_never_carries_the_words(tmp_path, capsys):
     run_asking(tmp_path, Phone([update(1, "Zorblax over Plinth")]), AskStub())
     out = capsys.readouterr().out
     assert "orblax" not in out and "linth" not in out
+
+
+def test_the_clone_is_refused_even_when_its_state_is_a_symlink(monkeypatch, tmp_path):
+    # state/ linked to a folder elsewhere: the clone is the link's parent,
+    # as every other caller names it, never the parent of the link's target.
+    clone, elsewhere = tmp_path / "clone", tmp_path / "elsewhere" / "state"
+    clone.mkdir()
+    elsewhere.mkdir(parents=True)
+    (clone / "state").symlink_to(elsewhere, target_is_directory=True)
+    monkeypatch.setenv("FPL_TEAM_ID", "99")
+    monkeypatch.setenv("AIGAFFER_STATE_DIR", str(clone / "state"))
+    monkeypatch.setenv("AIGAFFER_INBOX_DIR", str(tmp_path / "inbox"))
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", TOKEN)
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", CHAT)
+    seen = {}
+    monkeypatch.setattr(cli, "run_inbox", lambda *a, log=None, **k: seen.update(log=log) or 0)
+
+    assert cli.main(["inbox"]) == 0
+
+    refused = {c.resolve() for c in seen["log"].checkouts}
+    assert clone.resolve() in refused

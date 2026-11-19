@@ -232,11 +232,14 @@ and the route and reason. It never holds a caption, a file or anything about
 the sender. If handling the message fails, a second line records the error's
 class. Messages from other chats are never written down.
 
-- The folder is private to your user (0700) and each file is created 0600.
+- The folder is private to your user (0700, and put back to that if it was
+  looser) and each file is created 0600. A month file that is a symlink is
+  never written through.
 - It refuses to write anywhere inside the checkout, even through a symlink. If
   `AIGAFFER_INBOX_DIR` points into the repo, the journal says
   `message not logged (inside-checkout)` and nothing is written.
-- Three months are kept: each write deletes month files older than that.
+- Three months are kept: this month's file and the three before it. Each
+  write deletes older month files.
 - If the log can't be written, the message is still answered; the journal
   says `message not logged (<error class>)`.
 - To see what you sent last night: `tail ~/.aigaffer/messages/$(date -u +%Y-%m).jsonl`.

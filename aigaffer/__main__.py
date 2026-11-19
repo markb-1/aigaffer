@@ -514,7 +514,7 @@ def _inbox(client: FplClient) -> int:
     ask = make_ask(cfg, directory) if cfg.manager_enabled else None
     # The owner's texts are logged in the inbox directory, and refused if it
     # resolves inside this repository or the clone the tick commits from.
-    log = MessageLog(directory, checkouts=(cfg.state_dir.resolve().parent,))
+    log = MessageLog(directory, checkouts=(cfg.state_dir.absolute().parent,))
     return run_inbox(
         cfg.telegram_token, cfg.telegram_chat_id, directory, handler, whatif,
         forecast, ask=ask, week_plan=plan, log=log,
