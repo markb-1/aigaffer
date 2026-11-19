@@ -34,11 +34,12 @@ from aigaffer.inbox import (
     WHATIFS_OFF,
     confirm_handled,
     dispatch,
-    is_question,
     mark_failed,
     marked_failed,
     normalise,
+    route,
     run_inbox,
+    simulate,
 )
 from aigaffer.report.telegram import KEYBOARD
 
@@ -165,7 +166,7 @@ def test_the_help_lists_the_commands():
     assert "coming soon" not in HELP
 
 
-def test_another_chat_is_ignored_silently_and_passed(tmp_path):
+def test_another_chat_is_ignored_and_passed(tmp_path):
     phone = Phone([update(10, "Transfers made", chat="7")])
 
     run(tmp_path, phone, handler=lambda _: pytest.fail("a stranger is never obeyed"))
@@ -358,7 +359,10 @@ def test_an_update_without_an_id_is_skipped_and_the_rest_handled(
     assert phone.sent == [recorded(datetime.fromtimestamp(DATE, UTC))]
     assert (tmp_path / "offset").read_text() == "12"
     out = capsys.readouterr().out
-    assert out.strip().splitlines() == [f"aigaffer inbox: an update skipped ({reason})"]
+    assert out.strip().splitlines() == [
+        f"aigaffer inbox: an update skipped ({reason})",
+        "aigaffer inbox: update 12 -> transfers-made (command)",
+    ]
 
 
 def test_a_what_if_replies_for_itself_and_the_inbox_adds_nothing(tmp_path):
@@ -677,23 +681,16 @@ def test_existing_commands_win_over_questions(tmp_path):
 
 
 def test_help_names_how_to_ask():
+    # Any text that is not a button goes to the gaffer now, so the help no
+    # longer asks for a question mark.
     assert ASK_LINE in HELP
-    assert "question mark" in ASK_LINE
+    assert "question mark" not in ASK_LINE
+    assert "anything else" in ASK_LINE.lower()
 
 
 def test_ask_off_gives_help():
     sent_at = datetime.now(UTC)
     assert dispatch("why saka", 7, sent_at, no_reply, recorded, raw="Why Saka?") == HELP
-
-
-def test_a_question_is_a_mark_or_an_interrogative_first_word():
-    assert is_question("anything at all?")
-    assert is_question("  Why Saka")
-    assert is_question("Should I roll")
-    assert not is_question("hello")
-    assert not is_question("")
-    # "island" merely starts with the letters of "is"; only a whole word counts.
-    assert not is_question("island")
 
 
 def test_a_question_that_raises_gets_the_ask_apology(tmp_path):
@@ -760,8 +757,8 @@ def test_week_plan_and_plan_reach_the_handler_and_send_its_texts(tmp_path, text)
 
 
 def test_plan_with_a_question_mark_is_the_week_plan_not_a_question(tmp_path):
-    # ``normalise`` strips the "?", and the command is tried before
-    # ``is_question``, so "plan?" never reaches the gaffer.
+    # ``normalise`` strips the "?", and the commands are routed before the
+    # question mark is looked for, so "plan?" never reaches the gaffer.
     stub, ask = WeekPlanStub(), AskStub()
     phone = Phone([update(10, "plan?")])
 
@@ -815,3 +812,332 @@ def test_the_help_lists_the_week_plan():
 def test_the_inbox_docstring_counts_five_things():
     assert "Five things can be said to it" in inbox.__doc__
     assert "Four things" not in inbox.__doc__
+
+
+# --- Routing: one function decides, for dispatch and the apology alike ------
+#
+# The order (each step only for what the steps before it left):
+#   1. an exact command          -> its button
+#   2. no text at all, or "help" -> the help
+#   3. a "?" anywhere ("？" too)  -> the gaffer
+#   4. a near-miss of a command  -> the help (difflib, cutoff 0.8, same word count)
+#   5. a single word             -> the help
+#   6. anything else             -> the gaffer
+# With no gaffer wired, a text that would go to him gets the help instead.
+# All messages here are invented.
+
+
+def routed(text: str, ask_wired: bool = True) -> tuple[str, str]:
+    return route(normalise(text), text, ask_wired)
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("Transfers made", ("transfers-made", "command")),
+        ("Transfers made?", ("transfers-made", "command")),
+        ("Chip forecast", ("chip-forecast", "command")),
+        ("Week plan", ("week-plan", "command")),
+        ("plan?", ("week-plan", "command")),
+        ("plan？", ("week-plan", "command")),
+        ("Wildcard?", ("whatif", "command")),
+        ("Wildcard？", ("whatif", "command")),
+        ("Free hit?", ("whatif", "command")),
+        ("fh", ("whatif", "command")),
+    ],
+)
+def test_the_commands_route_first(text, expected):
+    assert routed(text) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "reason"),
+    [
+        ("", "no-text"),
+        ("   ", "no-text"),
+        ("?!", "no-text"),
+        ("？", "no-text"),
+        ("help", "help-word"),
+        ("Help?", "help-word"),
+    ],
+)
+def test_no_text_and_the_help_word_get_the_help(text, reason):
+    assert routed(text) == ("help", reason)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Why is Saka benched?",
+        "Lineup?",
+        "Lineup ok?!",
+        "Lineup ok？",
+        "Lineup ok? 🤔",
+        "Is Palmer fit? thinking of benching him",
+        "Wildcard now?",
+        "Transfers made yet?",
+        "transfer made?",
+    ],
+)
+def test_a_question_mark_anywhere_goes_to_the_gaffer(text):
+    assert routed(text) == ("ask", "question-mark")
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "What's the lineup",
+        "What’s the lineup",
+        "whats the lineup",
+        "Who's captain",
+        "How's the bench looking",
+        "Where's Palmer",
+        "Are we starting Haaland",
+        "Do I start Mbeumo",
+        "Does Rice start",
+        "Will Haaland play",
+        "Did you consider Saka",
+        "Has Haaland recovered",
+        "Am I right to bench Konsa",
+        "Were you sure about Konsa",
+        "Shouldn't Saka start",
+        "Isn't Konsa a doubt",
+        "Can't we bench Konsa",
+        "Any reason Konsa starts over Guehi",
+        "Thoughts on the lineup",
+        "Explain the lineup",
+        "Tell me why Konsa starts",
+        "Konsa over Guehi",
+        "Lineup looks odd, why Konsa",
+        "Hi, why is Konsa in",
+        "Quick question: why Konsa",
+        "Re the lineup - why Konsa",
+        "Haaland or Mbeumo captain",
+        "why saka",
+        "wildcard now",
+    ],
+)
+def test_ordinary_text_goes_to_the_gaffer(text):
+    assert routed(text) == ("ask", "free-text")
+
+
+@pytest.mark.parametrize(
+    "text", ["transfer made", "chip forcast", "week pln", "free hits", "transfer mode", "wildcrad"]
+)
+def test_a_near_miss_of_a_command_gets_the_help(text):
+    assert routed(text) == ("help", "command-typo")
+
+
+@pytest.mark.parametrize("text", ["the plan", "new plan", "keep plan"])
+def test_a_phrase_merely_like_a_command_goes_to_the_gaffer(text):
+    # The other side of the 0.8 cutoff: these score below it against
+    # "week plan", so they are text for the gaffer, not typos.
+    assert routed(text) == ("ask", "free-text")
+
+
+@pytest.mark.parametrize("text", ["hello", "thanks", "Konsa", "lineup"])
+def test_a_single_word_gets_the_help(text):
+    assert routed(text) == ("help", "one-word")
+
+
+@pytest.mark.parametrize("text", ["Why Saka?", "What's the lineup"])
+def test_without_a_gaffer_what_would_go_to_him_gets_the_help(text):
+    assert routed(text, ask_wired=False) == ("help", "ask-off")
+
+
+def test_without_a_gaffer_a_typo_still_says_typo():
+    assert routed("chip forcast", ask_wired=False) == ("help", "command-typo")
+
+
+def test_the_reasons_are_a_fixed_set_and_never_the_messages_words():
+    texts = ["", "help", "Why Zorblax?", "zorblax plinth", "zorblax", "chip forcast", "Wildcard?"]
+    for wired in (True, False):
+        for text in texts:
+            name, reason = routed(text, wired)
+            assert reason in inbox.REASONS
+            assert name in inbox.ROUTES
+            assert "zorblax" not in reason and "plinth" not in reason
+
+
+# --- Routing, end to end through run_inbox -----------------------------------
+
+
+def test_a_question_without_a_mark_or_a_question_word_reaches_the_gaffer(tmp_path):
+    ask = AskStub()
+    phone = Phone([update(1, "What's the lineup")])
+    run_asking(tmp_path, phone, ask)
+    assert [c[0] for c in ask.calls] == ["What's the lineup"]
+    assert phone.sent == ["because fixtures"]
+
+
+def test_hello_gets_the_help_with_a_gaffer_wired(tmp_path):
+    ask = AskStub()
+    phone = Phone([update(1, "hello")])
+    run_asking(tmp_path, phone, ask)
+    assert ask.calls == []
+    assert phone.sent == [HELP]
+
+
+def test_a_newly_routed_question_that_raises_gets_the_ask_apology(tmp_path):
+    def broken_ask(raw, update_id, sent_at, reply):
+        raise RuntimeError("gaffer down")
+
+    phone = Phone([update(1, "Thoughts on the lineup")])
+    run_asking(tmp_path, phone, broken_ask)
+    assert phone.sent == [ASK_WRONG]
+
+
+def test_a_sticker_gets_the_help_with_a_gaffer_wired(tmp_path):
+    ask = AskStub()
+    phone = Phone([update(1, None)])
+    run_asking(tmp_path, phone, ask)
+    assert ask.calls == []
+    assert phone.sent == [HELP]
+
+
+def test_dispatch_keeps_its_signature_and_routes_a_question():
+    ask = AskStub()
+    sent_at = datetime.now(UTC)
+    assert dispatch("whats the lineup", 7, sent_at, no_reply, recorded, ask=ask,
+                    raw="What's the lineup") == "because fixtures"
+
+
+# --- One journal line per update: the route, never the words -----------------
+
+
+def test_each_update_logs_its_route_and_reason_and_never_its_words(tmp_path, capsys):
+    ask = AskStub()
+    phone = Phone([update(1, "Zorblax over Plinth"), update(2, "zorblax")])
+    run_asking(tmp_path, phone, ask)
+    out = capsys.readouterr().out
+    assert out.splitlines() == [
+        "aigaffer inbox: update 1 -> ask (free-text)",
+        "aigaffer inbox: update 2 -> help (one-word)",
+    ]
+    assert "orblax" not in out and "linth" not in out
+
+
+def test_another_chat_logs_ignored_without_its_chat_id(tmp_path, capsys):
+    phone = Phone([update(5, "Zorblax?", chat="777")])
+    run(tmp_path, phone)
+    out = capsys.readouterr().out
+    assert out.splitlines() == ["aigaffer inbox: update 5 -> ignored (other-chat)"]
+    assert "777" not in out and "orblax" not in out
+
+
+def test_the_route_is_logged_before_a_handler_that_fails(tmp_path, capsys):
+    phone = Phone([update(10, "Transfers made")])
+    run(tmp_path, phone, broken)
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0] == "aigaffer inbox: update 10 -> transfers-made (command)"
+    assert "RuntimeError" in lines[1]
+
+
+# --- The simulation: route a made-up text, send nothing, write nothing --------
+
+
+def test_a_simulation_prints_the_route_and_asks_nobody_by_default(tmp_path, capsys, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    assert simulate("Thoughts on the lineup", ask_wired=True) == 0
+    out = capsys.readouterr().out
+    assert "route: ask" in out and "reason: free-text" in out
+    assert "--ask" in out, "says the gaffer was not asked, and how to ask him"
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_a_simulation_shows_the_help_it_would_send(capsys):
+    simulate("hello", ask_wired=True)
+    out = capsys.readouterr().out
+    assert "route: help" in out and "reason: one-word" in out
+    assert HELP in out
+
+
+def test_a_simulated_command_is_never_run(capsys):
+    simulate("Transfers made", ask_wired=True)
+    out = capsys.readouterr().out
+    assert "route: transfers-made" in out and "reason: command" in out
+    assert "not run" in out
+    simulate("Wildcard?", ask_wired=True)
+    assert "route: whatif" in capsys.readouterr().out
+
+
+def test_a_simulation_without_a_gaffer_routes_as_the_box_would(capsys):
+    simulate("Why Saka?", ask_wired=False)
+    out = capsys.readouterr().out
+    assert "route: help" in out and "reason: ask-off" in out
+
+
+def test_a_simulation_with_ask_hands_the_raw_text_to_the_gaffer(capsys):
+    ask = AskStub()
+    simulate("Thoughts on the lineup", ask_wired=True, ask=ask)
+    assert [c[0] for c in ask.calls] == ["Thoughts on the lineup"]
+    assert "reply: because fixtures" in capsys.readouterr().out
+
+
+def test_a_simulation_prints_what_the_gaffer_says_for_himself(capsys):
+    def chatty(raw, update_id, sent_at, reply):
+        reply("waiting for the report")
+        return "the answer"
+
+    simulate("Why Saka?", ask_wired=True, ask=chatty)
+    out = capsys.readouterr().out
+    assert out.index("reply: waiting for the report") < out.index("reply: the answer")
+
+
+def test_the_cli_simulation_never_reads_telegram_or_writes(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("FPL_TEAM_ID", "99")
+    monkeypatch.setenv("AIGAFFER_INBOX_DIR", str(tmp_path / "inbox"))
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", TOKEN)
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", CHAT)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    monkeypatch.delenv("AIGAFFER_MANAGER", raising=False)
+    monkeypatch.setattr(cli, "run_inbox", lambda *a, **k: pytest.fail("no inbox run"))
+    monkeypatch.setattr(inbox, "send_message", lambda *a, **k: pytest.fail("nothing sent"))
+    monkeypatch.setattr(inbox, "get_updates", lambda *a, **k: pytest.fail("nothing read"))
+
+    assert cli.main(["inbox", "--simulate", "Thoughts on the lineup"]) == 0
+
+    out = capsys.readouterr().out
+    assert "route: ask" in out and "reason: free-text" in out
+    assert not (tmp_path / "inbox").exists()
+
+
+def test_the_cli_simulation_follows_the_manager_switch(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("FPL_TEAM_ID", "99")
+    monkeypatch.setenv("AIGAFFER_INBOX_DIR", str(tmp_path / "inbox"))
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", CHAT)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    assert cli.main(["inbox", "--simulate", "Why Saka?"]) == 0
+    assert "reason: ask-off" in capsys.readouterr().out
+
+
+def test_the_cli_simulation_with_ask_uses_the_in_memory_gaffer(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("FPL_TEAM_ID", "99")
+    monkeypatch.setenv("AIGAFFER_INBOX_DIR", str(tmp_path / "inbox"))
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", CHAT)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    monkeypatch.delenv("AIGAFFER_MANAGER", raising=False)
+    built = []
+
+    def fake_simulated_ask(cfg, directory):
+        built.append(directory)
+        return AskStub("simulated answer")
+
+    monkeypatch.setattr(cli, "make_simulated_ask", fake_simulated_ask)
+
+    assert cli.main(["inbox", "--simulate", "Why Saka?", "--ask"]) == 0
+    assert built == [tmp_path / "inbox"]
+    assert "reply: simulated answer" in capsys.readouterr().out
+
+
+def test_ask_without_simulate_is_refused(monkeypatch, tmp_path):
+    monkeypatch.setenv("FPL_TEAM_ID", "99")
+    with pytest.raises(SystemExit):
+        cli.main(["inbox", "--ask"])
+
+
+def test_simulate_is_only_for_the_inbox(monkeypatch):
+    monkeypatch.setenv("FPL_TEAM_ID", "99")
+    with pytest.raises(SystemExit):
+        cli.main(["auto", "--simulate", "Why Saka?"])

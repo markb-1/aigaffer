@@ -67,14 +67,14 @@ text, or you can type:
 - **Chip forecast**: when the bot currently plans to play each chip you hold,
   read instantly from the latest report.
 - **help**: the list of commands.
-- **Ask the gaffer a question.** Any text that ends with "?", or starts with
-  why, what, how, should, is, was, would, could, can, and, who, which or when,
-  goes to the gaffer, for example "Why Saka?". He answers from this week's
-  detailed report in a short reply and remembers the last ten exchanges, so
+- **Ask the gaffer a question.** Any text that isn't a button goes to the
+  gaffer, for example "Why Saka?" or "What's the lineup". Only "help", a
+  mistyped command and a lone word get the help instead. He answers from this
+  week's detailed report in a short reply and remembers the last ten exchanges, so
   "and Saka?" follows on. He explains the plan and never changes it. Thirty
   answers a day, when a gaffer is configured.
 
-The buttons win over questions, so a mistyped command gets the help, not an
+The buttons win over questions, and a mistyped command gets the help, not an
 answer. Only your own box reads Telegram. The details are in
 [docs/operations.md](docs/operations.md#telling-it-what-you-entered), down to
 [asking the gaffer](docs/operations.md#asking-the-gaffer).
