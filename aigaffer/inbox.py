@@ -20,9 +20,11 @@ or a sticker gets the help; any other text is a question for the gaffer
 (:mod:`aigaffer.ask`), when one is configured. :func:`route` decides, in one
 place, for the reply and for the apology alike.
 
-**What the log says.** One line per update: its id, the route and a fixed
-reason code (:data:`REASONS`) — never a word of the message, and for another
-chat not even its id.
+**What the log says.** One journal line per update: its id, the route and a
+fixed reason code (:data:`REASONS`) — never a word of the message, and for
+another chat not even its id. The owner's own texts are kept, word for word,
+in the message log on his box (:mod:`aigaffer.message_log`), never in the
+journal and never in the repo.
 
 **Where it is.** The last handled ``update_id`` lives in
 ``$AIGAFFER_INBOX_DIR/offset`` (default ``~/.aigaffer/``), outside the
@@ -36,7 +38,7 @@ failure writes its id to ``$AIGAFFER_INBOX_DIR/failed`` and leaves the offset,
 so the next minute tries again; a second failure on the same id lets it go
 and carries on. The marker is a file because consecutive minutes are
 separate processes. Either way the owner is told something went wrong, and
-the log gets the exception's class and never its words.
+the journal gets the exception's class and never its words.
 
 A chip what-if is the exception: it writes the marker itself, first thing,
 so an exception anywhere inside it finds the marker already set and the
@@ -57,6 +59,7 @@ from pathlib import Path
 import httpx
 
 from aigaffer.chips import FREE_HIT, WILDCARD
+from aigaffer.message_log import MessageLog
 from aigaffer.report.telegram import get_updates, send_message
 
 INBOX_ENV = "AIGAFFER_INBOX_DIR"
@@ -290,6 +293,7 @@ def run_inbox(
     week_plan: WeekPlan | None = None,
     get: Callable[[str, int | None], list[dict]] = get_updates,
     send: Callable[[str, str, str], None] = send_message,
+    log: MessageLog | None = None,
 ) -> int:
     """Handle every waiting message once, in order, and return 0.
 
@@ -301,6 +305,9 @@ def run_inbox(
         print(NOT_CONFIGURED)
         return 0
     directory.mkdir(parents=True, exist_ok=True)
+    # Every owner's text is written down before it is handled; ``log`` None
+    # is the inbox directory's own (the CLI names the clone to refuse, too).
+    messages = log if log is not None else MessageLog(directory)
 
     def reply(text: str) -> None:
         send(token, chat_id, text)
@@ -335,6 +342,7 @@ def run_inbox(
         # again, a recording is tried again. Set before anything can raise,
         # so a message too malformed to read still gets the general one.
         apology = SOMETHING_WRONG
+        logged = False
         try:
             incoming = None if message is None else _incoming(message, chat_id)
             if incoming is None:
@@ -345,6 +353,10 @@ def run_inbox(
                 command = normalise(raw)
                 chosen, reason = route(command, raw, ask is not None)
                 print(ROUTED.format(uid=uid, route=chosen, reason=reason))
+                # Swallows its own failures: a log that cannot be written
+                # never reaches the except below.
+                messages.received(uid, sent_at, message, chosen, reason)
+                logged = True
                 apology = APOLOGIES.get(chosen, SOMETHING_WRONG)
                 answer = dispatch(
                     command, uid, sent_at, reply, transfers_made, chip_whatif,
@@ -354,6 +366,8 @@ def run_inbox(
                     send(token, chat_id, answer)
         except Exception as error:  # any failure; one bad text must not wedge us
             print(FAILED.format(reason=type(error).__name__))
+            if logged:
+                messages.failed(uid, type(error).__name__)
             _apologise(token, chat_id, send, apology)
             if _read_int(directory / FAILED_FILE) != uid:
                 _write_int(directory / FAILED_FILE, uid)

@@ -224,6 +224,26 @@ aigaffer-inbox`) with its update id, the route it took and a fixed reason
 code. The line never includes a word of the message. A message from another
 chat shows as `ignored (other-chat)`, without the chat's id.
 
+**What you sent is kept on your box, not in the journal.** Each message from
+your chat is also written, before it's handled, to
+`messages/YYYY-MM.jsonl` in the inbox directory. A line holds when it was
+read and sent, the update id, the kind of message, the text if it was text,
+and the route and reason. It never holds a caption, a file or anything about
+the sender. If handling the message fails, a second line records the error's
+class. Messages from other chats are never written down.
+
+- The folder is private to your user (0700, and put back to that if it was
+  looser) and each file is created 0600. A month file that is a symlink is
+  never written through.
+- It refuses to write anywhere inside the checkout, even through a symlink. If
+  `AIGAFFER_INBOX_DIR` points into the repo, the journal says
+  `message not logged (inside-checkout)` and nothing is written.
+- Three months are kept: this month's file and the three before it. Each
+  write deletes older month files.
+- If the log can't be written, the message is still answered; the journal
+  says `message not logged (<error class>)`.
+- To see what you sent last night: `tail ~/.aigaffer/messages/$(date -u +%Y-%m).jsonl`.
+
 **Trying the routing without a phone.** `python -m aigaffer inbox --simulate
 "Thoughts on the bench"` prints the route, the reason and the reply that would
 go out. It doesn't read Telegram or send anything, it doesn't move the inbox's
@@ -250,7 +270,7 @@ appear in your thread.
 never committed: the day's count in `ask/cap.json` and each gameweek's thread
 in `ask/gw{n}.jsonl`. The repo is public, and your questions are yours. The
 same directory holds the inbox's place in Telegram (`offset`), its failure
-marker, the what-if log and the two locks.
+marker, the what-if log, the message log (`messages/`) and the two locks.
 
 ## Your own box
 

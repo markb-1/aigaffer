@@ -61,6 +61,7 @@ from aigaffer.config import SCOUT_HORIZON_HOURS, Config
 from aigaffer.data.fpl_api import FplClient
 from aigaffer.data.models import Bootstrap, Event
 from aigaffer.inbox import inbox_dir, run_inbox, simulate
+from aigaffer.message_log import MessageLog
 from aigaffer.orchestrator import (
     DEADLINE_MODE,
     EARLY_MODE,
@@ -511,9 +512,12 @@ def _inbox(client: FplClient) -> int:
     # them; without one a question gets the help, as before. The client is
     # built on the first question, so a box that is never asked builds none.
     ask = make_ask(cfg, directory) if cfg.manager_enabled else None
+    # The owner's texts are logged in the inbox directory, and refused if it
+    # resolves inside this repository or the clone the tick commits from.
+    log = MessageLog(directory, checkouts=(cfg.state_dir.absolute().parent,))
     return run_inbox(
         cfg.telegram_token, cfg.telegram_chat_id, directory, handler, whatif,
-        forecast, ask=ask, week_plan=plan,
+        forecast, ask=ask, week_plan=plan, log=log,
     )
 
 

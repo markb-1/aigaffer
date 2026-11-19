@@ -691,7 +691,7 @@ def test_the_system_prompt_handles_a_text_that_is_not_a_question():
     # answer check requires of every answer.
     prompt = SYSTEM_PROMPT.lower()
     for needed in ("not a question", "record transfers", "play chips", "buttons",
-                   "still name the gameweek"):
+                   "still name the gameweek", "recommendation exactly"):
         assert needed in prompt
 
 
