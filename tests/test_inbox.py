@@ -10,6 +10,7 @@ why the marker is a file.
 
 import json
 from datetime import UTC, datetime
+from pathlib import Path
 
 import httpx
 import pytest
@@ -449,11 +450,12 @@ def test_the_cli_inbox_reads_the_inbox_directory(monkeypatch, tmp_path):
 
     def fake_run_inbox(
         token, chat_id, directory, handler, chip_whatif=None, chip_forecast=None,
-        ask=None, week_plan=None,
+        ask=None, week_plan=None, log=None,
     ):
         seen.update(token=token, chat_id=chat_id, directory=directory,
                     handler=handler, chip_whatif=chip_whatif,
-                    chip_forecast=chip_forecast, ask=ask, week_plan=week_plan)
+                    chip_forecast=chip_forecast, ask=ask, week_plan=week_plan,
+                    log=log)
         return 0
 
     monkeypatch.setattr(cli, "run_inbox", fake_run_inbox)
@@ -476,6 +478,9 @@ def test_the_cli_inbox_reads_the_inbox_directory(monkeypatch, tmp_path):
     plan = seen["week_plan"]
     assert plan.func.__name__ == "week_plan"
     assert plan.args[1] == tmp_path / "inbox" / "state.lock", "read under the tick's lock"
+    log = seen["log"]
+    assert log.directory == tmp_path / "inbox"
+    assert Path.cwd().resolve() in log.checkouts, "the clone holding state/ is refused too"
 
 
 def test_the_inbox_wires_ask_only_with_a_manager(monkeypatch, tmp_path):
@@ -1141,3 +1146,81 @@ def test_simulate_is_only_for_the_inbox(monkeypatch):
     monkeypatch.setenv("FPL_TEAM_ID", "99")
     with pytest.raises(SystemExit):
         cli.main(["auto", "--simulate", "Why Saka?"])
+
+
+
+# --- The message log: the owner's texts, on his box, never the repo ----------
+
+
+def logged(directory) -> list[dict]:
+    folder = directory / "messages"
+    return [
+        json.loads(line)
+        for path in sorted(folder.glob("*.jsonl"))
+        for line in path.read_text(encoding="utf-8").splitlines()
+    ]
+
+
+def test_each_owner_text_is_logged_with_its_route(tmp_path):
+    ask = AskStub()
+    phone = Phone([update(1, "Zorblax over Plinth"), update(2, "hello"), update(3, None)])
+    run_asking(tmp_path, phone, ask)
+
+    entries = logged(tmp_path)
+    assert [(e["update_id"], e["route"], e["reason"], e["content"]) for e in entries] == [
+        (1, "ask", "free-text", "text"),
+        (2, "help", "one-word", "text"),
+        (3, "help", "no-text", "other"),
+    ]
+    assert entries[0]["text"] == "Zorblax over Plinth"
+    assert "text" not in entries[2]
+
+
+def test_another_chats_text_is_never_logged(tmp_path):
+    phone = Phone([update(5, "Zorblax?", chat="777")])
+    run(tmp_path, phone)
+    assert not (tmp_path / "messages").exists()
+
+
+def test_the_line_is_written_before_a_handler_that_fails(tmp_path):
+    phone = Phone([update(10, "Transfers made")])
+    run(tmp_path, phone, broken)
+
+    assert [(e["event"], e["update_id"]) for e in logged(tmp_path)] == [
+        ("received", 10), ("failed", 10),
+    ]
+    assert logged(tmp_path)[1]["error"] == "RuntimeError"
+
+
+def test_a_log_that_cannot_be_written_never_reaches_the_inbox(tmp_path, capsys):
+    (tmp_path / "messages").write_text("a file where the folder should be")
+    phone = Phone([update(10, "help")])
+
+    run(tmp_path, phone)
+
+    assert phone.sent == [HELP], "answered, and no apology"
+    assert (tmp_path / "offset").read_text() == "10"
+    assert not (tmp_path / "failed").exists()
+    assert "message not logged (FileExistsError)" in capsys.readouterr().out
+
+
+def test_a_re_handled_update_is_logged_again_under_the_same_id(tmp_path):
+    calls = []
+
+    def flaky(token, chat_id, text):
+        calls.append(text)
+        if len(calls) == 1:
+            raise httpx.ConnectError("down")
+
+    phone = Phone([update(10, "help")])
+    run_inbox(TOKEN, CHAT, tmp_path, recorded, get=phone.get, send=flaky)
+    run_inbox(TOKEN, CHAT, tmp_path, recorded, get=phone.get, send=flaky)
+
+    received = [e["update_id"] for e in logged(tmp_path) if e["event"] == "received"]
+    assert received == [10, 10]
+
+
+def test_the_journal_still_never_carries_the_words(tmp_path, capsys):
+    run_asking(tmp_path, Phone([update(1, "Zorblax over Plinth")]), AskStub())
+    out = capsys.readouterr().out
+    assert "orblax" not in out and "linth" not in out
