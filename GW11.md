@@ -1,22 +1,22 @@
-# AI Gaffer — GW11 scout
+# AI Gaffer — GW11 deadline
 
 Deadline: Sat 21 Nov 2026 11:00 UTC
 
 ## Do this
 
 ⏰ Make these by Sat 21 Nov 2026 11:00 UTC — GW11
-SELL João Pedro (FWD CHE £7.6m, sells £7.5m) → BUY N.Jackson (FWD AVL £7.1m)
+SELL João Pedro (FWD CHE £7.6m, sells £7.5m) → BUY N.Jackson (FWD AVL £7.2m)
 CAPTAIN Haaland · VICE N.Jackson
 Set lineup: N.Jackson starts — see the XI below
 
 ## Recommendation
 
-1 transfer, no hit, £1.2m left in the bank.
+1 transfer, no hit, £1.1m left in the bank.
 
-João Pedro → N.Jackson · FWD · £7.1m
+João Pedro → N.Jackson · FWD · £7.2m
 ```
 GW  Out      In
-11  LEE 0.0  SUN  4.8
+11  LEE 0.0  SUN  4.7
 12  nfo 0.0  ips  5.2
 13  CRY 0.0  EVE  4.6
 14  LIV 0.0  CRY  5.1
@@ -24,39 +24,44 @@ GW  Out      In
 16  AVL 0.0  che  4.5
 =       0.0      29.2
 ```
-- +4.8 this week, +29.2 over 6 weeks
+- +4.7 this week, +29.2 over 6 weeks
 - Next best: Barry 28.4 (£5.7m), Evanilson 26.5 (£6.5m)
 
 ## The Gaffer's view
 
 WHAT I DID
-One free transfer: João Pedro (Chelsea, injured) out, N.Jackson (Aston Villa, £7.1m) in. No hit. Haaland is captain (Man City v Fulham, home) and Jackson is vice (Aston Villa v Sunderland, home). No chip.
+One free transfer: João Pedro (injured, 0% chance) out, N.Jackson (AVL, £7.2m) in. Haaland is captain against FUL(h) and Jackson is vice. No chip. Triple captain is worth +5.8 this week, below its 6.8 bar, so it stays saved for GW19. Jackson's price rose £0.2m this week with 560k net transfers in, so the move may well be cheaper tonight than at Saturday's deadline.
 
 WHAT I LEARNED
-- João Pedro: he has been out with a thigh injury since 23 Oct. Sports Mole (18 Nov) gives him only a slight chance against Leeds, and other Chelsea injury lists have him out. I kept him at 0 minutes. He is dead weight in the squad.
-- Guéhi: he came off at Forest with a hip/groin problem and pulled out of the England squad (13 Nov). This week's previews call him a major doubt for Fulham. I cut his minutes from 40 to 10. He sits 4th on the bench in this plan, so it costs us nothing this week.
-- N.Jackson: this was the transfer target, so I checked him first. Villa's injury news for Sunderland (The Athletic via the Sunderland Echo, Yahoo, The Sports Bank) names Cash (concussion) and Manzambi (calf) but not Jackson. He is Villa's top scorer and I found nothing against him.
-- Haaland: predicted XIs have him starting after international duty, with no fitness news. City have lost three league games in a row, which worries me a little, but not about his minutes.
-- Tzolakis: predicted XIs have him starting for Hull against Brighton, and he is in good form.
-- Calvert-Lewin: he had a foot setback before the Spurs game two weeks ago. I found nothing new since. Leeds are being linked with a January striker, but that is not a rotation worry now.
-- Not confirmed: Arsenal (Gabriel, Rice, Konsa) and Bournemouth (Tavernier). My searches only turned up old articles, with no current injury news for any of them. I left their minutes at the model's numbers. Of my starters, they are the ones I could not check.
+- Jackson (the buy): Emery's Friday press conference named only Cash (concussion), Onana and Ruggeri as out, and said the rest are ready. Jackson is available. There is a small rotation risk because Villa play Galatasaray in the Champions League on Tuesday, but Emery said the league comes first. I set him to 85 minutes.
+- Guéhi: he pulled out of the England squad with a hip problem. Sports Mole (20 Nov) says he trained Thursday and is set to be available for Fulham, but its team-news page still lists him as doubtful. I raised him from 40 to 60 minutes rather than 90. Last week's lesson was not to trust weak evidence on him, and a quote that he will start was cut off and unclear.
+- Konsa: Arteta confirmed Saliba is fit, and the Arsenal preview calls centre-back 'one big decision'. I cut Konsa from 90 to 70 minutes as a rotation risk.
+- Confirmed fit at Friday press conferences or by club media: Gabriel ('returned in good condition'), Calvert-Lewin (back fully fit from England duty) and Tavernier (Rose said 'everyone is fit').
+- Rice: Zubimendi is out for a few weeks with a hamstring injury, which makes Rice certain to start in midfield (87 minutes).
+- Haaland: not on City's injury list (88 minutes).
+- Tzolakis: in every Hull predicted XI (90 minutes).
+- Mbeumo: predicted to lead the line under Pochettino, who takes charge of United for the first time at Anfield.
+- Brighton (Groß, Vušković, Verbruggen): Hurzeler had only good team news. He did warn that with so many players fit, some will miss the matchday squad.
+- Not checked: Lewis-Potter (bench), Muharemović (bench) and Van Hecke.
 
 WHY THIS PLAN
-After I resolved with my changes, the solver's top pick became plan 4 (Guéhi out, Van Hecke in). It scores the same 255.8 net as this plan. Plan 0's numbers were worked out before my Guéhi change, but that change only moves a man who sits 4th on the bench, so the comparison should hold.
-I chose plan 0 for three reasons:
-- It gets rid of a player who is certainly out (Pedro). Plan 4 sells one who is only doubtful and sitting on the bench.
-- It buys a player I actually checked. I did not search Spurs, so Van Hecke would have been an unchecked buy.
-- Every path on the board buys Jackson next week anyway. Over 390k managers are buying him and his price has already risen, so waiting could cost money.
-Rolling (plan 5) scores 1.2 net less. That is within the noise, but the transfer fixes a real injury rather than chasing a projection, so it is worth making. We still keep the free transfers banked for the Le Fée and Ødegaard moves the path plans.
-Plans 6 and 7 take hits for gains the solver itself prices below rolling, so I left them.
-No chip: triple captain on Haaland is worth +5.8, below this week's 6.8 bar, and it is being saved for GW19. Bench boost is not held this week.
+After my adjustments the solver's top pick was plan 4, which sells Guéhi for Van Hecke and waits until GW12 to buy Jackson. I didn't take it, for two reasons. First, I hadn't checked Spurs team news, so Van Hecke would have been an unverified buy. Second, the news on Guéhi is getting better, not worse, so this is the wrong week to sell a City starter at a loss. Plan 0 makes the move every path makes anyway: it swaps a player at 0% for a striker confirmed fit, and it buys before the price rises. Rolling (plan 5) was about a point behind. That gap is within the noise, but a dead player and a verified replacement make a real reason to move, not a spreadsheet edge. Plans 6 and 7 take hits for moves that are only marginal, so I rejected them.
+
+What I'm unsure about: plan 0's figures were worked out before my minute changes, though Jackson only dropped from 87 to 85, so the gap barely moves. Konsa starts in this XI with 70 expected minutes. If he is benched, Guéhi or Muharemović should come on automatically.
 
 Minutes he overruled:
 
-- Set Guéhi to 10 mins — Guéhi was taken off in the defeat at Forest with a hip/groin problem and pulled out of the England squad because of it. Reports this week (premierleaguenewsnow, LiveScore, RotoWire) call him a major doubt for Fulham. He is unlikely to start.
-- Set João Pedro to 0 mins — Thigh injury, out since 23 Oct. Sports Mole gives only a slight chance of a return against Leeds, and the YEP and 3AddedMinutes list him as out. Keeping him at 0.
+- Set N.Jackson to 85 mins — Emery's Friday presser: only Cash (concussion), Onana and Ruggeri out, 'the other players, they are ready'. Jackson is available. A small rotation risk with Galatasaray in the Champions League on Tuesday, though Emery said the Premier League is the priority.
+- Set Guéhi to 60 mins — Withdrew from England with a hip problem. Sports Mole (20 Nov) says he trained Thursday and is set to be available for Fulham, but its team-news page still lists him as doubtful. Raised from 40 to 60, not to 90, because a quote that he will start is truncated and unclear.
+- Set Konsa to 70 mins — Predicted to start, but Arteta confirmed Saliba is fit, and the Standard/AOL preview calls centre-back 'one big decision'. Konsa is the man most at risk.
+- Set Gabriel to 90 mins — Arteta at the presser: Gabriel 'returned in good condition'. Predicted to start.
+- Set Rice to 87 mins — With Zubimendi out for a few weeks with a hamstring injury, Rice is certain to start in midfield. Predicted XI.
+- Set Tavernier to 85 mins — Rose: all internationals came back healthy and 'everyone is fit'. Tavernier is in the predicted XI.
+- Set Calvert-Lewin to 88 mins — Leeds official site and Farke: Calvert-Lewin came back from England duty fully fit and is available for Chelsea.
+- Set Tzolakis to 90 mins — Named in goal in every Hull v Brighton predicted XI. No rival keeper mentioned.
+- Set Haaland to 88 mins — Not in City's injury list (Semenyo out; Guéhi and Khusanov doubts). In the predicted XI.
 
-12 web searches. Decided by the gaffer.
+11 web searches. Decided by the gaffer.
 
 ## Starting XI (3-4-3)
 
@@ -64,7 +69,7 @@ Minutes he overruled:
 - DEF: Gabriel, Konsa, Vuskovic
 - MID: Tavernier, Mbeumo, Groß, Rice
 - FWD: Haaland (C), N.Jackson (V), Calvert-Lewin
-- Bench: 1. Verbruggen (GKP), 2. Muharemović (DEF), 3. Lewis-Potter (MID), 4. Guéhi (DEF)
+- Bench: 1. Verbruggen (GKP), 2. Muharemović (DEF), 3. Guéhi (DEF), 4. Lewis-Potter (MID)
 
 ## Candidate plans
 

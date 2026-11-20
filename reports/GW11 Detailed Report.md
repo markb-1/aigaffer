@@ -1,15 +1,27 @@
 # GW11 Detailed Report
 
-Deadline: Sat 21 Nov 2026 11:00 UTC · Last updated: scout run Wed 18 Nov 2026 23:35 UTC
+Deadline: Sat 21 Nov 2026 11:00 UTC · Last updated: deadline run Fri 20 Nov 2026 17:35 UTC
 
 ## Do this
 
 ⏰ Make these by Sat 21 Nov 2026 11:00 UTC — GW11
-SELL João Pedro (FWD CHE £7.6m, sells £7.5m) → BUY N.Jackson (FWD AVL £7.1m)
+SELL João Pedro (FWD CHE £7.6m, sells £7.5m) → BUY N.Jackson (FWD AVL £7.2m)
 CAPTAIN Haaland · VICE N.Jackson
 Set lineup: N.Jackson starts — see the XI below
 
 ## What changed
+
+**deadline — Fri 20 Nov 2026 17:35 UTC**
+
+- Bench: Verbruggen, Muharemović, Guéhi, Lewis-Potter (was: Verbruggen, Muharemović, Lewis-Potter, Guéhi)
+- N.Jackson: xMins 87.2 → 85
+- Guéhi: xMins 10 → 60
+- Konsa: xMins 90 → 70
+- Rice: xMins 82.2 → 87
+- Tavernier: xMins 83.2 → 85
+- Calvert-Lewin: xMins 88.8 → 88
+- Haaland: xMins 87.8 → 88
+- Guéhi: news 'Hip injury - 75% chance of playing' (was 'Unspecified injury - 75% chance of playing')
 
 **scout — Wed 18 Nov 2026 23:35 UTC**
 
@@ -23,37 +35,42 @@ Set lineup: N.Jackson starts — see the XI below
 
 **WHAT I DID**
 
-One free transfer: João Pedro (Chelsea, injured) out, N.Jackson (Aston Villa, £7.1m) in. No hit. Haaland is captain (Man City v Fulham, home) and Jackson is vice (Aston Villa v Sunderland, home). No chip.
+One free transfer: João Pedro (injured, 0% chance) out, N.Jackson (AVL, £7.2m) in. Haaland is captain against FUL(h) and Jackson is vice. No chip. Triple captain is worth +5.8 this week, below its 6.8 bar, so it stays saved for GW19. Jackson's price rose £0.2m this week with 560k net transfers in, so the move may well be cheaper tonight than at Saturday's deadline.
 
 **WHAT I LEARNED**
 
-- João Pedro: he has been out with a thigh injury since 23 Oct. Sports Mole (18 Nov) gives him only a slight chance against Leeds, and other Chelsea injury lists have him out. I kept him at 0 minutes. He is dead weight in the squad.
-- Guéhi: he came off at Forest with a hip/groin problem and pulled out of the England squad (13 Nov). This week's previews call him a major doubt for Fulham. I cut his minutes from 40 to 10. He sits 4th on the bench in this plan, so it costs us nothing this week.
-- N.Jackson: this was the transfer target, so I checked him first. Villa's injury news for Sunderland (The Athletic via the Sunderland Echo, Yahoo, The Sports Bank) names Cash (concussion) and Manzambi (calf) but not Jackson. He is Villa's top scorer and I found nothing against him.
-- Haaland: predicted XIs have him starting after international duty, with no fitness news. City have lost three league games in a row, which worries me a little, but not about his minutes.
-- Tzolakis: predicted XIs have him starting for Hull against Brighton, and he is in good form.
-- Calvert-Lewin: he had a foot setback before the Spurs game two weeks ago. I found nothing new since. Leeds are being linked with a January striker, but that is not a rotation worry now.
-- Not confirmed: Arsenal (Gabriel, Rice, Konsa) and Bournemouth (Tavernier). My searches only turned up old articles, with no current injury news for any of them. I left their minutes at the model's numbers. Of my starters, they are the ones I could not check.
+- Jackson (the buy): Emery's Friday press conference named only Cash (concussion), Onana and Ruggeri as out, and said the rest are ready. Jackson is available. There is a small rotation risk because Villa play Galatasaray in the Champions League on Tuesday, but Emery said the league comes first. I set him to 85 minutes.
+- Guéhi: he pulled out of the England squad with a hip problem. Sports Mole (20 Nov) says he trained Thursday and is set to be available for Fulham, but its team-news page still lists him as doubtful. I raised him from 40 to 60 minutes rather than 90. Last week's lesson was not to trust weak evidence on him, and a quote that he will start was cut off and unclear.
+- Konsa: Arteta confirmed Saliba is fit, and the Arsenal preview calls centre-back 'one big decision'. I cut Konsa from 90 to 70 minutes as a rotation risk.
+- Confirmed fit at Friday press conferences or by club media: Gabriel ('returned in good condition'), Calvert-Lewin (back fully fit from England duty) and Tavernier (Rose said 'everyone is fit').
+- Rice: Zubimendi is out for a few weeks with a hamstring injury, which makes Rice certain to start in midfield (87 minutes).
+- Haaland: not on City's injury list (88 minutes).
+- Tzolakis: in every Hull predicted XI (90 minutes).
+- Mbeumo: predicted to lead the line under Pochettino, who takes charge of United for the first time at Anfield.
+- Brighton (Groß, Vušković, Verbruggen): Hurzeler had only good team news. He did warn that with so many players fit, some will miss the matchday squad.
+- Not checked: Lewis-Potter (bench), Muharemović (bench) and Van Hecke.
 
 **WHY THIS PLAN**
 
-After I resolved with my changes, the solver's top pick became plan 4 (Guéhi out, Van Hecke in). It scores the same 255.8 net as this plan. Plan 0's numbers were worked out before my Guéhi change, but that change only moves a man who sits 4th on the bench, so the comparison should hold.
-I chose plan 0 for three reasons:
-- It gets rid of a player who is certainly out (Pedro). Plan 4 sells one who is only doubtful and sitting on the bench.
-- It buys a player I actually checked. I did not search Spurs, so Van Hecke would have been an unchecked buy.
-- Every path on the board buys Jackson next week anyway. Over 390k managers are buying him and his price has already risen, so waiting could cost money.
-Rolling (plan 5) scores 1.2 net less. That is within the noise, but the transfer fixes a real injury rather than chasing a projection, so it is worth making. We still keep the free transfers banked for the Le Fée and Ødegaard moves the path plans.
-Plans 6 and 7 take hits for gains the solver itself prices below rolling, so I left them.
-No chip: triple captain on Haaland is worth +5.8, below this week's 6.8 bar, and it is being saved for GW19. Bench boost is not held this week.
+After my adjustments the solver's top pick was plan 4, which sells Guéhi for Van Hecke and waits until GW12 to buy Jackson. I didn't take it, for two reasons. First, I hadn't checked Spurs team news, so Van Hecke would have been an unverified buy. Second, the news on Guéhi is getting better, not worse, so this is the wrong week to sell a City starter at a loss. Plan 0 makes the move every path makes anyway: it swaps a player at 0% for a striker confirmed fit, and it buys before the price rises. Rolling (plan 5) was about a point behind. That gap is within the noise, but a dead player and a verified replacement make a real reason to move, not a spreadsheet edge. Plans 6 and 7 take hits for moves that are only marginal, so I rejected them.
 
-Expected points over the window: 254.56 xP; net 255.81 (after hits and charges, plus the credit for free transfers kept); 0 hits; bank £0.8m.
+What I'm unsure about: plan 0's figures were worked out before my minute changes, though Jackson only dropped from 87 to 85, so the gap barely moves. Konsa starts in this XI with 70 expected minutes. If he is benched, Guéhi or Muharemović should come on automatically.
+
+Expected points over the window: 254.55 xP; net 255.80 (after hits and charges, plus the credit for free transfers kept); 0 hits; bank £0.8m.
 
 Minutes he overruled:
 
-- Set Guéhi to 10 mins — Guéhi was taken off in the defeat at Forest with a hip/groin problem and pulled out of the England squad because of it. Reports this week (premierleaguenewsnow, LiveScore, RotoWire) call him a major doubt for Fulham. He is unlikely to start.
-- Set João Pedro to 0 mins — Thigh injury, out since 23 Oct. Sports Mole gives only a slight chance of a return against Leeds, and the YEP and 3AddedMinutes list him as out. Keeping him at 0.
+- Set N.Jackson to 85 mins — Emery's Friday presser: only Cash (concussion), Onana and Ruggeri out, 'the other players, they are ready'. Jackson is available. A small rotation risk with Galatasaray in the Champions League on Tuesday, though Emery said the Premier League is the priority.
+- Set Guéhi to 60 mins — Withdrew from England with a hip problem. Sports Mole (20 Nov) says he trained Thursday and is set to be available for Fulham, but its team-news page still lists him as doubtful. Raised from 40 to 60, not to 90, because a quote that he will start is truncated and unclear.
+- Set Konsa to 70 mins — Predicted to start, but Arteta confirmed Saliba is fit, and the Standard/AOL preview calls centre-back 'one big decision'. Konsa is the man most at risk.
+- Set Gabriel to 90 mins — Arteta at the presser: Gabriel 'returned in good condition'. Predicted to start.
+- Set Rice to 87 mins — With Zubimendi out for a few weeks with a hamstring injury, Rice is certain to start in midfield. Predicted XI.
+- Set Tavernier to 85 mins — Rose: all internationals came back healthy and 'everyone is fit'. Tavernier is in the predicted XI.
+- Set Calvert-Lewin to 88 mins — Leeds official site and Farke: Calvert-Lewin came back from England duty fully fit and is available for Chelsea.
+- Set Tzolakis to 90 mins — Named in goal in every Hull v Brighton predicted XI. No rival keeper mentioned.
+- Set Haaland to 88 mins — Not in City's injury list (Semenyo out; Guéhi and Khusanov doubts). In the predicted XI.
 
-12 web searches. Decided by the gaffer.
+11 web searches. Decided by the gaffer.
 
 ## Transfers
 
@@ -62,71 +79,71 @@ Minutes he overruled:
 | | Player | Price | GW11 | GW12 | GW13 | GW14 | GW15 | GW16 | Total | Weighted |
 |---|---|---|---|---|---|---|---|---|---|---|
 | Out | João Pedro (FWD, CHE) | £7.6m | LEE(h) 0.00 | nfo(a) 0.00 | CRY(h) 0.00 | LIV(h) 0.00 | mci(a) 0.00 | AVL(h) 0.00 | 0.00 | 0.00 |
-| In | N.Jackson (FWD, AVL) | £7.1m | SUN(h) 4.83 | ips(a) 5.22 | EVE(h) 4.61 | CRY(h) 5.08 | cov(a) 4.97 | che(a) 4.54 | 29.25 | 20.33 |
+| In | N.Jackson (FWD, AVL) | £7.2m | SUN(h) 4.74 | ips(a) 5.22 | EVE(h) 4.61 | CRY(h) 5.08 | cov(a) 4.97 | che(a) 4.54 | 29.16 | 20.23 |
 
 Weighted counts later gameweeks for less, as the planner does; it is the total decisions are made on.
 
-N.Jackson over João Pedro: +20.33 weighted (+29.25 plain) over the window. João Pedro has been out with a thigh injury since 23 Oct and is a doubt for Leeds at home, so I have him at 0 points over the window. N.Jackson has no injury news and starts at home to Sunderland (4.83), then away at Ipswich (5.22). That gains +20.33 weighted (+29.25 plain) and costs no hit.
+N.Jackson over João Pedro: +20.23 weighted (+29.16 plain) over the window. João Pedro has a thigh injury with no return date and is at 0 minutes, so he scores 0.00 from Leeds (LEE) onwards. Jackson is confirmed available by Emery and starts with Sunderland (SUN) at home for 4.74, then Ipswich (IPS) away for 5.22. That is +20.23 weighted (+29.16 plain), and buying now beats his price rise.
 
 ## Your squad
 
 | | Player | Price | GW11 | GW12 | GW13 | GW14 | GW15 | GW16 | Total | Weighted |
 |---|---|---|---|---|---|---|---|---|---|---|
 | XI | Tzolakis (GKP, HUL) | £4.7m | BHA(h) 4.19 | cry(a) 4.61 | NFO(h) 4.75 | bou(a) 4.08 | TOT(h) 4.75 | mci(a) 3.64 | 26.02 | 18.14 |
-| XI | Gabriel (DEF, ARS) | £8.1m | new(a) 5.19 | MCI(h) 4.96 | bre(a) 5.05 | tot(a) 5.45 | BOU(h) 5.49 | MUN(h) 5.54 | 31.68 | 21.71 |
-| XI | Konsa (DEF, ARS) | £4.9m | new(a) 4.97 | MCI(h) 4.77 | bre(a) 4.86 | tot(a) 5.23 | BOU(h) 5.25 | MUN(h) 5.27 | 30.35 | 20.84 |
-| XI | Vuskovic (DEF, BHA) | £5.3m | hul(a) 4.67 | NEW(h) 4.81 | bou(a) 4.24 | nfo(a) 4.56 | EVE(h) 5.08 | IPS(h) 5.24 | 28.60 | 19.59 |
-| XI | Tavernier (MID, BOU) | £6.7m | NFO(h) 5.26 | ful(a) 5.00 | BHA(h) 5.06 | HUL(h) 5.24 | ars(a) 4.61 | COV(h) 5.86 | 31.03 | 21.40 |
-| XI | Mbeumo (MID, MUN) | £7.9m | liv(a) 4.42 | BRE(h) 4.96 | new(a) 4.74 | COV(h) 5.65 | cry(a) 4.99 | ars(a) 4.17 | 28.93 | 19.99 |
+| XI | Gabriel (DEF, ARS) | £8.1m | new(a) 5.18 | MCI(h) 4.96 | bre(a) 5.04 | tot(a) 5.45 | BOU(h) 5.49 | MUN(h) 5.54 | 31.66 | 21.71 |
+| XI | Konsa (DEF, ARS) | £4.9m | new(a) 4.09 | MCI(h) 4.77 | bre(a) 4.86 | tot(a) 5.23 | BOU(h) 5.25 | MUN(h) 5.27 | 29.47 | 19.95 |
+| XI | Vuskovic (DEF, BHA) | £5.3m | hul(a) 4.66 | NEW(h) 4.81 | bou(a) 4.24 | nfo(a) 4.56 | EVE(h) 5.08 | IPS(h) 5.24 | 28.59 | 19.59 |
+| XI | Tavernier (MID, BOU) | £6.7m | NFO(h) 5.35 | ful(a) 5.00 | BHA(h) 5.06 | HUL(h) 5.24 | ars(a) 4.61 | COV(h) 5.86 | 31.12 | 21.49 |
+| XI | Mbeumo (MID, MUN) | £7.9m | liv(a) 4.43 | BRE(h) 4.96 | new(a) 4.74 | COV(h) 5.65 | cry(a) 4.99 | ars(a) 4.17 | 28.94 | 19.99 |
 | XI | Groß (MID, BHA) | £6.3m | hul(a) 4.54 | NEW(h) 4.95 | bou(a) 4.54 | nfo(a) 4.55 | EVE(h) 4.78 | IPS(h) 5.30 | 28.66 | 19.67 |
-| XI | Rice (MID, ARS) | £7.5m | new(a) 4.35 | MCI(h) 4.24 | bre(a) 4.27 | tot(a) 4.41 | BOU(h) 4.47 | MUN(h) 4.55 | 26.29 | 18.10 |
-| XI | Haaland (FWD, MCI) | £15.8m | FUL(h) 5.78 | ars(a) 4.91 | LEE(h) 5.63 | bre(a) 5.38 | CHE(h) 5.89 | HUL(h) 5.63 | 33.22 | 22.90 |
-| XI | N.Jackson (FWD, AVL) | £7.1m | SUN(h) 4.83 | ips(a) 5.22 | EVE(h) 4.61 | CRY(h) 5.08 | cov(a) 4.97 | che(a) 4.54 | 29.25 | 20.33 |
-| XI | Calvert-Lewin (FWD, LEE) | £6.0m | che(a) 4.40 | COV(h) 5.17 | mci(a) 4.08 | IPS(h) 5.17 | liv(a) 4.25 | FUL(h) 4.62 | 27.69 | 19.19 |
+| XI | Rice (MID, ARS) | £7.5m | new(a) 4.54 | MCI(h) 4.24 | bre(a) 4.27 | tot(a) 4.41 | BOU(h) 4.47 | MUN(h) 4.55 | 26.48 | 18.30 |
+| XI | Haaland (FWD, MCI) | £15.8m | FUL(h) 5.79 | ars(a) 4.91 | LEE(h) 5.63 | bre(a) 5.38 | CHE(h) 5.89 | HUL(h) 5.63 | 33.23 | 22.91 |
+| XI | N.Jackson (FWD, AVL) | £7.2m | SUN(h) 4.74 | ips(a) 5.22 | EVE(h) 4.61 | CRY(h) 5.08 | cov(a) 4.97 | che(a) 4.54 | 29.16 | 20.23 |
+| XI | Calvert-Lewin (FWD, LEE) | £6.0m | che(a) 4.37 | COV(h) 5.17 | mci(a) 4.08 | IPS(h) 5.17 | liv(a) 4.25 | FUL(h) 4.62 | 27.66 | 19.16 |
 | Bench 1 | Verbruggen (GKP, BHA) | £4.7m | hul(a) 4.14 | NEW(h) 4.09 | bou(a) 3.68 | nfo(a) 4.02 | EVE(h) 4.47 | IPS(h) 4.39 | 24.79 | 17.02 |
-| Bench 2 | Muharemović (DEF, LEE) | £5.1m | che(a) 3.91 | COV(h) 4.91 | mci(a) 3.49 | IPS(h) 4.90 | liv(a) 3.73 | FUL(h) 4.84 | 25.78 | 17.72 |
-| Bench 3 | Lewis-Potter (MID, BRE) | £5.5m | EVE(h) 3.42 | mun(a) 3.31 | ARS(h) 3.12 | MCI(h) 3.22 | ful(a) 3.30 | NEW(h) 3.51 | 19.88 | 13.75 |
-| Bench 4 | Guéhi (DEF, MCI) | £6.0m | FUL(h) 0.61 | ars(a) 1.92 | LEE(h) 2.44 | bre(a) 2.07 | CHE(h) 2.26 | HUL(h) 2.46 | 11.76 | 7.55 |
+| Bench 2 | Muharemović (DEF, LEE) | £5.1m | che(a) 3.91 | COV(h) 4.91 | mci(a) 3.49 | IPS(h) 4.90 | liv(a) 3.73 | FUL(h) 4.84 | 25.78 | 17.71 |
+| Bench 3 | Guéhi (DEF, MCI) | £6.0m | FUL(h) 3.67 | ars(a) 1.92 | LEE(h) 2.44 | bre(a) 2.07 | CHE(h) 2.26 | HUL(h) 2.46 | 14.82 | 10.61 |
+| Bench 4 | Lewis-Potter (MID, BRE) | £5.5m | EVE(h) 3.42 | mun(a) 3.31 | ARS(h) 3.12 | MCI(h) 3.22 | ful(a) 3.30 | NEW(h) 3.51 | 19.88 | 13.75 |
 
 Weighted counts later gameweeks for less, as the planner does; it is the total decisions are made on.
 
 ## Captain and vice
 
-- **Captain: Haaland** (33.22 over the window) — I gave Haaland the armband on his total over the window: 33.22, ahead of Tavernier on 31.03 and Mbeumo on 28.93. His first game is Man City at home to Fulham, worth 5.78, which is his second-best gameweek of the six. Predicted XIs have him starting after the international break. N.Jackson is vice-captain for Aston Villa at home to Sunderland.
-- **Vice: N.Jackson** (29.25 over the window)
-- Rivals (by total xP over the window): Tavernier (31.03), Mbeumo (28.93)
+- **Captain: Haaland** (33.23 over the window) — Haaland got the armband on his window total of 33.23, ahead of Tavernier on 31.12 and Mbeumo on 28.94. The game that decided it is Fulham (FUL) at home in GW11, where he has 5.79, and he is not on City's injury list. Jackson is vice.
+- **Vice: N.Jackson** (29.16 over the window)
+- Rivals (by total xP over the window): Tavernier (31.12), Mbeumo (28.94)
 
 ## Transfers skipped
 
 | Player | Instead of | Gap (weighted) | Price | Why not | Note |
 |---|---|---|---|---|---|
-| Trafford | Verbruggen | +1.68 | +0.4m | the plan does better without him | Trafford would gain +1.68 weighted over Verbruggen for 0.4m more, but the plan scores better without making that move. |
-| Raya | Verbruggen | +1.50 | +1.6m | unaffordable | Raya would gain +1.50 weighted over Verbruggen, but he costs 1.6m more and we cannot afford him. |
-| Suzuki | Verbruggen | +0.76 | +0.4m | would sit on the bench | Suzuki would gain +0.76 weighted over Verbruggen, but he would sit on the bench. |
-| De Cuyper | Guéhi | +11.80 | -0.5m | club limit | De Cuyper would gain +11.80 weighted over Guéhi, but buying him breaks the club limit. |
-| Van Hecke | Guéhi | +11.39 | -0.9m | would sit on the bench | Van Hecke would gain +11.39 weighted over Guéhi, but he would sit on the bench, and I had not checked Spurs' news. |
-| Silva | Guéhi | +11.24 | -0.9m | would sit on the bench | Silva would gain +11.24 weighted over Guéhi, but he would sit on the bench. |
-| Ødegaard | Lewis-Potter | +6.15 | +1.2m | unaffordable | Ødegaard would gain +6.15 weighted over Lewis-Potter, but he costs 1.2m more and we cannot afford him this week. The path plans him for later. |
-| E.Le Fée | Lewis-Potter | +5.06 | +0.2m | the plan does better without him | Le Fée would gain +5.06 weighted over Lewis-Potter, but the plan scores better without him this week. He is lined up for a later free transfer. |
-| Dewsbury-Hall | Lewis-Potter | +4.95 | +1.2m | unaffordable | Dewsbury-Hall would gain +4.95 weighted over Lewis-Potter, but he costs 1.2m more and we cannot afford him. |
-| Barry | João Pedro | +19.76 | -1.8m | the plan does better without him | Barry would gain +19.76 weighted as João Pedro's replacement, but that falls short of Jackson's +20.33, and the plan scores better without him. |
-| Evanilson | João Pedro | +18.25 | -1.0m | would sit on the bench | Evanilson would gain +18.25 weighted over João Pedro, but he would sit on the bench. |
-| Isak | João Pedro | +16.31 | +1.8m | unaffordable | Isak would gain +16.31 weighted over João Pedro, but he costs 1.8m more and we cannot afford him. |
+| Trafford | Verbruggen | +1.68 | +0.4m | the plan does better without him | Trafford is +1.68 weighted over Verbruggen for £0.4m more, but the plan does better without him. |
+| Raya | Verbruggen | +1.50 | +1.6m | unaffordable | Raya is +1.50 weighted over Verbruggen but costs £1.6m more, which is unaffordable. |
+| Suzuki | Verbruggen | +0.75 | +0.5m | would sit on the bench | Suzuki is only +0.75 weighted over Verbruggen and would sit on the bench. |
+| De Cuyper | Guéhi | +8.74 | -0.5m | club limit | De Cuyper is +8.74 weighted over Guéhi, but Brighton already supply Groß, Vušković and Verbruggen, so the club limit blocks him. |
+| Van Hecke | Guéhi | +8.33 | -0.9m | would sit on the bench | Van Hecke is +8.33 weighted over Guéhi but would sit on the bench. Spurs team news was also unchecked. |
+| Silva | Guéhi | +8.18 | -0.9m | would sit on the bench | Silva is +8.18 weighted over Guéhi but would sit on the bench, and Guéhi's fitness news is improving. |
+| Ødegaard | Lewis-Potter | +6.15 | +1.2m | unaffordable | Ødegaard is +6.15 weighted over Lewis-Potter but costs £1.2m more, which is unaffordable. |
+| E.Le Fée | Lewis-Potter | +5.06 | +0.2m | the plan does better without him | Le Fée is +5.06 weighted over Lewis-Potter, a bench player, and the plan does better without him. |
+| Dewsbury-Hall | Lewis-Potter | +4.95 | +1.2m | unaffordable | Dewsbury-Hall is +4.95 weighted over Lewis-Potter but costs £1.2m more, which is unaffordable. |
+| Barry | João Pedro | +19.76 | -1.8m | the plan does better without him | Barry would replace João Pedro for +19.76 weighted, but Jackson's +20.23 is higher, so the plan does better without him. |
+| Evanilson | João Pedro | +18.25 | -1.0m | would sit on the bench | Evanilson is +18.25 weighted over João Pedro but would sit on the bench. |
+| Isak | João Pedro | +16.31 | +1.8m | unaffordable | Isak is +16.31 weighted over João Pedro but costs £1.8m more, which is unaffordable. |
 
 ## The options weighed
 
 | Plan | In | Out | Hits | xP | Net | |
 |---|---|---|---|---|---|---|
-| 0 | N.Jackson | João Pedro | 0 | 254.56 | 255.81 | chosen |
-| 1 | none | none | 0 | 253.40 | 254.64 |  |
-| 2 | Van Hecke, N.Jackson | João Pedro, Guéhi | 1 | 257.49 | 253.23 |  |
-| 3 | Ødegaard, Van Hecke, N.Jackson | Rice, João Pedro, Guéhi | 2 | 257.77 | 249.99 |  |
-| 4 | Van Hecke | Guéhi | 0 | 255.50 | 255.79 | re-solved |
-| 5 | none | none | 0 | 253.25 | 254.50 | re-solved |
-| 6 | Van Hecke, N.Jackson | João Pedro, Guéhi | 1 | 257.49 | 253.23 | re-solved |
-| 7 | Ødegaard, Van Hecke, N.Jackson | Rice, João Pedro, Guéhi | 2 | 257.77 | 249.99 | re-solved |
+| 0 | N.Jackson | João Pedro | 0 | 254.55 | 255.80 | chosen |
+| 1 | none | none | 0 | 253.39 | 254.64 |  |
+| 2 | Van Hecke, N.Jackson | João Pedro, Guéhi | 1 | 257.48 | 253.22 |  |
+| 3 | Ødegaard, Van Hecke, N.Jackson | Rice, João Pedro, Guéhi | 2 | 257.76 | 249.98 |  |
+| 4 | Van Hecke | Guéhi | 0 | 254.88 | 255.18 | re-solved |
+| 5 | none | none | 0 | 252.92 | 254.17 | re-solved |
+| 6 | Van Hecke, N.Jackson | João Pedro, Guéhi | 1 | 256.97 | 252.71 | re-solved |
+| 7 | Ødegaard, Van Hecke, N.Jackson | Rice, João Pedro, Guéhi | 2 | 257.09 | 249.32 | re-solved |
 
-Plan 0 nets 255.81. Plan 4 nets 255.79, but it sells Guéhi, who is only doubtful and sits on the bench, and buys Van Hecke, whom I had not checked. Plan 0 removes João Pedro, who is certainly out, and buys Jackson, whom I did check. Every path buys Jackson next week anyway, and his price is rising. Rolling the transfer nets 1.2 less. Plans 6 and 7 take hits and net only 253.23 and 249.99.
+Plan 0 nets 255.80. The re-solved plan 4 nets 255.18 by selling Guéhi for Van Hecke, but Spurs team news was unchecked and Guéhi's fitness news is improving, so this is the wrong week to sell a City starter at a loss. Rolling (plan 5, 254.17) leaves a player at 0% in the squad. Plans 6 (252.71) and 7 (249.32) take hits for marginal moves.
 
 ## The road ahead
 
@@ -143,7 +160,7 @@ Points each chip would add this week:
 - Bench Boost: +10.03
 - Free Hit: +4.84
 - Triple Captain: +5.78
-- Wildcard (over the window): -21.10
+- Wildcard (over the window): -21.09
 
 Calendar:
 - Triple Captain (GW1–19): saved for GW19, worth +6.1 there; this week's bar 6.8

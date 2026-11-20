@@ -20,21 +20,21 @@
   },
   "13": {
     "category": "nailed",
-    "checked_at": "2026-11-06T00:35:03.438174+00:00",
-    "expected_minutes": 86.0,
+    "checked_at": "2026-11-20T17:35:03.507492+00:00",
+    "expected_minutes": 87.0,
     "fpl": {
       "chance_of_playing_next_round": 100,
       "news": "",
       "news_added": "2026-10-28T00:00:08.477333Z",
       "status": "a"
     },
-    "gw": 10,
-    "note": "Carried from earlier run: nailed starter.",
+    "gw": 11,
+    "note": "With Zubimendi out for a few weeks with a hamstring injury, Rice is certain to start in midfield. Predicted XI.",
     "player_id": 13,
-    "quote_date": "2026-11-01",
+    "quote_date": "2026-11-20",
     "return_gw": null,
     "run": "deadline",
-    "source": "earlier run",
+    "source": "AOL/Standard Arsenal preview",
     "tier": 2
   },
   "165": {
@@ -56,6 +56,25 @@
     "source": "Sports Mole / Yorkshire Evening Post Chelsea injury lists",
     "tier": 2
   },
+  "166": {
+    "category": "nailed",
+    "checked_at": "2026-11-20T17:35:03.507492+00:00",
+    "expected_minutes": 85.0,
+    "fpl": {
+      "chance_of_playing_next_round": null,
+      "news": "",
+      "news_added": null,
+      "status": "a"
+    },
+    "gw": 11,
+    "note": "Emery's Friday presser: only Cash (concussion), Onana and Ruggeri out, 'the other players, they are ready'. Jackson is available. A small rotation risk with Galatasaray in the Champions League on Tuesday, though Emery said the Premier League is the priority.",
+    "player_id": 166,
+    "quote_date": "2026-11-20",
+    "return_gw": null,
+    "run": "deadline",
+    "source": "avfc.co.uk pre-match team news, 20 Nov",
+    "tier": 1
+  },
   "173": {
     "category": "doubt",
     "checked_at": "2026-10-30T17:35:03.267078+00:00",
@@ -76,9 +95,9 @@
     "tier": 1
   },
   "31": {
-    "category": "nailed",
-    "checked_at": "2026-11-09T18:35:03.362480+00:00",
-    "expected_minutes": 90.0,
+    "category": "rotation",
+    "checked_at": "2026-11-20T17:35:03.507492+00:00",
+    "expected_minutes": 70.0,
     "fpl": {
       "chance_of_playing_next_round": 100,
       "news": "",
@@ -86,18 +105,18 @@
       "status": "a"
     },
     "gw": 11,
-    "note": "Knee knock from Slavia game cleared by Arteta (06 Nov, arsenal.com); started v Hull on 07 Nov. Fit and nailed.",
+    "note": "Predicted to start, but Arteta confirmed Saliba is fit, and the Standard/AOL preview calls centre-back 'one big decision'. Konsa is the man most at risk.",
     "player_id": 31,
-    "quote_date": "2026-11-07",
+    "quote_date": "2026-11-20",
     "return_gw": null,
-    "run": "early",
-    "source": "arsenal.com / Arsenal v Hull team news",
-    "tier": 1
+    "run": "deadline",
+    "source": "AOL/Standard Arsenal XI preview, ysscores Arteta presser 20 Nov",
+    "tier": 2
   },
   "346": {
     "category": "nailed",
-    "checked_at": "2026-11-09T18:35:03.362480+00:00",
-    "expected_minutes": 89.0,
+    "checked_at": "2026-11-20T17:35:03.507492+00:00",
+    "expected_minutes": 88.0,
     "fpl": {
       "chance_of_playing_next_round": 100,
       "news": "",
@@ -105,36 +124,36 @@
       "status": "a"
     },
     "gw": 11,
-    "note": "Foot problem cleared; started for Leeds v Spurs on 07 Nov after Farke said he was 'carefully optimistic'.",
+    "note": "Leeds official site and Farke: Calvert-Lewin came back from England duty fully fit and is available for Chelsea.",
     "player_id": 346,
-    "quote_date": "2026-11-07",
+    "quote_date": "2026-11-20",
     "return_gw": null,
-    "run": "early",
-    "source": "Leeds v Spurs team news (FFS-style live page)",
-    "tier": 2
+    "run": "deadline",
+    "source": "leedsunited.com preview; Goal",
+    "tier": 1
   },
   "388": {
     "category": "doubt",
-    "checked_at": "2026-11-18T23:35:03.373153+00:00",
-    "expected_minutes": 10.0,
+    "checked_at": "2026-11-20T17:35:03.507492+00:00",
+    "expected_minutes": 60.0,
     "fpl": {
       "chance_of_playing_next_round": 75,
-      "news": "Unspecified injury - 75% chance of playing",
+      "news": "Hip injury - 75% chance of playing",
       "news_added": "2026-11-07T21:30:08.741792Z",
       "status": "d"
     },
     "gw": 11,
-    "note": "Gu\u00e9hi was taken off in the defeat at Forest with a hip/groin problem and pulled out of the England squad because of it. Reports this week (premierleaguenewsnow, LiveScore, RotoWire) call him a major doubt for Fulham. He is unlikely to start.",
+    "note": "Withdrew from England with a hip problem. Sports Mole (20 Nov) says he trained Thursday and is set to be available for Fulham, but its team-news page still lists him as doubtful. Raised from 40 to 60, not to 90, because a quote that he will start is truncated and unclear.",
     "player_id": 388,
-    "quote_date": "2026-11-13",
+    "quote_date": "2026-11-20",
     "return_gw": null,
-    "run": "scout",
-    "source": "thefalse9 13 Nov (England withdrawal); premierleaguenewsnow / LiveScore preview 18 Nov",
+    "run": "deadline",
+    "source": "Sports Mole Man City injury news, 20 Nov",
     "tier": 2
   },
   "4": {
     "category": "nailed",
-    "checked_at": "2026-11-04T06:35:03.985589+00:00",
+    "checked_at": "2026-11-20T17:35:03.507492+00:00",
     "expected_minutes": 90.0,
     "fpl": {
       "chance_of_playing_next_round": null,
@@ -142,56 +161,56 @@
       "news_added": null,
       "status": "a"
     },
-    "gw": 10,
-    "note": "Started at Anfield on 1 Nov in a clean sheet and is ever-present.",
+    "gw": 11,
+    "note": "Arteta at the presser: Gabriel 'returned in good condition'. Predicted to start.",
     "player_id": 4,
-    "quote_date": "2026-11-01",
+    "quote_date": "2026-11-20",
     "return_gw": null,
-    "run": "scout",
-    "source": "Yahoo Sports Liverpool 0-1 Arsenal player ratings",
-    "tier": 2
+    "run": "deadline",
+    "source": "Arteta pre-Newcastle presser",
+    "tier": 1
   },
   "411": {
     "category": "nailed",
-    "checked_at": "2026-10-30T17:35:03.267078+00:00",
-    "expected_minutes": 85.0,
+    "checked_at": "2026-11-20T17:35:03.507492+00:00",
+    "expected_minutes": 88.0,
     "fpl": {
       "chance_of_playing_next_round": 100,
       "news": "",
       "news_added": "2026-10-19T13:00:10.543876Z",
       "status": "a"
     },
-    "gw": 9,
-    "note": "Fresh entry from earlier run: nailed; rested from Wednesday's Carabao Cup tie v Brighton (given three days off) and every predicted XI (Sports Mole, Khel Now, HardTackle, 101GG on 30 Oct) has him starting.",
+    "gw": 11,
+    "note": "Not in City's injury list (Semenyo out; Gu\u00e9hi and Khusanov doubts). In the predicted XI.",
     "player_id": 411,
-    "quote_date": "2026-10-27",
+    "quote_date": "2026-11-20",
     "return_gw": null,
     "run": "deadline",
-    "source": "Earlier run; corroborated by 30 Oct predicted XIs",
+    "source": "Sports Mole Man City v Fulham team news",
     "tier": 2
   },
   "572": {
-    "category": "rotation",
-    "checked_at": "2026-11-06T00:35:03.438174+00:00",
-    "expected_minutes": 85.0,
+    "category": "nailed",
+    "checked_at": "2026-11-20T17:35:03.507492+00:00",
+    "expected_minutes": 90.0,
     "fpl": {
       "chance_of_playing_next_round": null,
       "news": "",
       "news_added": null,
       "status": "a"
     },
-    "gw": 10,
-    "note": "Predicted to start v Arsenal; Butland could return to the squad after arm injury but is still building fitness.",
+    "gw": 11,
+    "note": "Named in goal in every Hull v Brighton predicted XI. No rival keeper mentioned.",
     "player_id": 572,
-    "quote_date": "2026-11-06",
+    "quote_date": "2026-11-20",
     "return_gw": null,
     "run": "deadline",
-    "source": "Sports Mole predicted lineup",
+    "source": "Sports Mole / Soccernet previews",
     "tier": 3
   },
   "68": {
     "category": "nailed",
-    "checked_at": "2026-11-06T00:35:03.438174+00:00",
+    "checked_at": "2026-11-20T17:35:03.507492+00:00",
     "expected_minutes": 85.0,
     "fpl": {
       "chance_of_playing_next_round": null,
@@ -199,13 +218,13 @@
       "news_added": null,
       "status": "a"
     },
-    "gw": 10,
-    "note": "Carried from earlier run: nailed starter.",
+    "gw": 11,
+    "note": "Rose: all internationals came back healthy and 'everyone is fit'. Tavernier is in the predicted XI.",
     "player_id": 68,
-    "quote_date": "2026-10-31",
+    "quote_date": "2026-11-19",
     "return_gw": null,
     "run": "deadline",
-    "source": "earlier run",
+    "source": "thefalse9 / Sports Mole BOU v NFO team news",
     "tier": 1
   },
   "8": {
