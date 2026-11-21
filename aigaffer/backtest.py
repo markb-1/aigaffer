@@ -38,16 +38,38 @@ over fast enough for a peek to flatter it outright. So the level of rho is
 optimistic and should not be read as a forecast of live performance: what the
 harness is good for is the sign, the trend from week to week, and catching a
 model that has stopped ranking better than chance.
+
+**The team-strength fit is graded on its own** (:func:`strength_eval`), on
+matches rather than players, because there it can be done honestly. A
+rolling origin: every matchday is forecast from a fit on the results dated
+strictly before it, so a day's matches never see each other, and a lag
+moves the fit back further to ask the question production asks of a fit
+made at the deadline and read weeks later. The score is the Poisson
+log-likelihood of the goals that went in, with the Brier and ranked
+probability scores on home, draw and away, and the Brier score on the clean
+sheets, which is what keepers and defenders are paid on. Every setting is
+set against the current one by a paired bootstrap that resamples whole
+matchdays, and again whole weeks, because a weekend's matches share a fit
+and their errors with it.
 """
 
+from bisect import bisect_left
+from collections import Counter
 from dataclasses import dataclass
+from datetime import date, timedelta
 from itertools import groupby
-from math import sqrt
+from math import ceil, exp, floor, lgamma, log, sqrt
+from random import Random
 
 from aigaffer.data.fpl_api import FplClient
 from aigaffer.data.models import Bootstrap, Fixture, GwHistory
 from aigaffer.model.minutes import expected_minutes
-from aigaffer.model.strength import TeamStrengths, build_team_strengths
+from aigaffer.model.strength import (
+    MatchResult,
+    TeamStrengths,
+    build_team_strengths,
+    fit_team_strengths,
+)
 from aigaffer.model.xp import project_all
 from aigaffer.orchestrator import history_pool
 
@@ -57,6 +79,28 @@ HIT_POINTS = 5
 
 # A sanity figure, not a measurement: three decimals is more than it can bear.
 PLACES = 3
+
+# The strength grid: half-lives of about one, two, three, four, six, nine,
+# twelve and eighteen months, in days, crossed with the pseudo-match anchor.
+HALF_LIVES = (30, 61, 91, 122, 183, 274, 365, 548)
+PSEUDO_GRID = (3, 6, 10)
+
+# The first matches of a season, by count: twelve rounds' worth, which is
+# where how much last season counts matters most.
+EARLY_MATCHES = 120
+
+# How far back a fit is moved to stand in for production's, made at the
+# deadline and read for up to six gameweeks: about four.
+LAG_DAYS = 28
+
+# Goals per side on the scoreline grid. The mass past fifteen is nothing at
+# any rate a league produces; what is there is renormalised away.
+GOAL_CAP = 15
+
+# The paired bootstrap: draws, and a fixed seed so a report reads the same
+# every time it is run on the same results.
+BOOTSTRAP_DRAWS = 2000
+BOOTSTRAP_SEED = 2026
 
 
 @dataclass(frozen=True)
@@ -211,3 +255,371 @@ def _pearson(xs: list[float], ys: list[float]) -> float:
 def _deviations(values: list[float]) -> list[float]:
     mean = sum(values) / len(values)
     return [value - mean for value in values]
+
+
+# --- the team-strength fit, graded on matches ----------------------------------
+
+
+@dataclass(frozen=True)
+class StrengthSetting:
+    """One cell of the grid: the decay as a half-life, and the anchor."""
+
+    half_life_days: int
+    pseudo_matches: float
+
+    @property
+    def xi(self) -> float:
+        return log(2) / self.half_life_days
+
+    def label(self) -> str:
+        return f"{self.half_life_days}d p{self.pseudo_matches:g}"
+
+
+# The fit as it ships: a half-life of a year (XI_PER_DAY is ln2/365 to two
+# significant figures) and six pseudo-matches.
+CURRENT = StrengthSetting(365, 6)
+
+
+@dataclass(frozen=True)
+class MatchScore:
+    """One match forecast and scored. ``promoted`` is ``"tilted"`` when a
+    side had never been seen before the season — the fit anchors it to the
+    promoted record — ``"untilted"`` when a side missed last season but was
+    seen before it, so the fit treats it as known, and empty otherwise."""
+
+    date: str
+    season: int
+    home: int
+    away: int
+    early: bool
+    promoted: str
+    lam_home: float
+    lam_away: float
+    ll: float
+    brier: float
+    rps: float
+    cs: float
+
+
+def season_of(day: str) -> int:
+    """The season a ``YYYY-MM-DD`` falls in, turning in July with the ids."""
+    year, month = int(day[:4]), int(day[5:7])
+    return year if month >= 7 else year - 1
+
+
+def score_match(
+    lam_home: float, lam_away: float, home_goals: int, away_goals: int
+) -> tuple[float, float, float, float]:
+    """``(log-likelihood, Brier, RPS, clean-sheet Brier)`` for one match.
+
+    The log-likelihood is of both teams' goals under independent Poissons:
+    higher is better. Brier and RPS are on home, draw and away from the
+    same Poissons' scoreline grid, RPS taking the outcomes in that order so
+    a draw is a nearer miss than the wrong winner. The clean-sheet Brier is
+    the mean of the two sides', each forecast at ``exp(-λ)`` of the other.
+    Lower is better for all three.
+    """
+    ll = _log_poisson(home_goals, lam_home) + _log_poisson(away_goals, lam_away)
+    home_pmf, away_pmf = _poisson_pmf(lam_home), _poisson_pmf(lam_away)
+    p_home = p_draw = 0.0
+    for i, ph in enumerate(home_pmf):
+        for j, pa in enumerate(away_pmf):
+            if i > j:
+                p_home += ph * pa
+            elif i == j:
+                p_draw += ph * pa
+    total = sum(home_pmf) * sum(away_pmf)
+    p_home, p_draw = p_home / total, p_draw / total
+    p_away = 1.0 - p_home - p_draw
+    o_home = float(home_goals > away_goals)
+    o_draw = float(home_goals == away_goals)
+    o_away = float(home_goals < away_goals)
+    brier = (p_home - o_home) ** 2 + (p_draw - o_draw) ** 2 + (p_away - o_away) ** 2
+    rps = ((p_home - o_home) ** 2 + (p_home + p_draw - o_home - o_draw) ** 2) / 2
+    cs = (
+        (exp(-lam_away) - float(away_goals == 0)) ** 2
+        + (exp(-lam_home) - float(home_goals == 0)) ** 2
+    ) / 2
+    return ll, brier, rps, cs
+
+
+def rolling_origin(
+    results: list[MatchResult],
+    setting: StrengthSetting,
+    *,
+    lag_days: int = 0,
+    teams: dict[int, set[int]] | None = None,
+) -> list[MatchScore]:
+    """Forecast and score every match of every season that has one before it.
+
+    Each matchday ``d`` is forecast from a fit on the results dated before
+    ``d - lag_days``, dated at that day — with no lag, strictly before the
+    day itself, so a day's matches never see each other. The fit is given
+    the scored season's teams, as production gives it the live twenty, so a
+    promoted side has its tilted anchor on its first day rather than no
+    rating. ``teams`` overrides that set per season (the live one is the
+    bootstrap's); otherwise it is the codes in the season's own rows.
+
+    Results are matched by club ``code``, so seasons join across the July
+    id reset; the caller's live rows must already carry codes
+    (:func:`~aigaffer.model.strength.live_results`).
+    """
+    ordered = sorted(results, key=lambda m: m.date)
+    dates = [m.date for m in ordered]
+    by_season: dict[int, list[MatchResult]] = {}
+    for m in ordered:
+        by_season.setdefault(season_of(m.date), []).append(m)
+    seasons = sorted(by_season)
+    season_teams = {
+        season: {c for m in rows for c in (m.home_code, m.away_code)}
+        for season, rows in by_season.items()
+    }
+    season_teams.update(teams or {})
+
+    scores = []
+    for season in seasons[1:]:
+        rows = by_season[season]
+        last = {c for m in by_season.get(season - 1, []) for c in (m.home_code, m.away_code)}
+        before = {
+            c
+            for earlier in seasons
+            if earlier < season
+            for m in by_season[earlier]
+            for c in (m.home_code, m.away_code)
+        }
+        early = _early_days(rows)
+        for day, group in groupby(rows, key=lambda m: m.date):
+            cutoff = date.fromisoformat(day) - timedelta(days=lag_days)
+            history = ordered[: bisect_left(dates, cutoff.isoformat())]
+            fit = fit_team_strengths(
+                history,
+                season_teams[season],
+                cutoff,
+                xi_per_day=setting.xi,
+                pseudo_matches=setting.pseudo_matches,
+            )
+            for m in group:
+                lam_home = exp(
+                    fit.mu + fit.attack[m.home_code] + fit.defence[m.away_code] + fit.home
+                )
+                lam_away = exp(fit.mu + fit.attack[m.away_code] + fit.defence[m.home_code])
+                sides = (m.home_code, m.away_code)
+                if any(c not in before for c in sides):
+                    promoted = "tilted"
+                elif any(c not in last for c in sides):
+                    promoted = "untilted"
+                else:
+                    promoted = ""
+                scores.append(
+                    MatchScore(
+                        day, season, m.home_code, m.away_code, day in early, promoted,
+                        lam_home, lam_away,
+                        *score_match(lam_home, lam_away, m.home_goals, m.away_goals),
+                    )
+                )
+    return scores
+
+
+def summarise(scores: list[MatchScore]) -> dict[str, dict]:
+    """Mean scores per match, overall and by slice; empty slices left out."""
+    slices = {
+        "all": scores,
+        "early": [s for s in scores if s.early],
+        "late": [s for s in scores if not s.early],
+        **{
+            str(season): [s for s in scores if s.season == season]
+            for season in sorted({s.season for s in scores})
+        },
+        "promoted tilted": [s for s in scores if s.promoted == "tilted"],
+        "promoted untilted": [s for s in scores if s.promoted == "untilted"],
+        "established": [s for s in scores if not s.promoted],
+    }
+    return {
+        name: {
+            "n": len(chosen),
+            "ll": _mean([s.ll for s in chosen]),
+            "brier": _mean([s.brier for s in chosen]),
+            "rps": _mean([s.rps for s in chosen]),
+            "cs": _mean([s.cs for s in chosen]),
+        }
+        for name, chosen in slices.items()
+        if chosen
+    }
+
+
+def paired_bootstrap(
+    a: list[float],
+    b: list[float],
+    blocks: list,
+    draws: int | None = None,
+    seed: int = BOOTSTRAP_SEED,
+) -> tuple[float, float, float]:
+    """``(mean a - b, 2.5th, 97.5th percentile)`` per match, by whole blocks.
+
+    ``a`` and ``b`` score the same matches in the same order and ``blocks``
+    says which matchday (or week) each one belongs to. A draw takes as many
+    blocks as there are, with replacement, and reads the edge as the ratio of
+    summed differences to matches drawn, so a heavy matchday weighs what its
+    matches weigh. Seeded: the same inputs give the same interval.
+    """
+    draws = BOOTSTRAP_DRAWS if draws is None else draws
+    groups: dict = {}
+    for diff, block in zip((x - y for x, y in zip(a, b, strict=True)), blocks, strict=True):
+        groups.setdefault(block, []).append(diff)
+    sums = [(sum(g), len(g)) for g in groups.values()]
+    observed = sum(total for total, _ in sums) / sum(n for _, n in sums)
+    rng = Random(seed)
+    edges = []
+    for _ in range(draws):
+        picked = [sums[rng.randrange(len(sums))] for _ in sums]
+        edges.append(sum(t for t, _ in picked) / sum(n for _, n in picked))
+    edges.sort()
+    lo = edges[floor(0.025 * (draws - 1))]
+    hi = edges[ceil(0.975 * (draws - 1))]
+    return observed, lo, hi
+
+
+def strength_eval(
+    results: list[MatchResult], teams: dict[int, set[int]] | None = None
+) -> dict:
+    """The whole grid, the best cell, and the best set against the current.
+
+    ``compare`` holds what the decision reads: the log-likelihood edge of
+    the best cell over :data:`CURRENT` with intervals by matchday and by ISO
+    week, the clean-sheet Brier edge the same two ways (negative is better),
+    the same log-likelihood edge with every fit lagged :data:`LAG_DAYS`,
+    and the best cell against itself at six pseudo-matches, which says
+    whether the anchor is worth moving at all. Each edge is
+    ``(point, low, high)``.
+    """
+    grid, scored = [], {}
+    cells = [StrengthSetting(h, p) for h in HALF_LIVES for p in PSEUDO_GRID]
+    for cell in dict.fromkeys([*cells, CURRENT]):
+        scored[cell] = rolling_origin(results, cell, teams=teams)
+        if cell in cells:
+            grid.append(
+                {
+                    "half_life": cell.half_life_days,
+                    "pseudo": cell.pseudo_matches,
+                    "setting": cell,
+                    "slices": summarise(scored[cell]),
+                }
+            )
+    best = max(grid, key=lambda row: row["slices"]["all"]["ll"])["setting"]
+    b, c = scored[best], scored[CURRENT]
+    days = [s.date for s in b]
+    weeks = [date.fromisoformat(s.date).isocalendar()[:2] for s in b]
+
+    def edge(metric, left, right, blocks):
+        return paired_bootstrap(
+            [getattr(s, metric) for s in left], [getattr(s, metric) for s in right], blocks
+        )
+
+    lagged_best = rolling_origin(results, best, lag_days=LAG_DAYS, teams=teams)
+    lagged_current = rolling_origin(results, CURRENT, lag_days=LAG_DAYS, teams=teams)
+    anchored = StrengthSetting(best.half_life_days, CURRENT.pseudo_matches)
+    if anchored not in scored:
+        scored[anchored] = rolling_origin(results, anchored, teams=teams)
+    return {
+        "grid": grid,
+        "best": best,
+        "current": CURRENT,
+        "days": len(set(days)),
+        "compare": {
+            "ll_matchday": edge("ll", b, c, days),
+            "ll_week": edge("ll", b, c, weeks),
+            "cs_matchday": edge("cs", b, c, days),
+            "cs_week": edge("cs", b, c, weeks),
+            "ll_lag": edge("ll", lagged_best, lagged_current, days),
+            "lag_slices": (summarise(lagged_best), summarise(lagged_current)),
+            "pseudo": edge("ll", b, scored[anchored], days),
+            "slices": (summarise(b), summarise(c)),
+        },
+    }
+
+
+def render_strength(evaluation: dict) -> str:
+    """The evaluation as a fixed-width table for a terminal."""
+    grid = evaluation["grid"]
+    slices = [
+        name for name in grid[0]["slices"]
+        if name not in ("late",)
+    ]
+    header = f"{'half-life':<20}" + "".join(f"{name[:12]:>13}" for name in slices)
+    lines = [
+        f"Team-strength fit, rolling origin over {evaluation['days']} matchdays."
+        " Mean log-likelihood per match (higher is better):",
+        header,
+    ]
+    for row in grid:
+        cell = row["setting"]
+        label = cell.label() + (" (current)" if cell == evaluation["current"] else "")
+        lines.append(
+            f"{label:<20}"
+            + "".join(
+                f"{row['slices'][name]['ll']:>13.4f}" if name in row["slices"] else f"{'':>13}"
+                for name in slices
+            )
+        )
+    lines += ["", f"{'cell':<20}{'n':>6}{'brier':>9}{'rps':>9}{'cs brier':>10}"]
+    for row in grid:
+        whole = row["slices"]["all"]
+        lines.append(
+            f"{row['setting'].label():<20}{whole['n']:>6}{whole['brier']:>9.4f}"
+            f"{whole['rps']:>9.4f}{whole['cs']:>10.4f}"
+        )
+    best, current, compare = evaluation["best"], evaluation["current"], evaluation["compare"]
+
+    def interval(name):
+        point, lo, hi = compare[name]
+        return f"{point:+.4f} [{lo:+.4f}, {hi:+.4f}]"
+
+    best_slices, current_slices = compare["slices"]
+    lag_best, lag_current = compare["lag_slices"]
+    lines += [
+        "",
+        f"Best {best.label()} against current {current.label()} (best minus current, 95%):",
+        f"  log-likelihood, by matchday   {interval('ll_matchday')}",
+        f"  log-likelihood, by week       {interval('ll_week')}",
+        f"  clean-sheet Brier, by matchday {interval('cs_matchday')}",
+        f"  clean-sheet Brier, by week    {interval('cs_week')}",
+        f"  log-likelihood, {LAG_DAYS}-day lag   {interval('ll_lag')}"
+        f"  (best {lag_best['all']['ll']:.4f}, current {lag_current['all']['ll']:.4f})",
+        f"  {best.half_life_days}d p{best.pseudo_matches:g} against p{current.pseudo_matches:g}"
+        f"   {interval('pseudo')}",
+        "  by slice, log-likelihood:",
+    ]
+    for name, whole in best_slices.items():
+        if name in current_slices:
+            lines.append(
+                f"    {name:<18}{whole['ll'] - current_slices[name]['ll']:+.4f}"
+                f"  (n={whole['n']})"
+            )
+    return "\n".join(lines)
+
+
+def _early_days(rows: list[MatchResult]) -> set[str]:
+    """The season's opening days, the first :data:`EARLY_MATCHES` matches by
+    count. A day the line falls inside goes wherever most of its matches lie:
+    it is early when its middle match is."""
+    early, played = set(), 0
+    for day, count in sorted(Counter(m.date for m in rows).items()):
+        if played + count / 2 < EARLY_MATCHES:
+            early.add(day)
+        played += count
+    return early
+
+
+def _poisson_pmf(lam: float) -> list[float]:
+    pmf = [exp(-lam)]
+    for k in range(1, GOAL_CAP + 1):
+        pmf.append(pmf[-1] * lam / k)
+    return pmf
+
+
+def _log_poisson(k: int, lam: float) -> float:
+    return k * log(lam) - lam - lgamma(k + 1)
+
+
+def _mean(values: list[float]) -> float:
+    return sum(values) / len(values)

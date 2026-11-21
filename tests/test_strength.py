@@ -201,3 +201,75 @@ def test_the_attack_factor_reads_the_opponents_defence_and_the_venue():
     at_home, _ = biased.factors(1, 2, opponent_at_home=False)
     away, _ = biased.factors(1, 2, opponent_at_home=True)
     assert at_home > away, "the venue boost belongs to the attacking side"
+
+
+# --- the knobs the backtest turns ------------------------------------------
+
+
+def two_seasons():
+    """An old season where 1 beats 2, and a recent one where 2 beats 1."""
+    old = [MatchResult("2025-09-01", 1, 2, 3, 0), MatchResult("2025-09-08", 2, 1, 0, 3)]
+    new = [MatchResult("2026-08-20", 1, 2, 0, 2), MatchResult("2026-08-27", 2, 1, 2, 0)]
+    return old + new
+
+
+def test_the_constants_are_the_default_setting():
+    from aigaffer.model.strength import PSEUDO_MATCHES, XI_PER_DAY
+
+    default = fit_team_strengths(two_seasons(), {1, 2}, TODAY)
+    explicit = fit_team_strengths(
+        two_seasons(), {1, 2}, TODAY,
+        xi_per_day=XI_PER_DAY, pseudo_matches=PSEUDO_MATCHES,
+    )
+    assert explicit == default
+
+
+def test_the_constants_are_read_when_the_fit_runs(monkeypatch):
+    # None means the module constant as it stands at call time, so a
+    # patched constant reaches every caller that passes nothing.
+    from aigaffer.model import strength
+
+    default = fit_team_strengths(two_seasons(), {1, 2}, TODAY)
+    monkeypatch.setattr(strength, "XI_PER_DAY", 0.02)
+    assert fit_team_strengths(two_seasons(), {1, 2}, TODAY) != default
+
+
+def test_a_shorter_half_life_believes_the_recent_season_more():
+    slow = fit_team_strengths(two_seasons(), {1, 2}, TODAY, xi_per_day=0.0005)
+    fast = fit_team_strengths(two_seasons(), {1, 2}, TODAY, xi_per_day=0.02)
+    assert fast.attack[2] - fast.attack[1] > slow.attack[2] - slow.attack[1]
+
+
+def test_more_pseudo_matches_pull_the_ratings_to_the_middle():
+    loose = fit_team_strengths(two_seasons(), {1, 2}, TODAY, pseudo_matches=1)
+    tight = fit_team_strengths(two_seasons(), {1, 2}, TODAY, pseudo_matches=20)
+    assert abs(tight.attack[2]) < abs(loose.attack[2])
+
+
+def test_the_live_season_joins_through_code_not_id():
+    # The July id reset: id 1 is code 43 this season. A join on the id
+    # would file the result under somebody else's history.
+    from aigaffer.data.models import Bootstrap, Fixture, Team
+    from aigaffer.model.strength import live_results
+
+    def team(id, code, name):
+        return Team(
+            id=id, name=name, short_name=name[:3].upper(), code=code,
+            strength_attack_home=1, strength_attack_away=1,
+            strength_defence_home=1, strength_defence_away=1,
+            strength_overall_home=1, strength_overall_away=1,
+        )
+
+    bootstrap = Bootstrap(
+        events=[], teams=[team(1, 43, "Alpha"), team(2, 7, "Beta")], elements=[]
+    )
+    fixtures = [
+        Fixture(
+            id=1, event=1, team_h=1, team_a=2, finished=True,
+            kickoff_time="2026-08-25T14:00:00Z", team_h_score=2, team_a_score=1,
+        ),
+        Fixture(id=2, event=2, team_h=2, team_a=1),
+    ]
+    assert live_results(bootstrap, fixtures) == [
+        MatchResult("2026-08-25", 43, 7, 2, 1)
+    ]

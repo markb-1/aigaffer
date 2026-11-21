@@ -154,7 +154,12 @@ class TeamStrengths:
 
 
 def fit_team_strengths(
-    results: list[MatchResult], codes: set[int], as_of: date
+    results: list[MatchResult],
+    codes: set[int],
+    as_of: date,
+    *,
+    xi_per_day: float | None = None,
+    pseudo_matches: float | None = None,
 ) -> TeamStrengths:
     """Fit the league as it stands ``as_of``.
 
@@ -163,9 +168,16 @@ def fit_team_strengths(
     matches carry information about everyone else's ratings) and simply
     never asked about. A code in ``codes`` with no real match anywhere is
     promoted, and anchors to the tilted pseudo-record.
+
+    ``xi_per_day`` and ``pseudo_matches`` are for the backtest that tunes
+    them (:func:`aigaffer.backtest.strength_eval`); the pipeline passes
+    neither and gets :data:`XI_PER_DAY` and :data:`PSEUDO_MATCHES`, read
+    when the fit runs rather than when this function was defined.
     """
+    xi = XI_PER_DAY if xi_per_day is None else xi_per_day
+    pseudo = PSEUDO_MATCHES if pseudo_matches is None else pseudo_matches
     weighted = [
-        (m, exp(-XI_PER_DAY * max(0, (as_of - date.fromisoformat(m.date)).days)))
+        (m, exp(-xi * max(0, (as_of - date.fromisoformat(m.date)).days)))
         for m in results
     ]
     teams = sorted(codes | {m.home_code for m, _ in weighted}
@@ -219,8 +231,8 @@ def fit_team_strengths(
             home_expected += w * lam_h
         for code in teams:
             for_goals, against_goals = anchor[code]
-            scored += PSEUDO_MATCHES * (for_goals + against_goals)
-            total_expected += PSEUDO_MATCHES * (
+            scored += pseudo * (for_goals + against_goals)
+            total_expected += pseudo * (
                 exp(mu + attack[code]) + exp(mu + defence[code])
             )
         if total_expected > 0 and scored > 0:
@@ -243,10 +255,10 @@ def fit_team_strengths(
                     c += w * m.home_goals
                     ce += w * exp(mu + attack[m.home_code] + defence[code] + home)
             for_goals, against_goals = anchor[code]
-            s += PSEUDO_MATCHES * for_goals
-            e += PSEUDO_MATCHES * exp(mu + attack[code])
-            c += PSEUDO_MATCHES * against_goals
-            ce += PSEUDO_MATCHES * exp(mu + defence[code])
+            s += pseudo * for_goals
+            e += pseudo * exp(mu + attack[code])
+            c += pseudo * against_goals
+            ce += pseudo * exp(mu + defence[code])
             if e > 0 and s > 0:
                 attack[code] += log(s / e)
             if ce > 0 and c > 0:
@@ -301,28 +313,8 @@ def build_team_strengths(
     """
     try:
         results = list(load_results() if vendored is None else vendored)
-        codes = {team.id: team.code for team in bootstrap.teams}
-        for fixture in fixtures:
-            home, away = codes.get(fixture.team_h, 0), codes.get(fixture.team_a, 0)
-            if (
-                not fixture.finished
-                or fixture.team_h_score is None
-                or fixture.team_a_score is None
-                or fixture.kickoff_time is None
-                or not home
-                or not away
-            ):
-                continue
-            results.append(
-                MatchResult(
-                    date=fixture.kickoff_time[:10],
-                    home_code=home,
-                    away_code=away,
-                    home_goals=fixture.team_h_score,
-                    away_goals=fixture.team_a_score,
-                )
-            )
-        wanted = {code for code in codes.values() if code}
+        results += live_results(bootstrap, fixtures)
+        wanted = {team.code for team in bootstrap.teams if team.code}
         if not wanted:
             # Not a failure and not worth a line: a bootstrap where no team
             # carries a code is a payload from before the codes were read —
@@ -336,6 +328,40 @@ def build_team_strengths(
             " FPL strength columns stand"
         )
         return None
+
+
+def live_results(bootstrap, fixtures) -> list[MatchResult]:
+    """This season's finished fixtures as results, keyed by club ``code``.
+
+    The join goes through each team's permanent ``code``, never its id,
+    because the ids are reissued every July. A fixture whose teams carry
+    no code is skipped rather than mis-joined, and an unfinished or
+    scoreless fixture never counts. It raises on a payload it cannot read;
+    :func:`build_team_strengths` is the one that turns that into a fallback.
+    """
+    codes = {team.id: team.code for team in bootstrap.teams}
+    results = []
+    for fixture in fixtures:
+        home, away = codes.get(fixture.team_h, 0), codes.get(fixture.team_a, 0)
+        if (
+            not fixture.finished
+            or fixture.team_h_score is None
+            or fixture.team_a_score is None
+            or fixture.kickoff_time is None
+            or not home
+            or not away
+        ):
+            continue
+        results.append(
+            MatchResult(
+                date=fixture.kickoff_time[:10],
+                home_code=home,
+                away_code=away,
+                home_goals=fixture.team_h_score,
+                away_goals=fixture.team_a_score,
+            )
+        )
+    return results
 
 
 def _bounded(factor: float) -> float:
