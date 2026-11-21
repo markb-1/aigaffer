@@ -32,10 +32,13 @@ one around midwinter.
 Thin evidence lands softly, the house way: every team also carries
 :data:`PSEUDO_MATCHES` full-weight matches of league-average scoring
 against a league-average phantom, so three loud fixtures cannot run a
-rating away. A team with no vendored top-flight row — promoted — has
+rating away. A team with no top-flight row at all — promoted — has
 that anchor tilted (:data:`PROMOTED_ATTACK`, :data:`PROMOTED_DEFENCE`):
 scoring under the average and conceding over it, instead of being
-flattered as an average side until the table corrects the compliment.
+flattered as an average side. The tilt lasts only until the side's first
+live result joins the fit: from then on it has a row, and anchors to the
+average like everyone else. A side back after a season or more away still
+has its old rows, and is never tilted at all.
 """
 
 import csv
@@ -47,19 +50,27 @@ from math import exp, log
 
 # The decay, per day: Dixon-Coles' calibrated region, a half-life of
 # about a year. Same fade philosophy as the player priors' discount —
-# August leans on last season, midwinter has displaced it.
+# August leans on last season, midwinter has displaced it. Checked by
+# ``backtest --strength`` in November 2026, forecasting every match of
+# 2025-26 and of 2026-27 so far from the results before it: half-lives
+# from six to eighteen months forecast goals and clean sheets equally
+# well, inside the noise, early season included; three months is worse
+# on clean sheets, and one or two months worse on everything.
 XI_PER_DAY = 0.0019
 
 # The soft anchor, in full-weight pseudo-matches of league-average
 # scoring. Six is the shrinkage constant the player rates use, wearing
 # team colours: enough that a rating needs real evidence to travel,
-# little enough that half a season owns it outright.
+# little enough that half a season owns it outright. The same check
+# found ten no better than six, inside the noise, and three a little
+# worse at forecasting goals.
 PSEUDO_MATCHES = 6
 
 # What a team nobody has seen in the top flight is anchored to: scoring
 # fifteen percent under the league average and conceding fifteen percent
-# over it. First-guess constants, tunable; the decay-weighted live season
-# corrects them within a handful of gameweeks either way.
+# over it. First-guess constants, tunable. They shape only the forecast
+# before the side's first live match: after that it has a row of its
+# own, and the anchor is the league average (see the module docstring).
 PROMOTED_ATTACK = 0.85
 PROMOTED_DEFENCE = 1.15
 
