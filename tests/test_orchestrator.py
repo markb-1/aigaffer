@@ -54,6 +54,7 @@ from aigaffer.orchestrator import (
     PreparedWeek,
     SolveResult,
     DETAILED_SKIPPED,
+    TABLE_SKIPPED,
     REASONS_SKIPPED,
     STANDING_SKIPPED,
     _calendar,
@@ -5571,3 +5572,58 @@ def test_the_chosen_plan_is_found_by_identity_then_by_squad():
     assert _chosen_id(plans, replace(other)) == 7
     with pytest.raises(ValueError):
         _chosen_id(plans, plan([7, 8, 9], 1.0))
+
+
+# --- the league table: built once a run, read by the gaffer and the snapshot --
+
+# GW1's three finished matches, with scores: every club has played once.
+SCORED_FIXTURES = [
+    {**fixture, "team_h_score": goals[0], "team_a_score": goals[1],
+     "kickoff_time": f"2025-08-1{fixture['id']}T14:00:00Z"}
+    if fixture["finished"] else fixture
+    for fixture, goals in zip(
+        PIPELINE_FIXTURES_JSON, [(2, 0), (1, 1), (0, 3), *[(0, 0)] * len(PIPELINE_FIXTURES_JSON)]
+    )
+]
+
+
+def test_a_run_with_results_keeps_the_table_in_its_snapshot(tmp_path):
+    cfg = config(state_dir=tmp_path / "state")
+    run_pipeline(
+        cfg, make_client(pipeline_routes(fixtures=SCORED_FIXTURES)),
+        Store(tmp_path / "aigaffer.db"), "scout",
+    )
+    [snapshot] = load_snapshots(cfg.state_dir, 2)
+
+    rows = snapshot["table"]["rows"]
+    assert len(rows) == len(PIPELINE_BOOTSTRAP_JSON["teams"])
+    assert rows[0]["pos"] == 1 and rows[0]["l5"][0][0] == "W"
+
+
+def test_a_run_with_no_results_keeps_no_table(scout_run):
+    [snapshot] = load_snapshots(scout_run.cfg.state_dir, 2)
+    assert "table" not in snapshot
+
+
+def test_the_gaffer_reads_the_table_the_run_built(monkeypatch, tmp_path):
+    _, _, gaffer = gaffer_run(
+        monkeypatch, tmp_path, decide=decided, routes=pipeline_routes(fixtures=SCORED_FIXTURES)
+    )
+    assert "\n## Table and form\n" in gaffer.consults[0].briefing
+
+
+def test_a_table_that_will_not_build_costs_the_table_and_one_line(monkeypatch, tmp_path, capsys):
+    def broken(*_, **__):
+        raise RuntimeError("a board nobody foresaw")
+
+    monkeypatch.setattr(orchestrator, "league_table", broken)
+    cfg = config(state_dir=tmp_path / "state")
+    report = run_pipeline(
+        cfg, make_client(pipeline_routes(fixtures=SCORED_FIXTURES)),
+        Store(tmp_path / "aigaffer.db"), "scout",
+    )
+
+    assert report.startswith("# AI Gaffer — GW2 scout")
+    assert TABLE_SKIPPED.format(reason="RuntimeError") in capsys.readouterr().out
+    [snapshot] = load_snapshots(cfg.state_dir, 2)
+    assert "table" not in snapshot
