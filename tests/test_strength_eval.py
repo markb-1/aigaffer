@@ -138,7 +138,7 @@ def test_a_promoted_side_scores_on_its_first_day_under_the_tilt(monkeypatch):
     new = season_rows(2026, teams=(105, 101, 102, 103))
     first = rolling_origin(old + new, CURRENT)[0]
     assert first.date == new[0].date
-    assert (first.home, first.promoted) == (105, "tilted")
+    assert (first.home, first.promoted) == (105, "new")
     # The tilt is what set that forecast: untilted, 105 would score more.
     monkeypatch.setattr(strength, "PROMOTED_ATTACK", 1.0)
     untilted = rolling_origin(old + new, CURRENT)[0]
@@ -152,7 +152,7 @@ def test_a_match_between_established_sides_is_not_in_the_promoted_slice():
     assert {s.promoted for s in scores if 105 not in (s.home, s.away)} == {""}
 
 
-def test_a_side_back_after_a_season_away_is_promoted_but_not_tilted():
+def test_a_side_back_after_a_season_away_is_returning_not_new():
     # 104 played in 2024, sat out 2025, and is back in 2026: production
     # has seen it, so it gets no tilt — and the slice must say so.
     rows = (
@@ -161,7 +161,7 @@ def test_a_side_back_after_a_season_away_is_promoted_but_not_tilted():
         + season_rows(2026)
     )
     labels = {s.promoted for s in rolling_origin(rows, CURRENT) if s.season == 2026 and 104 in (s.home, s.away)}
-    assert labels == {"untilted"}
+    assert labels == {"returning"}
 
 
 def test_early_season_is_the_first_matches_by_count():

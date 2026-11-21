@@ -282,10 +282,12 @@ CURRENT = StrengthSetting(365, 6)
 
 @dataclass(frozen=True)
 class MatchScore:
-    """One match forecast and scored. ``promoted`` is ``"tilted"`` when a
-    side had never been seen before the season — the fit anchors it to the
-    promoted record — ``"untilted"`` when a side missed last season but was
-    seen before it, so the fit treats it as known, and empty otherwise."""
+    """One match forecast and scored. ``promoted`` is ``"new"`` when a side
+    had never been seen before the season — new to the history, so the fit
+    tilts its anchor to the promoted record until its first match, and
+    treats it as known after — ``"returning"`` when a side missed last
+    season but was seen before it, so the fit never tilts it at all, and
+    empty otherwise. The label holds for the whole season."""
 
     date: str
     season: int
@@ -405,9 +407,9 @@ def rolling_origin(
                 lam_away = exp(fit.mu + fit.attack[m.away_code] + fit.defence[m.home_code])
                 sides = (m.home_code, m.away_code)
                 if any(c not in before for c in sides):
-                    promoted = "tilted"
+                    promoted = "new"
                 elif any(c not in last for c in sides):
-                    promoted = "untilted"
+                    promoted = "returning"
                 else:
                     promoted = ""
                 scores.append(
@@ -430,8 +432,8 @@ def summarise(scores: list[MatchScore]) -> dict[str, dict]:
             str(season): [s for s in scores if s.season == season]
             for season in sorted({s.season for s in scores})
         },
-        "promoted tilted": [s for s in scores if s.promoted == "tilted"],
-        "promoted untilted": [s for s in scores if s.promoted == "untilted"],
+        "new side": [s for s in scores if s.promoted == "new"],
+        "returning side": [s for s in scores if s.promoted == "returning"],
         "established": [s for s in scores if not s.promoted],
     }
     return {
