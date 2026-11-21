@@ -1467,3 +1467,82 @@ def test_a_club_named_like_a_section_cannot_forge_one_through_the_fixtures():
     )
 
     assert headings(briefing(inputs=inputs)) == HEADINGS[:1] + ["## Fixtures (GW2–GW7)"] + HEADINGS[1:]
+
+
+# ---------------------------------------------------------------------------
+# Table and form: where the clubs stand, beside what the model makes of them.
+# ---------------------------------------------------------------------------
+
+from aigaffer.data.table import league_table  # noqa: E402
+
+# ASH beat CRV and drew at BRW; a fourth club nobody holds lost to BRW.
+RESULTS = [
+    Fixture(id=21, event=1, team_h=ASH, team_a=CRV, kickoff_time="2025-08-16T14:00:00Z",
+            team_h_score=2, team_a_score=0, finished=True),
+    Fixture(id=22, event=1, team_h=BRW, team_a=ASH, kickoff_time="2025-08-17T14:00:00Z",
+            team_h_score=1, team_a_score=1, finished=True),
+    Fixture(id=23, event=1, team_h=BRW, team_a=99, kickoff_time="2025-08-18T14:00:00Z",
+            team_h_score=3, team_a_score=0, finished=True),
+]
+
+
+def table_board() -> Bootstrap:
+    stranger = FIXTURE.teams[0].model_copy(update={"id": 99, "short_name": "ZZZ", "name": "Zed"})
+    return BOOTSTRAP.model_copy(update={"teams": [*FIXTURE.teams, stranger]})
+
+
+def table_briefing(inputs: PipelineInputs | None = None, table=None) -> str:
+    return build_briefing(
+        inputs or pipeline_inputs(), solved(), XP, 1, today=TODAY,
+        table=table if table is not None else league_table(table_board(), RESULTS),
+    )
+
+
+def test_the_table_sits_after_the_situation_and_before_the_squad():
+    found = headings(table_briefing())
+
+    assert found[:3] == [
+        "# AI Gaffer — manager briefing: GW2",
+        "## Table and form",
+        "## Current squad",
+    ]
+
+
+def test_the_table_follows_the_fixtures_it_sanity_checks():
+    inputs = replace(pipeline_inputs(), fixtures=SCHEDULE)
+
+    assert headings(table_briefing(inputs))[1:4] == [
+        "## Fixtures (GW2–GW7)",
+        "## Table and form",
+        "## Current squad",
+    ]
+
+
+def test_the_table_has_a_line_for_every_club_and_flags_ours():
+    rows = [line for line in section(table_briefing(), "Table and form") if line[:1].isdigit()]
+
+    assert [line.split()[1] for line in rows] == ["BRW", "ASH", "CRV", "ZZZ"]
+    flagged = {line.split()[1] for line in rows if "[ours]" in line}
+    assert flagged == {"ASH", "BRW", "CRV"}
+
+
+def test_the_table_says_the_ratings_already_price_the_fixtures_and_no_lever_moves_them():
+    prose = " ".join(section(table_briefing(), "Table and form"))
+
+    assert "already" in prose and "fitted team ratings" in prose
+    assert "There is no lever for team ratings" in prose
+    assert "adjust_players is for a player's minutes" in prose
+
+
+def test_no_table_means_no_section():
+    assert "Table and form" not in briefing()
+    assert headings(briefing()) == HEADINGS
+
+
+def test_the_team_sheet_says_starting_and_benching_are_this_weeks_question():
+    prose = " ".join(
+        line for line in section(briefing(), "Solver XI") if not line.startswith("- ")
+    )
+
+    assert "Who starts and who sits is a GW2 question" in prose
+    assert "The window totals are for transfers." in prose

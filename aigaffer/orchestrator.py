@@ -100,6 +100,7 @@ from aigaffer.config import (
 )
 from aigaffer.data.fpl_api import FplClient
 from aigaffer.data.free_transfers import compute_free_transfers
+from aigaffer.data.table import TeamRow, league_table, table_record
 from aigaffer.data.models import (
     Bootstrap,
     EntrySummary,
@@ -271,6 +272,10 @@ OVERTAKEN = (
 # Said when the detailed report could not be built or written; the run goes
 # on without it, as it does without a ledger it could not write.
 DETAILED_SKIPPED = "detailed: report skipped ({reason})"
+# The league table is context for the gaffer and the question handler, never
+# the week: a table that will not build is a run without it, said once by the
+# exception's class alone.
+TABLE_SKIPPED = "table: league table skipped ({reason})"
 # The transfer cards fall back to plain Out/In bullets when a man moved has no
 # row; the phone shows nothing wrong, so the log says it happened.
 CARDS_SKIPPED = "cards: a moved player has no projected row, so the recommendation printed bullets"
@@ -569,6 +574,9 @@ def run_pipeline(
     )
     prices, strengths = week.prices, week.strengths
     xmins, projections, calendar = week.xmins, week.projections, week.calendar
+    # The league table and form, once a run, beside the fit it shows the
+    # gaffer: the briefing and the snapshot read this one table.
+    table = _league_table(effective, strengths)
     # One clock for the run (news-ledger spec section 6): it judges the ledger,
     # stamps what this run writes into it, and dates the briefing — so a
     # run that spans midnight never refuses a quote the briefing allowed.
@@ -594,6 +602,7 @@ def run_pipeline(
         cfg, effective, solved, projections, xmins, prices, strengths=strengths,
         mode=mode, today=clock.date(), news=news,
         last_week=review_lessons(store, effective.event.id),
+        table=table,
     )
 
     # From here down the week is his, if there was a him: the plan he chose and
@@ -893,6 +902,7 @@ def run_pipeline(
                             free_transfers=effective.free_transfers,
                             selling_prices=prices, executed=executed,
                         ).text(),
+                        table=table,
                     ),
                 )
                 detailed = True
@@ -1797,6 +1807,19 @@ class _Unfitted(Enum):
 _UNFITTED = _Unfitted.UNFITTED
 
 
+def _league_table(
+    inputs: PipelineInputs, strengths: TeamStrengths | None
+) -> list[TeamRow] | None:
+    """The league table and form, with the run's fit beside each club, or
+    None: nothing played yet, or a table that would not build — which says so
+    once, by the exception's class alone, and costs the run nothing else."""
+    try:
+        return league_table(inputs.bootstrap, inputs.fixtures, strengths)
+    except Exception as error:  # context for the gaffer, never the week
+        print(TABLE_SKIPPED.format(reason=type(error).__name__))
+        return None
+
+
 def _strengths(inputs: PipelineInputs, cfg: Config) -> TeamStrengths | None:
     """The fitted team strengths, when the switch is on: the vendored seasons
     plus whatever this one has finished, refit on every run so the ratings
@@ -1982,6 +2005,7 @@ def _consult(
     today: date | None = None,
     news: LedgerView | None = None,
     last_week: LastWeek | None = None,
+    table: list[TeamRow] | None = None,
 ) -> "ManagerDecision | None":
     """Put the week to the manager, and come back with the week to enter.
 
@@ -2090,7 +2114,7 @@ def _consult(
             build_briefing(
                 inputs, solved, projections, inputs.free_transfers,
                 today=today, xmins=xmins, ledger=news, budget=budget,
-                last_week=last_week,
+                last_week=last_week, table=table,
             ),
             resolver,
             today=today,
@@ -2714,6 +2738,7 @@ def _run_snapshot(
     freehit_squad: list[int] | None,
     freehit_xi: list[int] | None,
     do_this: str | None = None,
+    table: list[TeamRow] | None = None,
 ) -> dict:
     """The run as :func:`~aigaffer.detailed.snapshot.build_snapshot` keeps it.
 
@@ -2773,6 +2798,7 @@ def _run_snapshot(
         shortlist=len(solved.plans),
         decay=cfg.decay,
         do_this=do_this,
+        table=None if table is None else table_record(table),
     )
 
 

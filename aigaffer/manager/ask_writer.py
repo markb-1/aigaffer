@@ -55,6 +55,7 @@ from typing import Any
 import anthropic
 
 from aigaffer.config import Config
+from aigaffer.data.table import table_lines
 from aigaffer.detailed.render import moves, name
 from aigaffer.inbox import normalise
 from aigaffer.manager.agent import EFFORT, MAX_RESUMPTIONS, MAX_TOKENS, _cached, _result, _rolling, _text
@@ -90,7 +91,13 @@ SYSTEM_PROMPT = (
     " owner makes a fair point, say so plainly and say what would change your"
     " mind. You have no news beyond what the report says and cannot search:"
     " when the answer turns on fresh news — an injury, a press conference, a"
-    " team sheet — say that you would need fresh news to be sure. Not every"
+    " team sheet — say that you would need fresh news to be sure. When the"
+    " briefing carries a Table and form block, it is the league table, each"
+    " club's last five and the model's ratings beside the season's goals: use"
+    " it for where a team stands or how it is playing, and never say you lack"
+    " the table when it is there. When he asks which of his own players to"
+    " start or bench, judge on the coming gameweek only: the window totals"
+    " are for transfers. Not every"
     " text is a question: if his is not one — thanks, or news such as \"I made"
     " the transfers\" — say briefly that it is not a question for you, and"
     " still name the gameweek; you cannot record transfers or play chips, so"
@@ -325,15 +332,28 @@ def validate_answer(text: Any, gw: int, max_words: int = WORD_LIMIT) -> str:
 
 
 def ask_briefing(snapshot: dict, report_md: str) -> str:
-    """The cached block: which week, then the report as the owner can read it."""
-    return "\n".join([
+    """The cached block: which week, then the report as the owner can read it,
+    then the league table when the run kept one.
+
+    The table rides here rather than behind a lookup: every lookup is one of
+    the six turns, a question about two clubs would spend two of them before
+    the gaffer could reason at all, and a block in the cache costs no turn and
+    cannot be forgotten. It is the lines the weekly gaffer reads
+    (:func:`~aigaffer.data.table.table_lines`), with no club flagged — the
+    squad is in the report already.
+    """
+    lines = [
         f"# This week's plan: GW{snapshot['gw']}",
         "",
         f"The owner is asking about GW{snapshot['gw']}'s plan, from the"
         f" {snapshot['mode']} run. Here is the detailed report he can read:",
         "",
         report_md,
-    ])
+    ]
+    table = snapshot.get("table")
+    if table:
+        lines += ["", f"## Table and form (GW{snapshot['gw']})", "", *table_lines(table)]
+    return "\n".join(lines)
 
 
 def question_block(snapshot: dict, thread: list[dict], question: str) -> str:

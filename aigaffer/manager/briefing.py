@@ -46,6 +46,7 @@ from aigaffer.config import EARLY_SEASON_GWS
 from aigaffer.data.free_transfers import MAX_FREE_TRANSFERS, after_roll
 from aigaffer.data.models import Event, Player
 from aigaffer.data.schedule import games_text, opponents
+from aigaffer.data.table import TeamRow, table_lines, table_record
 from aigaffer.model.xp import PlayerProjection, projected_events
 from aigaffer.report.render import (
     NO_CHIP,
@@ -240,6 +241,17 @@ PLANNED_GUARD = (
     " this is, finalize with chip 'none' and argue for it in your rationale."
 )
 
+# The league table's heading and what it is for. Fixed text: nothing off the
+# wire, so nothing in it can forge the document around it.
+TABLE_HEADING = "## Table and form"
+TABLE_INTRO = (
+    "Fixture difficulty in every xP here already comes from the model's fitted"
+    " team ratings. The table and form are here to"
+    " sanity-check those ratings, not to add to them. There is no lever for"
+    " team ratings: adjust_players is for a player's minutes, and the plans"
+    " already price every fixture through the ratings."
+)
+
 # The longest a name, club or status out of the payload may be before it is
 # cut short. Real ones are a dozen characters; the cap is not about tidiness
 # but about a single field being unable to swamp the document it sits in.
@@ -305,6 +317,7 @@ def build_briefing(
     ledger: "LedgerView | None" = None,
     budget: int | None = None,
     last_week: "LastWeek | None" = None,
+    table: list[TeamRow] | None = None,
 ) -> str:
     """The whole briefing as one plain-text string. Pure; no I/O.
 
@@ -329,6 +342,12 @@ def build_briefing(
     ``budget`` is how many searches this run may spend; supplied, one line
     in the situation block says so. Both absent, the briefing is byte for
     byte what it was before the ledger existed.
+
+    ``table`` is the run's league table and form
+    (:func:`aigaffer.data.table.league_table`), with the fit's view of each
+    club beside it. Supplied, a "Table and form" section follows the fixtures
+    it is there to sanity-check; None — nothing played yet, or a table that
+    could not be built — and there is no section at all.
 
     A draft — a run with no squad — is a different question and says so in
     its title: fifteen players from nothing, no bank to spend, no free
@@ -360,6 +379,7 @@ def build_briefing(
             budget,
         ),
         *_fixtures(held, solve, board, event),
+        *_table(table, held, solve, board),
         _squad(held, board, event, solve.draft_mode),
         _team_sheet(solve.lineup, board, event, pick),
         _candidates(numbered, board, pick),
@@ -664,15 +684,43 @@ def _fixtures(
     fewer than the players, and a player's own line carries only the coming
     gameweek. A club with no entry for a gameweek is a blank (``—``).
 
-    Which clubs: every one the briefing mentions a player of: the squad, the
-    plans' squads and transfers, the paths' signings and the watchlist.
+    Which clubs: every one the briefing mentions a player of
+    (:func:`_mentioned`).
     """
+    return _fixtures_for(_mentioned(held, solve, board), board)
+
+
+def _mentioned(held: list[int], solve: "SolveResult", board: _Board) -> set[int]:
+    """Every player the briefing names: the squad, the plans' squads and
+    transfers, the paths' signings and the watchlist. Their clubs are the
+    ones the Fixtures section lists and the table flags."""
     pids = {*held, *relevant_players(solve), *_watchlist_ids(held, board)}
     for plan in solve.plans:
         if plan.path is not None:
             for move in plan.path.moves:
                 pids.update(move.transfers_in, move.transfers_out)
-    return _fixtures_for(pids, board)
+    return pids
+
+
+def _table(
+    table: list[TeamRow] | None, held: list[int], solve: "SolveResult", board: _Board
+) -> list[str]:
+    """The ``## Table and form`` section, as a one-item list (or none).
+
+    The projections price every fixture through the fitted team ratings, and
+    a gaffer who could not see the table could neither explain a fixture
+    call nor tell when the ratings disagreed with it. The section is for
+    that check and nothing more, and says so: there is no lever on a team's
+    rating, and ``adjust_players`` moves minutes, not opinions of a club.
+    """
+    if not table:
+        return []
+    ours = {
+        board.clubs[board.players[pid].team]
+        for pid in _mentioned(held, solve, board)
+        if pid in board.players and board.players[pid].team in board.clubs
+    }
+    return ["\n".join([TABLE_HEADING, "", TABLE_INTRO, "", *table_lines(table_record(table), ours)])]
 
 
 def _fixtures_for(pids: Iterable[int], board: _Board) -> list[str]:
@@ -744,7 +792,9 @@ def _team_sheet(lineup: Lineup, board: _Board, event: int, pick: int | None) -> 
         "",
         f"If you finalize {whose}, the XI below is the one that applies for"
         f" GW{event}. For any other plan the lineup is re-picked from that"
-        " plan's squad, and your captain and vice must belong to it.",
+        " plan's squad, and your captain and vice must belong to it."
+        f" Who starts and who sits is a GW{event} question: judge it on"
+        f" GW{event}'s xP and news alone. The window totals are for transfers.",
         "",
     ]
     lines += [
