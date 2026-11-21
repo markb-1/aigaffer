@@ -58,6 +58,7 @@ from aigaffer.manager.ask_writer import (
     WORD_LIMIT,
     AskUnavailable,
     answer,
+    ask_briefing,
     find_player,
     validate_answer,
 )
@@ -760,3 +761,57 @@ def test_a_simulated_question_that_fails_says_ask_again_and_does_not_raise(tmp_p
     assert simulated(cfg, inbox, client)[0] == ASK_WRONG
     assert not (inbox / FAILED_FILE).exists()
     assert "private words" not in capsys.readouterr().out
+
+
+# --- the league table: where the clubs stand, in the cached block --------------
+
+TABLE = {
+    "avg": 1.25,
+    "rows": [
+        {"c": "AAA", "cf": "Aay", "pos": 1, "lvl": False, "h": [1, 0, 0, 2, 0],
+         "a": [0, 1, 0, 1, 1], "l5": [["W", 2, 0, "BBB", "h"], ["D", 1, 1, "BBB", "a"]],
+         "ma": 1.12, "md": 0.9},
+        {"c": "BBB", "cf": "Bee", "pos": 2, "lvl": False, "h": [0, 1, 0, 1, 1],
+         "a": [0, 0, 1, 0, 2], "l5": [["L", 0, 2, "AAA", "a"], ["D", 1, 1, "AAA", "h"]],
+         "ma": 0.89, "md": 1.11},
+    ],
+}
+
+
+def test_the_cached_block_carries_the_table_after_the_report():
+    block = ask_briefing(board(table=TABLE), "THE REPORT")
+    lines = block.splitlines()
+
+    heading = lines.index("## Table and form (GW8)")
+    assert heading > lines.index("THE REPORT")
+    rows = [line for line in lines[heading:] if line[:1].isdigit()]
+    assert [line.split()[1] for line in rows] == ["AAA", "BBB"]
+    assert "model att 1.12 def 0.90" in rows[0]
+    # Nothing is flagged: the squad is in the report already.
+    assert "[ours]" not in block
+
+
+def test_a_snapshot_with_no_table_has_no_table_block():
+    assert "Table and form" not in ask_briefing(board(), "THE REPORT")
+
+
+def test_the_table_rides_in_the_request_the_gaffer_reads(tmp_path):
+    cfg, inbox = setup(tmp_path, board(table=TABLE))
+    client = FakeClient([answered()])
+    ask(cfg, inbox, client)
+
+    first = client.requests[0]["messages"][0]["content"][0]["text"]
+    assert "## Table and form (GW8)" in first
+
+
+def test_the_system_prompt_points_at_the_table_and_never_lacks_it():
+    prompt = SYSTEM_PROMPT.lower()
+    for needed in ("table and form", "where a team stands", "never say you lack the table"):
+        assert needed in prompt
+
+
+def test_the_system_prompt_judges_starting_and_benching_on_the_coming_week():
+    prompt = SYSTEM_PROMPT.lower()
+    assert "start or bench" in prompt
+    assert "coming gameweek only" in prompt
+    assert "six-week totals are for transfers" in prompt

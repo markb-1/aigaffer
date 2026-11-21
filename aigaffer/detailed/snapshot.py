@@ -10,8 +10,10 @@ re-derive any of it. So the run writes it down once, here, in
 
 What it holds is public FPL data and the bot's own numbers about it: for
 every player the run projected, his fixtures and xP across the window; every
-plan the gaffer could have finalized, under the id he saw it by; and the
-decision. Nothing the owner said and nothing private.
+plan the gaffer could have finalized, under the id he saw it by; the
+decision; and the league table and form with the model's view of each club
+(:mod:`aigaffer.data.table`), built from the public results and the run's own
+fit. Nothing the owner said and nothing private.
 
 The rows are the *projected set* — the history pool, the solver's candidate
 pool and the squad — rather than all six hundred players: the projections
@@ -127,6 +129,7 @@ def build_snapshot(
     shortlist: int,
     decay: float = 0.85,
     do_this: str | None = None,
+    table: dict | None = None,
 ) -> dict:
     """The run, as one JSON-ready dict.
 
@@ -149,6 +152,11 @@ def build_snapshot(
     from", the "Do this" checklist) as text, built by the same function the
     report calls, so the detailed report opens with exactly what the phone was
     told. None for a draft, which has no checklist.
+
+    ``table`` is the league table's record
+    (:func:`~aigaffer.data.table.table_record`), stored under ``"table"`` when
+    the run had one; a run with none — nothing played yet, or a table that
+    could not be built — stores no key, as every snapshot before it did.
 
     ``decision`` is the run's decision record, read for what it settled: this
     week's free transfers, the armbands, the bench in substitution order, the
@@ -193,7 +201,7 @@ def build_snapshot(
         xi=xi,
     )
 
-    return {
+    snapshot = {
         "gw": event.id,
         "mode": mode,
         "ts": ts,
@@ -233,6 +241,9 @@ def build_snapshot(
         # The transfers the run passed over, and why each lost.
         "skipped": skipped,
     }
+    if table is not None:
+        snapshot["table"] = table
+    return snapshot
 
 
 def snapshot_path(state_dir: Path, gw: int, mode: str) -> Path:

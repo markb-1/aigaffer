@@ -573,3 +573,33 @@ def test_the_snapshot_lists_the_transfers_the_chosen_plan_skipped():
             "tag": "unaffordable",
         }
     ]
+
+
+# --- the league table ------------------------------------------------------
+
+TABLE = {
+    "avg": 1.25,
+    "rows": [
+        {"c": "AAA", "cf": "Aay", "pos": 1, "lvl": False, "h": [1, 0, 0, 2, 0],
+         "a": [0, 1, 0, 1, 1], "l5": [["W", 2, 0, "BBB", "h"], ["D", 1, 1, "BBB", "a"]],
+         "ma": 1.12, "md": 0.9},
+        {"c": "BBB", "cf": "Bee", "pos": 2, "lvl": False, "h": [0, 1, 0, 1, 1],
+         "a": [0, 0, 1, 0, 2], "l5": [["L", 0, 2, "AAA", "a"], ["D", 1, 1, "AAA", "h"]]},
+    ],
+}
+
+
+def test_the_table_is_kept_when_the_run_had_one():
+    assert snapshot(table=TABLE)["table"] == TABLE
+
+
+def test_a_run_with_no_table_stores_no_key():
+    assert "table" not in snapshot()
+    assert "table" not in snapshot(table=None)
+
+
+def test_the_table_reads_back_as_it_was_built(tmp_path):
+    built = snapshot(table=TABLE)
+    write_snapshot(tmp_path, 8, "early", built)
+
+    assert latest_snapshot(tmp_path)["table"] == TABLE
