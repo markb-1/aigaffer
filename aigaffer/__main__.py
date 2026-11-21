@@ -16,6 +16,10 @@ makes it safe against the live API.
 ``backtest`` is the odd one out: it grades the model against a gameweek that
 has already been played instead of advising on one to come, so it wants no
 team, no store and no schedule — only a gameweek and the API.
+``backtest --strength`` grades the team-strength fit instead, on every match
+of the last vendored season and this one, across the grid of decay and
+anchor settings (:func:`aigaffer.backtest.strength_eval`): a minute or two,
+the API asked twice.
 
 ``review`` looks back on a finished gameweek (:mod:`aigaffer.review`); ``auto``
 runs it on its own once a week is final.
@@ -55,13 +59,20 @@ from pathlib import Path
 import httpx
 
 from aigaffer.ask import make_ask, make_simulated_ask
-from aigaffer.backtest import backtest_gw, finished_gameweeks
+from aigaffer.backtest import (
+    backtest_gw,
+    finished_gameweeks,
+    render_strength,
+    season_of,
+    strength_eval,
+)
 from aigaffer.chip_forecast import chip_forecast
 from aigaffer.config import SCOUT_HORIZON_HOURS, Config
 from aigaffer.data.fpl_api import FplClient
 from aigaffer.data.models import Bootstrap, Event
 from aigaffer.inbox import inbox_dir, run_inbox, simulate
 from aigaffer.message_log import MessageLog
+from aigaffer.model.strength import live_results, load_results
 from aigaffer.orchestrator import (
     DEADLINE_MODE,
     EARLY_MODE,
@@ -146,6 +157,8 @@ def main(argv: list[str] | None = None) -> int:
     client = FplClient()
     if args.command == BACKTEST:
         try:
+            if args.strength:
+                return _strength(client)
             return _backtest(client, args.gw)
         except httpx.HTTPError as error:
             return _failed(None, error, event_id=None, stage=BACKTEST_STAGE)
@@ -295,6 +308,11 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         help="the finished gameweek to backtest or review (default: the most recent)",
     )
     parser.add_argument(
+        "--strength",
+        action="store_true",
+        help="backtest: grade the team-strength fit across its decay settings",
+    )
+    parser.add_argument(
         "--from",
         dest="from_gw",
         type=int,
@@ -336,6 +354,8 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     args = parser.parse_args(argv)
     if args.simulate is not None and args.command != INBOX:
         parser.error("--simulate is for the inbox")
+    if args.strength and args.command != BACKTEST:
+        parser.error("--strength is for the backtest")
     if args.ask and args.simulate is None:
         parser.error("--ask needs --simulate")
     return args
@@ -473,6 +493,21 @@ def _backtest(client: FplClient, gw: int | None) -> int:
         return 1
 
     print(backtest_gw(client, bootstrap, client.fixtures(), gameweek))
+    return 0
+
+
+def _strength(client: FplClient) -> int:
+    """Print how each decay setting would have forecast the matches.
+
+    The vendored seasons and this one's finished fixtures, joined through the
+    club codes; this season's teams are the bootstrap's twenty, as the live
+    fit's are, so a promoted side that has not played yet is still rated.
+    """
+    bootstrap = client.bootstrap()
+    live = live_results(bootstrap, client.fixtures())
+    codes = {team.code for team in bootstrap.teams if team.code}
+    teams = {season_of(live[0].date): codes} if live and codes else None
+    print(render_strength(strength_eval(load_results() + live, teams)))
     return 0
 
 
