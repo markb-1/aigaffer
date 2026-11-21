@@ -814,4 +814,4 @@ def test_the_system_prompt_judges_starting_and_benching_on_the_coming_week():
     prompt = SYSTEM_PROMPT.lower()
     assert "start or bench" in prompt
     assert "coming gameweek only" in prompt
-    assert "six-week totals are for transfers" in prompt
+    assert "window totals are for transfers" in prompt

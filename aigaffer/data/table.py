@@ -277,7 +277,11 @@ def table_lines(record: dict, flagged: Iterable[str] = ()) -> list[str]:
     marked = set(flagged)
     rows = record.get("rows", [])
     modelled = any("ma" in row for row in rows)
-    avg = record.get("avg") or 0.0
+    # The yardstick, derived unrounded from the splits: the stored ``avg`` is
+    # two decimals, and dividing by it would shade every season figure.
+    team_games = sum(sum(row["h"][:3]) + sum(row["a"][:3]) for row in rows)
+    goals = sum(row["h"][3] + row["a"][3] for row in rows)
+    avg = goals / team_games if team_games else 0.0
     legend = [
         "Place (= shares it), club, played, points, won-drawn-lost, goals for"
         " and against and the difference | home and away won-drawn-lost and"
