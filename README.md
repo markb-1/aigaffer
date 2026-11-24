@@ -7,9 +7,9 @@ that plan to a Claude agent that reads the week's team news and may overrule
 it. The verdict goes to your phone. It advises and never acts: no transfer is
 ever made for you, and the final tap in the app is yours.
 
-📋 **Latest verdict: [GW11](GW11.md)** <!-- latest-verdict -->
+📋 **Latest verdict: [GW12](GW12.md)** <!-- latest-verdict -->
 
-🏆 **After GW10:** 661 pts · world rank 603,030 · Ireland rank 21,406 <!-- season-standing -->
+🏆 **After GW11:** 696 pts · world rank 649,208 · Ireland rank 22,873 <!-- season-standing -->
 
 ## What you get, and when
 

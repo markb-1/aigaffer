@@ -58,7 +58,7 @@
   },
   "166": {
     "category": "nailed",
-    "checked_at": "2026-11-20T17:35:03.507492+00:00",
+    "checked_at": "2026-11-24T18:35:03.363662+00:00",
     "expected_minutes": 85.0,
     "fpl": {
       "chance_of_playing_next_round": null,
@@ -66,14 +66,14 @@
       "news_added": null,
       "status": "a"
     },
-    "gw": 11,
-    "note": "Emery's Friday presser: only Cash (concussion), Onana and Ruggeri out, 'the other players, they are ready'. Jackson is available. A small rotation risk with Galatasaray in the Champions League on Tuesday, though Emery said the Premier League is the priority.",
+    "gw": 12,
+    "note": "Started as the lone striker in the 0-0 with Sunderland on 21 Nov. No injury reported.",
     "player_id": 166,
-    "quote_date": "2026-11-20",
+    "quote_date": "2026-11-21",
     "return_gw": null,
-    "run": "deadline",
-    "source": "avfc.co.uk pre-match team news, 20 Nov",
-    "tier": 1
+    "run": "early",
+    "source": "Aston Villa v Sunderland confirmed line-ups, 21 Nov 2026",
+    "tier": 2
   },
   "173": {
     "category": "doubt",
@@ -96,21 +96,21 @@
   },
   "31": {
     "category": "rotation",
-    "checked_at": "2026-11-20T17:35:03.507492+00:00",
-    "expected_minutes": 70.0,
+    "checked_at": "2026-11-24T18:35:03.363662+00:00",
+    "expected_minutes": 75.0,
     "fpl": {
       "chance_of_playing_next_round": 100,
       "news": "",
       "news_added": "2026-11-05T20:30:09.025008Z",
       "status": "a"
     },
-    "gw": 11,
-    "note": "Predicted to start, but Arteta confirmed Saliba is fit, and the Standard/AOL preview calls centre-back 'one big decision'. Konsa is the man most at risk.",
+    "gw": 12,
+    "note": "Started at centre-back next to Gabriel in the 2-2 at Newcastle on 21 Nov. Saliba was back among the substitutes, so there is some risk of rotation for Man City at home.",
     "player_id": 31,
-    "quote_date": "2026-11-20",
+    "quote_date": "2026-11-21",
     "return_gw": null,
-    "run": "deadline",
-    "source": "AOL/Standard Arsenal XI preview, ysscores Arteta presser 20 Nov",
+    "run": "early",
+    "source": "Premier League match centre line-ups, Newcastle 2-2 Arsenal, 21 Nov 2026",
     "tier": 2
   },
   "346": {
@@ -133,27 +133,27 @@
     "tier": 1
   },
   "388": {
-    "category": "doubt",
-    "checked_at": "2026-11-20T17:35:03.507492+00:00",
-    "expected_minutes": 60.0,
+    "category": "nailed",
+    "checked_at": "2026-11-24T18:35:03.363662+00:00",
+    "expected_minutes": 80.0,
     "fpl": {
-      "chance_of_playing_next_round": 75,
-      "news": "Hip injury - 75% chance of playing",
+      "chance_of_playing_next_round": 100,
+      "news": "",
       "news_added": "2026-11-07T21:30:08.741792Z",
-      "status": "d"
+      "status": "a"
     },
-    "gw": 11,
-    "note": "Withdrew from England with a hip problem. Sports Mole (20 Nov) says he trained Thursday and is set to be available for Fulham, but its team-news page still lists him as doubtful. Raised from 40 to 60, not to 90, because a quote that he will start is truncated and unclear.",
+    "gw": 12,
+    "note": "Withdrew from England duty with a hip injury (13 Nov, FPL 75%) but started at centre-back for Man City in the 1-1 draw with Fulham on 21 Nov, which looks like he is over it. The model's 54 is too low; 80 allows a little for rotation.",
     "player_id": 388,
-    "quote_date": "2026-11-20",
+    "quote_date": "2026-11-21",
     "return_gw": null,
-    "run": "deadline",
-    "source": "Sports Mole Man City injury news, 20 Nov",
+    "run": "early",
+    "source": "Man City v Fulham line-ups (match page) and Yahoo/City Xtra player ratings, 21 Nov 2026",
     "tier": 2
   },
   "4": {
     "category": "nailed",
-    "checked_at": "2026-11-20T17:35:03.507492+00:00",
+    "checked_at": "2026-11-24T18:35:03.363662+00:00",
     "expected_minutes": 90.0,
     "fpl": {
       "chance_of_playing_next_round": null,
@@ -161,32 +161,32 @@
       "news_added": null,
       "status": "a"
     },
-    "gw": 11,
-    "note": "Arteta at the presser: Gabriel 'returned in good condition'. Predicted to start.",
+    "gw": 12,
+    "note": "Started at Newcastle on 21 Nov and played the full match.",
     "player_id": 4,
-    "quote_date": "2026-11-20",
+    "quote_date": "2026-11-21",
     "return_gw": null,
-    "run": "deadline",
-    "source": "Arteta pre-Newcastle presser",
-    "tier": 1
+    "run": "early",
+    "source": "Premier League match centre, Newcastle 2-2 Arsenal",
+    "tier": 2
   },
   "411": {
     "category": "nailed",
-    "checked_at": "2026-11-20T17:35:03.507492+00:00",
-    "expected_minutes": 88.0,
+    "checked_at": "2026-11-24T18:35:03.363662+00:00",
+    "expected_minutes": 90.0,
     "fpl": {
       "chance_of_playing_next_round": 100,
       "news": "",
       "news_added": "2026-10-19T13:00:10.543876Z",
       "status": "a"
     },
-    "gw": 11,
-    "note": "Not in City's injury list (Semenyo out; Gu\u00e9hi and Khusanov doubts). In the predicted XI.",
+    "gw": 12,
+    "note": "Started and led the line against Fulham on 21 Nov, with a goal disallowed. No fitness issue reported since.",
     "player_id": 411,
-    "quote_date": "2026-11-20",
+    "quote_date": "2026-11-21",
     "return_gw": null,
-    "run": "deadline",
-    "source": "Sports Mole Man City v Fulham team news",
+    "run": "early",
+    "source": "ESPN match report and line-ups, Man City 1-1 Fulham, 21 Nov 2026",
     "tier": 2
   },
   "572": {
