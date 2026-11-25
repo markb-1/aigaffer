@@ -39,7 +39,7 @@ import anthropic
 
 from aigaffer.config import Config
 from aigaffer.manager.briefing import format_plans, initial_plan_ids
-from aigaffer.manager.search_health import examine
+from aigaffer.manager.search_health import call_pending, examine
 from aigaffer.manager.tools import (
     MAX_SEARCHES,
     NO_CHIP,
@@ -488,7 +488,7 @@ class _Conversation:
 
         Append-only on purpose: Opus 5.5 binds its thinking blocks to the
         conversation they were written in, so nothing already answered is ever
-        edited or removed. Two shapes of end need two shapes of append:
+        edited or removed. Three shapes of end need three shapes of append:
 
         * It ends on a user message, which is the usual case: tool results, the
           nudge, or the briefing itself. Nobody has answered that message yet,
@@ -498,8 +498,18 @@ class _Conversation:
           accept. The message is replaced by a copy with the longer list rather
           than extended in place, because the request already sent holds the
           same dict and must not be edited behind its back.
+        * It ends on tool results *and* a server tool call is still waiting for
+          its own result, because he called it in the same breath as one of
+          ours. Then the message may hold nothing but tool results — a text
+          block after them is a 400, and a 400 is the solver's week — so the
+          instruction goes inside the last result's content. Only then: a
+          result's text weighs less than the user's own words, and this is the
+          line that gets a decision out of the last turn.
         * It ends on an assistant turn, as it does after a second stall: then
           the instruction is a user message of its own.
+
+        The message edited is always one nobody has answered, so no thinking
+        block that survives was written after it.
 
         And if the conversation already ends in the instruction, nothing is
         done: a run of truncated turns is each of them dropped, so each would
@@ -512,9 +522,31 @@ class _Conversation:
             content = last["content"]
             if content and content[-1] == block:
                 return
+            tail = content[-1] if content else None
+            if self._must_stay_results(tail):
+                if not tail["content"].endswith(FINALIZE_NOW):
+                    inside = {**tail, "content": f"{tail['content']}\n\n{FINALIZE_NOW}"}
+                    self.messages[-1] = {"role": "user", "content": [*content[:-1], inside]}
+                return
             self.messages[-1] = {"role": "user", "content": [*content, block]}
         else:
             self.messages.append({"role": "user", "content": [block]})
+
+    def _must_stay_results(self, tail: Any) -> bool:
+        """Is ``tail`` a tool result that a text block may not follow?
+
+        Never raises: whatever it cannot tell is a no, and the decision is
+        asked for as it always was.
+        """
+        try:
+            return (
+                isinstance(tail, dict)
+                and tail.get("type") == "tool_result"
+                and isinstance(tail.get("content"), str)
+                and call_pending(self.messages)
+            )
+        except Exception:  # the ask matters more than where it goes
+            return False
 
     def fallback(self, reason: str) -> ManagerDecision:
         """Give the week back to the solver, from inside the loop."""

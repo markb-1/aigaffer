@@ -10,6 +10,9 @@ were broken left the same record, which was none.
 for the journal: an error code the API defines, or a count. ``spent``,
 ``fresh_next`` and ``transient`` are for the loop, which tells the gaffer.
 
+:func:`call_pending` reads the conversation instead, for the one thing the loop
+must know before it adds a word to it: whether a call is still waiting.
+
 Nothing anybody else wrote is ever in a line. Queries, titles, addresses, page
 text, a run's output and its error text all stay where they are, and a code
 that does not look like one is printed as ``unknown``.
@@ -140,3 +143,40 @@ def _get(thing: Any, name: str) -> Any:
     if isinstance(thing, dict):
         return thing.get(name)
     return getattr(thing, name, None)
+
+
+def call_pending(messages: Any) -> bool:
+    """Is a server tool call in this conversation still without its result?
+
+    A call made in the same breath as one of ours does not run until our
+    results go back, and its result then arrives in the *next* response, so
+    calls and results pair by id across messages and never by position.
+
+    A call made from inside a code run is the run's business and is not
+    counted: an unfinished run is itself an unanswered call, and a finished one
+    can leave a search nobody answered, which waits for nothing. A block that
+    cannot be read is skipped by itself.
+    """
+    asked: set[str] = set()
+    answered: set[str] = set()
+    for message in messages:
+        if _get(message, "role") != "assistant":
+            continue
+        content = _get(message, "content")
+        for block in content if isinstance(content, list) else []:
+            try:
+                result_of = _get(block, "tool_use_id")
+                identifier = _get(block, "id")
+                kind = _get(block, "type")
+                caller = _caller(block)
+            except Exception:  # one odd block, and the others still count
+                continue
+            if isinstance(result_of, str):
+                answered.add(result_of)
+            elif (
+                kind == "server_tool_use"
+                and isinstance(identifier, str)
+                and caller != FROM_CODE
+            ):
+                asked.add(identifier)
+    return bool(asked - answered)
