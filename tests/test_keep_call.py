@@ -316,8 +316,15 @@ def test_an_armband_past_the_noise_needs_the_reason_alone():
 
 
 def test_a_captain_who_is_not_in_the_eleven_cannot_be_kept():
-    client, _ = decide(done(plan_id=0, why="he is benched"), context=held_to(told(captain=12)))
+    # Reid (18) is projected above Innes (9), and is in nobody's eleven here.
+    client, _ = decide(done(plan_id=0, captain=9, why="he is gone"), context=held_to(told(captain=18)))
     assert len(client.requests) == 1
+
+
+def test_an_armband_that_moves_with_the_squad_is_the_squads_to_answer_for(monkeypatch):
+    monkeypatch.setattr(loop, "SOLVE0", replace(SOLVE0, plans=[SWAP, replace(ROLL, objective=SWAP.objective + 2.0)]))
+    client, decision = decide(done(plan_id=1, captain=13, vice=8, why="a new plan"))
+    assert len(client.requests) == 1 and decision.captain == 13
 
 
 def test_news_about_the_old_captain_moves_the_armband():
@@ -408,6 +415,13 @@ def test_the_latest_one_sent_back_is_the_one_that_stands():
     assert decision.plan is SWAP and decision.captain == 13
 
 
+def test_the_news_recorded_after_it_is_kept_with_it():
+    news = adjust(3, 0.0, category="injured")
+    _, decision = decide(done(**ROLLS), [use("adjust_players", news)], timeout())
+    assert decision.plan is CLOSE
+    assert [record["player_id"] for record in decision.record] == [3]
+
+
 def test_an_illegal_decision_is_never_held():
     _, decision = decide(done(plan_id=1, captain=99), timeout())
     assert decision.source.startswith("solver-fallback")
@@ -445,3 +459,51 @@ def test_a_capped_turns_decision_survives_the_failure_after_it():
     capped = loop.reply(loop.missed("max_uses_exceeded"), *done(**ROLLS))
     _, decision = decide(capped, timeout())
     assert decision.source == "manager" and decision.plan is CLOSE
+
+
+# --- a refusal among the loop's own words -----------------------------------------
+
+
+def strictly(*turns):
+    """The loop against the client that refuses what the API refuses."""
+    client = loop.StrictClient([t if isinstance(t, loop.Response) else reply(*t) for t in turns])
+    decision = agent.run_manager(
+        client, loop.CFG, INPUTS, BOARD, loop.XP, loop.BRIEFING, FakeResolver(),
+        today=TODAY, continuity=held_to(),
+    )
+    loop.assert_roles_alternate(client)
+    return client, decision
+
+
+def cut_off() -> loop.Response:
+    return reply(text("Half a"), stop="max_tokens")
+
+
+@pytest.mark.parametrize("before, between", [([loop.worked()] * 10, []), ([], [cut_off()])])
+def test_a_refusal_carries_the_ask_for_a_decision_while_a_search_waits(before, between):
+    # The ask cannot stand as a block of its own then: it is a 400.
+    client, decision = strictly(*before, [loop.waiting(), *done(**ROLLS)], *between, done(**KEEP))
+    [result] = sent_results(client.requests[-1])
+    assert result["type"] == "tool_result" and result["is_error"] is True
+    assert "nothing new behind it" in result["content"]
+    assert result["content"].endswith("\n\n" + agent.FINALIZE_NOW)
+    assert decision.source == "manager" and decision.plan is SWAP
+
+
+def test_a_refusal_carries_the_search_note_and_then_the_ask():
+    client, decision = strictly(
+        [*[loop.found()] * 8, loop.waiting(), *done(**ROLLS)], cut_off(), done(**KEEP)
+    )
+    [result] = sent_results(client.requests[-1])
+    said = result["content"]
+    assert result["is_error"] is True
+    assert said.index("nothing new behind it") < said.index(agent.SPENT_NOTE) < said.index(agent.FINALIZE_NOW)
+    assert decision.source == "manager" and decision.plan is SWAP
+
+
+def test_a_refused_decision_survives_the_ask_that_follows_it():
+    client, decision = strictly(
+        *[loop.worked()] * 10, [loop.waiting(), *done(**ROLLS)], [text("Thinking.")]
+    )
+    assert len(client.requests) == MAX_TURNS
+    assert decision.source == "manager" and decision.plan is CLOSE and decision.change_reason is None

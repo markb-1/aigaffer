@@ -12,13 +12,16 @@ import pytest
 
 from aigaffer import orchestrator
 from aigaffer.continuity import Continuity
+from aigaffer.executed import Executed
 from aigaffer.orchestrator import run_pipeline
 from aigaffer.store import Store
 from tests.test_manager_retry import Phone, phone_cfg
 from tests.test_orchestrator import (
+    GRANT,
     PAST_THE_FLOOR,
     chips_off_from_the_environment,  # noqa: F401 — autouse: chips off, as there
     decided,
+    halves_routes,
     make_client,
     pipeline_routes,
     stub_gaffer,
@@ -40,9 +43,9 @@ def store(tmp_path) -> Store:
     return Store(tmp_path / "state" / "aigaffer.db")
 
 
-def run(tmp_path, store, mode, **cfg):
+def run(tmp_path, store, mode, routes=None, **cfg):
     return run_pipeline(
-        replace(phone_cfg(tmp_path), **cfg), make_client(pipeline_routes()), store, mode, now=PAST_THE_FLOOR
+        replace(phone_cfg(tmp_path), **cfg), make_client(routes or pipeline_routes()), store, mode, now=PAST_THE_FLOOR
     )
 
 
@@ -223,3 +226,58 @@ def test_a_line_that_will_not_render_is_a_report_without_one(monkeypatch, tmp_pa
     monkeypatch.setattr(orchestrator, "report_line", broken)
     assert opening(run(tmp_path, store, "scout")).startswith("⏰")
     assert "line was skipped (TypeError)" in capsys.readouterr().out
+
+
+# --- what the rule is handed ----------------------------------------------------
+
+
+def handed(gaffer) -> Continuity:
+    return gaffer.kwargs[-1]["continuity"]
+
+
+def test_the_minutes_used_are_the_earlier_runs_own(monkeypatch, tmp_path, store, phone):
+    gaffer = stub_gaffer(monkeypatch)
+    run(tmp_path, store, "early")
+    edit(store, adjustments=[{"player_id": GRANT, "expected_minutes": 33.0, "reason": "x"}])
+    run(tmp_path, store, "scout")
+    used = handed(gaffer).used
+    # His own number for the man he adjusted; the snapshot's for everybody else.
+    assert used[GRANT] == 33.0 and len(used) > 15
+
+
+@pytest.mark.parametrize("spent, kept", [([], True), ([{"name": "bboost", "event": 1}], False)])
+def test_a_chip_already_spent_cannot_be_kept(monkeypatch, tmp_path, store, phone, spent, kept):
+    gaffer = stub_gaffer(monkeypatch)
+    run(tmp_path, store, "early")
+    edit(store, chip="bench_boost")
+    run(tmp_path, store, "scout", routes=halves_routes(chips_used=spent))
+    assert handed(gaffer).chip_kept is kept
+
+
+@pytest.mark.parametrize("shift, moved", [(0.0, False), (1.4, False), (1.6, True), (-1.6, True), (None, True)])
+def test_the_panel_says_whether_the_chip_moved(monkeypatch, tmp_path, store, phone, shift, moved):
+    gaffer = stub_gaffer(monkeypatch)
+    run(tmp_path, store, "early")
+    panel = store.decision(2, "early")["chip_evs"]
+    then = {} if shift is None else {**panel, "bench_boost": panel["bench_boost"] + shift}
+    edit(store, chip="bench_boost", chip_evs=then)
+    run(tmp_path, store, "scout")
+    assert handed(gaffer).chip_moved is moved
+
+
+@pytest.mark.parametrize("of_this_call", [True, False])
+def test_the_briefing_says_when_he_has_entered_the_call(monkeypatch, tmp_path, store, phone, of_this_call):
+    gaffer = stub_gaffer(monkeypatch)
+    run(tmp_path, store, "early")
+    verdict = store.latest_verdict(2, ("early",))
+    stamp = verdict.ts if of_this_call else "2025-08-19T00:00:00+00:00"
+    record = verdict.decision
+    store.save_executed(Executed(
+        gw=2, mode="early", recorded_at=stamp, transfers_in=[], transfers_out=[],
+        squad_after=record["squad_before"], chip="none", captain=record["captain"], vice=record["vice"],
+        buy_prices={}, sell_prices={}, bank_after=0, ft_after=1, ft_before=1, verdicts=[["early", stamp]],
+    ))
+    report = run(tmp_path, store, "scout")
+    assert ("He has entered it" in handed(gaffer).section) is of_this_call
+    # Both lines, the squad it works from and the call it is, in one text.
+    assert "Working from" in report and opening(report).startswith("Same call as ")
