@@ -58,7 +58,7 @@
   },
   "166": {
     "category": "nailed",
-    "checked_at": "2026-11-24T18:35:03.363662+00:00",
+    "checked_at": "2026-11-25T06:35:03.934896+00:00",
     "expected_minutes": 85.0,
     "fpl": {
       "chance_of_playing_next_round": null,
@@ -67,12 +67,12 @@
       "status": "a"
     },
     "gw": 12,
-    "note": "Started as the lone striker in the 0-0 with Sunderland on 21 Nov. No injury reported.",
+    "note": "Carried from earlier run (fresh): nailed starter.",
     "player_id": 166,
     "quote_date": "2026-11-21",
     "return_gw": null,
-    "run": "early",
-    "source": "Aston Villa v Sunderland confirmed line-ups, 21 Nov 2026",
+    "run": "scout",
+    "source": "earlier run",
     "tier": 2
   },
   "173": {
@@ -96,7 +96,7 @@
   },
   "31": {
     "category": "rotation",
-    "checked_at": "2026-11-24T18:35:03.363662+00:00",
+    "checked_at": "2026-11-25T06:35:03.934896+00:00",
     "expected_minutes": 75.0,
     "fpl": {
       "chance_of_playing_next_round": 100,
@@ -105,12 +105,12 @@
       "status": "a"
     },
     "gw": 12,
-    "note": "Started at centre-back next to Gabriel in the 2-2 at Newcastle on 21 Nov. Saliba was back among the substitutes, so there is some risk of rotation for Man City at home.",
+    "note": "Carried from earlier run (fresh): rotation risk, ~75 mins.",
     "player_id": 31,
     "quote_date": "2026-11-21",
     "return_gw": null,
-    "run": "early",
-    "source": "Premier League match centre line-ups, Newcastle 2-2 Arsenal, 21 Nov 2026",
+    "run": "scout",
+    "source": "earlier run",
     "tier": 2
   },
   "346": {
@@ -134,7 +134,7 @@
   },
   "388": {
     "category": "nailed",
-    "checked_at": "2026-11-24T18:35:03.363662+00:00",
+    "checked_at": "2026-11-25T06:35:03.934896+00:00",
     "expected_minutes": 80.0,
     "fpl": {
       "chance_of_playing_next_round": 100,
@@ -143,12 +143,12 @@
       "status": "a"
     },
     "gw": 12,
-    "note": "Withdrew from England duty with a hip injury (13 Nov, FPL 75%) but started at centre-back for Man City in the 1-1 draw with Fulham on 21 Nov, which looks like he is over it. The model's 54 is too low; 80 allows a little for rotation.",
+    "note": "Carried from earlier run (fresh): nailed, ~80 mins; model's 54 understates him.",
     "player_id": 388,
     "quote_date": "2026-11-21",
     "return_gw": null,
-    "run": "early",
-    "source": "Man City v Fulham line-ups (match page) and Yahoo/City Xtra player ratings, 21 Nov 2026",
+    "run": "scout",
+    "source": "earlier run",
     "tier": 2
   },
   "4": {
