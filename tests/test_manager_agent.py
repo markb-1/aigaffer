@@ -45,6 +45,7 @@ manager finalizes against and it has to go on counting across a re-solve:
 
 import re
 from dataclasses import dataclass, field, replace
+from datetime import date
 from typing import Any
 
 import anthropic
@@ -55,6 +56,7 @@ from aigaffer.config import Config
 from aigaffer.data.models import Bootstrap, Pick, Player, Squad
 from aigaffer.manager import agent
 from aigaffer.manager.agent import FINALIZE_NOW, NUDGE, ManagerDecision, run_manager
+from aigaffer.manager.search_health import call_pending
 from aigaffer.manager.tools import (
     CHIP_FIELD_DROPPED,
     MIN_RATIONALE,
@@ -1937,6 +1939,299 @@ def test_a_decision_on_the_last_turn_still_counts():
 
     assert decision.source == "manager"
     assert decision.plan is ROLL
+
+
+# --- asking for the decision while a search is still waiting ----------------
+
+
+class StrictClient(FakeClient):
+    """A client that refuses what the docs say the API refuses, and no more.
+
+    A server tool the model called directly, in the same breath as one of
+    ours, does not run until our results go back — and they must go back
+    alone. A message with anything else in it ends the turn, which leaves the
+    call without a result, which is a 400.
+    """
+
+    def _create(self, **kwargs: Any) -> Any:
+        messages = kwargs["messages"]
+        asked, answered = set(), set()
+        for message in messages:
+            if message["role"] != "assistant":
+                continue
+            for block in message["content"]:
+                caller = getattr(getattr(block, "caller", None), "type", "direct")
+                kind = getattr(block, "type", None)
+                if kind == "server_tool_use" and caller == "direct":
+                    asked.add(str(getattr(block, "id", "")))
+                elif kind and kind.endswith("_tool_result"):
+                    answered.add(block.tool_use_id)
+        mixed = any(b["type"] != "tool_result" for b in messages[-1]["content"])
+        if messages[-1]["role"] == "user" and mixed and any(
+            i.startswith("srv") for i in asked - answered
+        ):
+            self.requests.append(kwargs)
+            request = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+            raise anthropic.BadRequestError(
+                "`web_search` tool use was found without a corresponding"
+                " `web_search_tool_result` block",
+                response=httpx.Response(400, request=request),
+                body=None,
+            )
+        return super()._create(**kwargs)
+
+
+def strictly(script: list[Any]):
+    client = StrictClient(script)
+    decision = run_manager(
+        client, CFG, INPUTS, SOLVE0, XP, BRIEFING, FakeResolver()
+    )
+    assert_roles_alternate(client)
+    return client, decision
+
+
+def waiting(identifier: str = "srv_9", name: str = "web_search", **fields: Any) -> Block:
+    """A server tool call the API has not run yet: no result block follows."""
+    return Block(type="server_tool_use", id=identifier, name=name, input={}, **fields)
+
+
+def nested(identifier: str = "srv_9", run: str = "srv_0") -> Block:
+    """A search called from inside a code run."""
+    return waiting(
+        identifier, caller=Block(type="code_execution_20260120", tool_id=run)
+    )
+
+
+def finished(run: str = "srv_0") -> Block:
+    return Block(
+        type="code_execution_tool_result",
+        tool_use_id=run,
+        content=Block(
+            type="encrypted_code_execution_result", return_code=1, stderr="x"
+        ),
+    )
+
+
+def worked() -> Response:
+    return reply(use("adjust_players", adjust()))
+
+
+def twelfth(*eleventh: Any):
+    """Ten ordinary turns, an eleventh of these blocks, and the decision."""
+    script = [worked()] * 10 + [reply(*eleventh)]
+    return strictly([*script, reply(use("finalize_decision", finalize()))])
+
+
+def cut_off(*blocks: Any):
+    """A turn of these blocks, then one cut off mid-sentence, then the decision."""
+    return strictly(
+        [
+            reply(*blocks),
+            reply(text("Half a"), stop="max_tokens"),
+            reply(use("finalize_decision", finalize())),
+        ]
+    )
+
+
+@pytest.mark.parametrize("ask", [twelfth, cut_off])
+def test_the_decision_is_asked_for_inside_the_result_while_a_search_waits(ask):
+    # As a block of its own it was a 400, and a 400 is the solver's week.
+    client, decision = ask(waiting(), use("adjust_players", adjust()))
+    last = sent_results(client.requests[-1])
+
+    assert decision.source == "manager"
+    assert [block["type"] for block in last] == ["tool_result"]
+    assert last[0]["content"].startswith("Recorded: id 7 at 0 minutes.")
+    assert last[0]["content"].endswith("\n\n" + FINALIZE_NOW)
+
+
+@pytest.mark.parametrize("ask", [twelfth, cut_off])
+def test_only_the_last_result_carries_the_words(ask):
+    client, _ = ask(
+        waiting(),
+        use("adjust_players", adjust(), block_id="a1"),
+        use("adjust_players", adjust(4242), block_id="a2"),
+    )
+    first, last = sent_results(client.requests[-1])
+
+    assert FINALIZE_NOW not in first["content"]
+    assert last["is_error"] is True and "4242" in last["content"]
+    assert last["content"].endswith(FINALIZE_NOW)
+
+
+def test_a_search_note_comes_before_the_words():
+    client, decision = cut_off(
+        *[found()] * 8, waiting(), use("adjust_players", adjust())
+    )
+    content = only_result(client.requests[-1])["content"]
+
+    assert decision.source == "manager"
+    assert content.index("Recorded:") < content.index(NOT_BROKEN)
+    assert content.index(NOT_BROKEN) < content.index(FINALIZE_NOW)
+
+
+@pytest.mark.parametrize(
+    "blocks",
+    [
+        pytest.param([], id="no search at all"),
+        pytest.param(
+            [waiting("srv_1"), Block(type="web_search_tool_result", tool_use_id="srv_1", content=[])],
+            id="answered in the same response",
+        ),
+        pytest.param(
+            [waiting("srv_0", "code_execution"), nested(), finished()],
+            id="an orphan inside a run that finished",
+        ),
+        pytest.param([Block(type="server_tool_use", name="web_search")], id="no id"),
+        pytest.param([Block(type="server_tool_use", id=["x"])], id="an id that is no id"),
+    ],
+)
+def test_with_nothing_waiting_the_words_stay_the_owners_own(blocks):
+    # A tool result's text weighs less than a user's, and this is the line that
+    # gets a decision out of the last turn. Where it is legal it stays a block.
+    client, decision = twelfth(*blocks, use("adjust_players", adjust()))
+
+    assert last_text(client.requests[-1]) == FINALIZE_NOW
+    assert client.requests[-1]["messages"][-1]["content"][0]["type"] == "tool_result"
+    assert FINALIZE_NOW not in client.requests[-1]["messages"][-1]["content"][0]["content"]
+    assert_append_only(client)
+    assert decision.source == "manager"
+
+
+def test_a_search_answered_in_the_next_response_is_not_waiting():
+    # Pairs are by id and not by position: the deferred call's result opens the
+    # response after the one that made it.
+    late = Block(type="web_search_tool_result", tool_use_id="srv_9", content=[])
+    script = [worked()] * 9
+    script += [
+        reply(waiting(), use("adjust_players", adjust())),
+        reply(late, use("adjust_players", adjust())),
+        reply(use("finalize_decision", finalize())),
+    ]
+    client, decision = strictly(script)
+
+    assert last_text(client.requests[-1]) == FINALIZE_NOW
+    assert decision.source == "manager"
+
+
+def test_a_run_that_has_not_finished_is_waiting_whatever_is_inside_it():
+    client, decision = twelfth(
+        waiting("srv_0", "code_execution"), nested(), use("adjust_players", adjust())
+    )
+
+    assert only_result(client.requests[-1])["content"].endswith(FINALIZE_NOW)
+    assert decision.source == "manager"
+
+
+class Unreadable:
+    @property
+    def type(self) -> str:
+        raise RuntimeError("not a block")
+
+
+class UnreadableCaller:
+    type = "server_tool_use"
+    id = "srv_1"
+    tool_use_id = None
+
+    @property
+    def caller(self) -> Any:
+        raise RuntimeError("not a caller")
+
+
+@pytest.mark.parametrize(
+    "odd",
+    [
+        None,
+        7,
+        Block(type=None),
+        Block(type="server_tool_use", id=None),
+        Block(type="server_tool_use", id={"a": 1}),
+        Block(type="web_search_tool_result", tool_use_id=["srv_9"]),
+        Unreadable(),
+        UnreadableCaller(),
+    ],
+)
+def test_one_odd_block_does_not_hide_a_call_that_is_waiting(odd):
+    # Straight to the helper: an odd block this odd is one the loop's other
+    # readers would meet first.
+    content = [odd, waiting(), odd]
+
+    assert call_pending([{"role": "assistant", "content": content}])
+
+
+def test_a_history_it_cannot_read_has_nothing_waiting():
+    assert not call_pending([])
+    assert not call_pending([{"role": "assistant", "content": "text"}])
+    assert not call_pending([{"role": "assistant"}])
+    assert not call_pending([{"role": "user", "content": [waiting()]}])
+
+
+def test_a_check_that_fails_asks_as_it_always_did(monkeypatch):
+    def broken(_messages: Any) -> bool:
+        raise RuntimeError("no")
+
+    monkeypatch.setattr(agent, "call_pending", broken)
+    _, decision = converse(
+        [worked()] * 11 + [reply(use("finalize_decision", finalize()))]
+    )
+
+    assert decision.source == "manager"
+
+
+def test_the_words_are_not_piled_into_the_result_by_a_run_of_truncations():
+    client, decision = strictly(
+        [
+            reply(waiting(), use("adjust_players", adjust())),
+            reply(text("Half"), stop="max_tokens"),
+            reply(text("Half"), stop="max_tokens"),
+            reply(use("finalize_decision", finalize())),
+        ]
+    )
+
+    assert str(client.requests[-1]["messages"]).count(FINALIZE_NOW) == 1
+    assert decision.source == "manager"
+
+
+def test_a_request_already_sent_is_not_edited_behind_its_back():
+    client, _ = cut_off(waiting(), use("adjust_players", adjust()))
+    sent, asked = client.requests[1], client.requests[2]
+
+    assert FINALIZE_NOW not in str(sent["messages"])
+    assert asked["messages"][:-1] == sent["messages"][:-1]
+    assert len(asked["messages"]) == len(sent["messages"])
+
+
+def fresh_conversation():
+    return agent._Conversation(
+        FakeClient([]), CFG, INPUTS, SOLVE0, XP, BRIEFING, FakeResolver(),
+        date(2026, 8, 21),
+    )
+
+
+def test_the_stored_result_is_replaced_and_never_edited_in_place():
+    conversation = fresh_conversation()
+    result = {"type": "tool_result", "tool_use_id": "t", "content": "Recorded."}
+    message = {"role": "user", "content": [result]}
+    conversation.messages += [{"role": "assistant", "content": [waiting()]}, message]
+    conversation._ask_for_decision()
+
+    assert conversation.messages[-1]["content"][0]["content"].endswith(FINALIZE_NOW)
+    assert result["content"] == "Recorded." and message["content"] == [result]
+
+
+def test_a_result_that_is_not_words_is_left_alone():
+    conversation = fresh_conversation()
+    odd = {"type": "tool_result", "tool_use_id": "t", "content": [{"type": "text", "text": "x"}]}
+    conversation.messages += [
+        {"role": "assistant", "content": [waiting()]},
+        {"role": "user", "content": [odd]},
+    ]
+    conversation._ask_for_decision()
+
+    assert conversation.messages[-1]["content"] == [
+        odd, {"type": "text", "text": FINALIZE_NOW}
+    ]
 
 
 # --- searches that did not come back ----------------------------------------
