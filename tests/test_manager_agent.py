@@ -2083,6 +2083,34 @@ def test_a_note_says_what_this_turn_did_and_not_the_one_before():
     assert NOT_BROKEN not in only_result(client.requests[2])["content"]
 
 
+def test_a_transient_failure_is_not_carried_into_a_later_turn():
+    client, _ = converse(
+        [
+            reply(missed("unavailable"), text(), stop="end_turn"),
+            reply(found(), use("adjust_players", adjust())),
+            DONE,
+        ]
+    )
+
+    assert "Try those once more" not in only_result(client.requests[2])["content"]
+
+
+def test_one_capped_response_run_directly_loses_the_turn_its_promise():
+    # A pause makes one turn of two responses. One of them was direct, and the
+    # searches in it still count against the cap on the next request.
+    client, _ = converse(
+        [
+            reply(*[found("direct")] * 8, stop="pause_turn"),
+            reply(*[found()] * 8, use("adjust_players", adjust())),
+            DONE,
+        ]
+    )
+    content = only_result(client.requests[2])["content"]
+
+    assert NOT_BROKEN in content
+    assert "fresh" not in content and "may be refused" in content
+
+
 def test_a_paused_turns_searches_are_read_with_the_turn_they_belong_to():
     client, _ = converse(
         [
