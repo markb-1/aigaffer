@@ -325,6 +325,7 @@ def build_briefing(
     budget: int | None = None,
     last_week: "LastWeek | None" = None,
     table: list[TeamRow] | None = None,
+    earlier: str | None = None,
 ) -> str:
     """The whole briefing as one plain-text string. Pure; no I/O.
 
@@ -355,6 +356,10 @@ def build_briefing(
     club beside it. Supplied, a "Table and form" section follows the fixtures
     it is there to sanity-check; None — nothing played yet, or a table that
     could not be built — and there is no section at all.
+
+    ``earlier`` is the section on the call made earlier this gameweek, written
+    already (:func:`aigaffer.continuity.earlier_section`) and placed as it is
+    before the candidates it is to be weighed against. None adds nothing.
 
     A draft — a run with no squad — is a different question and says so in
     its title: fifteen players from nothing, no bank to spend, no free
@@ -389,6 +394,7 @@ def build_briefing(
         *_table(table, held, solve, board),
         _squad(held, board, event, solve.draft_mode),
         _team_sheet(solve.lineup, board, event, pick),
+        *([] if not earlier else [earlier]),
         _candidates(numbered, board, pick),
         *_chips(inputs, solve, board, event),
         _watchlist(held, board, event),

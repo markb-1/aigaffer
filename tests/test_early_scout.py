@@ -223,7 +223,7 @@ def test_the_early_scout_is_the_scout_under_its_own_name(monkeypatch, tmp_path):
         gaffer_cfg(tmp_path), make_client(pipeline_routes()), store, "early", send=False
     )
 
-    assert report.startswith("# AI Gaffer — GW2 early scout\n")
+    assert report.startswith("# AI Gaffer — GW2 early look\n")
     assert "## The Gaffer's view" in report
     assert (tmp_path / "state" / "reports" / "gw2-early.md").read_text(encoding="utf-8") == report
     assert (tmp_path / "GW2.md").read_text(encoding="utf-8") == report
@@ -239,7 +239,7 @@ def test_the_early_scouts_digest_carries_its_name(monkeypatch, tmp_path):
     run_pipeline(phone_cfg(tmp_path), make_client(pipeline_routes()), Store(tmp_path / "aigaffer.db"), "early")
 
     [digest] = phone.messages
-    assert digest.startswith("# AI Gaffer — GW2 early scout\n")
+    assert digest.startswith("# AI Gaffer — GW2 early look\n")
 
 
 @pytest.mark.parametrize("hours", [100.0, SCOUT_HORIZON_HOURS + 0.5])
@@ -298,7 +298,7 @@ def test_a_forced_early_scout_is_sent_whatever_the_gaffer_did(monkeypatch, tmp_p
 
     assert store.has_run(2, "early") is True
     [digest] = phone.messages
-    assert digest.startswith("# AI Gaffer — GW2 early scout\n")
+    assert digest.startswith("# AI Gaffer — GW2 early look\n")
 
 
 # --- what the review asked for ---------------------------------------------
@@ -332,7 +332,7 @@ def test_a_solver_only_early_scout_is_sent(monkeypatch, tmp_path):
 
     assert store.has_run(2, "early") is True
     [digest] = phone.messages
-    assert digest.startswith("# AI Gaffer — GW2 early scout\n")
+    assert digest.startswith("# AI Gaffer — GW2 early look\n")
 
 
 def test_an_early_scout_named_inside_the_scout_window_is_shelved(monkeypatch, tmp_path):

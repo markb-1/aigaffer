@@ -2467,3 +2467,25 @@ def test_a_draft_has_no_banner():
     for text in (text, phone):
         assert "⚡" not in text
         assert text.splitlines()[2].startswith("Deadline:")
+
+
+# --- the line about the earlier call --------------------------------------------
+
+
+def test_the_line_about_the_earlier_call_opens_the_checklist_everywhere():
+    said = "Same call as Tuesday's early look."
+    added = lambda text: text.replace("## Do this\n\n", f"## Do this\n\n{said}\n")  # noqa: E731
+
+    def full(**kwargs):
+        return render_report(
+            "scout", EVENT, PLANS, ONE, LINEUP, CHIPS, BOOTSTRAP, XP, free_transfers=1, **kwargs
+        )
+
+    def phone(**kwargs):
+        return render_digest("scout", EVENT, ONE, LINEUP, BOOTSTRAP, None, free_transfers=1, **kwargs)
+
+    for render in (full, phone):
+        assert said not in render() and render(continuity=None) == render()
+        assert render(continuity=said) == added(render()) != render()
+    block = action_block(EVENT, ONE, LINEUP, BOOTSTRAP, free_transfers=1, continuity=said)
+    assert block.do_this.splitlines()[2] == said

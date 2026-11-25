@@ -288,6 +288,7 @@ def render_report(
     calendar: "ChipCalendar | None" = None,
     executed: "Executed | None" = None,
     cards: CardInputs | None = None,
+    continuity: str | None = None,
 ) -> str:
     """The whole report as one markdown string. Pure; no I/O.
 
@@ -333,6 +334,10 @@ def render_report(
     ``cards`` is what the transfer cards read (the run's player rows, the
     window, the squad and the bank before the moves). Omitted, the
     recommendation keeps its Out and In bullets as they were.
+
+    ``continuity`` is the line that opens "Do this": whether this is the call
+    made earlier in the gameweek or a changed one
+    (:func:`aigaffer.continuity.report_line`). None prints nothing.
     """
     players = {player.id: player for player in bootstrap.elements}
     clubs = {team.id: team.short_name for team in bootstrap.teams}
@@ -350,6 +355,7 @@ def render_report(
     action = action_block(
         event, choice, lineup, bootstrap, gaffer,
         free_transfers=free_transfers, selling_prices=selling_prices, executed=executed,
+        continuity=continuity,
     )
 
     sections = [
@@ -400,6 +406,7 @@ def action_block(
     free_transfers: int | None = None,
     selling_prices: dict[int, int] | None = None,
     executed: "Executed | None" = None,
+    continuity: str | None = None,
 ) -> ActionBlock:
     """The chip banner, the executed week's "working from" block and the
     "Do this" checklist, from the arguments :func:`render_report` is given.
@@ -425,6 +432,7 @@ def action_block(
         else _do_this(
             event, choice, lineup, players, clubs, chip, free_hit,
             free_transfers, selling_prices, chip_entered=entered,
+            continuity=continuity,
         ),
     )
 
@@ -547,6 +555,7 @@ def render_digest(
     calendar: "ChipCalendar | None" = None,
     executed: "Executed | None" = None,
     cards: CardInputs | None = None,
+    continuity: str | None = None,
 ) -> str:
     """The report as the phone gets it. Pure; no I/O.
 
@@ -565,6 +574,7 @@ def render_digest(
     what squad it is working from, after the header and its chip line.
     ``cards`` is the transfer cards' input, as :func:`render_report` takes it:
     under the recommendation each move gets its card. None prints the bullets.
+    ``continuity`` opens the checklist, as it does the full report's.
 
     Straight after the checklist it carries the whole eleven and the bench
     (:func:`phone_lineup`), because the full report that holds them is on
@@ -593,6 +603,7 @@ def render_digest(
             _do_this(
                 event, choice, lineup, players, clubs, chip, free_hit,
                 free_transfers, selling_prices, chip_entered=entered,
+                continuity=continuity,
             )
         )
         sections.append(
@@ -1279,6 +1290,7 @@ def _do_this(
     free_transfers: int | None,
     selling_prices: dict[int, int] | None = None,
     chip_entered: bool = False,
+    continuity: str | None = None,
 ) -> str:
     """The week's moves as a checklist, first and imperative.
 
@@ -1307,7 +1319,13 @@ def _do_this(
     ``chip_entered`` says the chip came from what he entered, and the line says
     so instead of telling him to play it.
     """
-    lines = ["## Do this", "", f"⏰ Make these by {deadline(event)} — GW{event.id}"]
+    lines = [
+        "## Do this",
+        "",
+        # Before the checklist, so a changed call is read before it is entered.
+        *([] if not continuity else [continuity]),
+        f"⏰ Make these by {deadline(event)} — GW{event.id}",
+    ]
     # The chip is the first line under the deadline, in capitals: see
     # :func:`_chip_order` for why it moved up from under the sales.
     if chip != NO_CHIP:

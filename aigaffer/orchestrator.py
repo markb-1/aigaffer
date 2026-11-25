@@ -112,6 +112,20 @@ from aigaffer.data.models import (
     Squad,
     Standing,
 )
+from aigaffer.continuity import (
+    FACTS_SKIPPED,
+    NOISE_POINTS,
+    SOLVERS_PICK,
+    Call,
+    Continuity,
+    earlier_section,
+    fielded,
+    read_earlier,
+    read_rows,
+    report_line,
+    since,
+)
+from aigaffer.continuity import UNREADABLE as EARLIER_UNREADABLE
 from aigaffer.detailed.render import render_detailed
 from aigaffer.detailed.snapshot import (
     build_snapshot,
@@ -192,7 +206,7 @@ DEADLINE_MODE, SCOUT_MODE, REMINDER_MODE = "deadline", "scout", "reminder"
 # because the store counts reports by mode and a week gets one of each; its
 # own name in the report header, because "GW4 early" says nothing.
 EARLY_MODE = "early"
-MODE_LABELS = {EARLY_MODE: "early scout"}
+MODE_LABELS = {EARLY_MODE: "early look"}
 # The windows hang off the anchors in :mod:`aigaffer.config`, opening at the
 # anchor and staying open until the next report's territory begins, so the
 # first tick to land inside one runs as close to the anchor as the schedule
@@ -254,6 +268,8 @@ STOOD_DOWN = "the gaffer stood down"
 # Appended to the DECIDED line when he used more searches than the run's
 # budget allows: the budget is advice in the briefing, and this is the log
 # that says whether it was taken.
+# Said when the line about the earlier call could not be written.
+LINE_SKIPPED = "earlier call: the report's line was skipped ({reason})"
 # Said when the ledger could not be judged at all; the run goes on without it.
 LEDGER_UNREADABLE = "news ledger: could not be judged ({reason}) — running without it"
 BUDGET_EXCEEDED = " — search budget exceeded ({spent}/{budget})"
@@ -261,7 +277,7 @@ BUDGET_EXCEEDED = " — search budget exceeded ({spent}/{budget})"
 WITHHELD = "the report was withheld for the next tick"
 # And the early scout's own ending: written down, out of retries, and not
 # sent, because the scout is hours away and will be asked properly.
-SHELVED = "the early scout was kept but not sent: the scout will be asked properly"
+SHELVED = "the early look was kept but not sent: the scout will be asked properly"
 # The other scheduler pushed this report while this run was going: two
 # schedulers, one store, and a manager run long enough for the second tick
 # to start before the first has finished. Nothing is sent or saved.
@@ -598,11 +614,17 @@ def run_pipeline(
     # effective chip history holds none for this gameweek — and passes his
     # ``none``, after which played_chip below makes the recorded chip the
     # week's.
+    # What the last run of this gameweek told the owner, for the gaffer to keep
+    # or to answer for changing. None, and no more said, when there was none or
+    # it cannot be read.
+    earlier = _continuity(
+        cfg, store, effective, solved, projections, xmins, prices, news, clock
+    )
     gaffer = _consult(
         cfg, effective, solved, projections, xmins, prices, strengths=strengths,
         mode=mode, today=clock.date(), news=news,
         last_week=review_lessons(store, effective.event.id),
-        table=table,
+        table=table, continuity=earlier,
     )
 
     # From here down the week is his, if there was a him: the plan he chose and
@@ -667,6 +689,9 @@ def run_pipeline(
         pid not in rows for pid in [*choice.transfers_out, *choice.transfers_in]
     ):
         print(CARDS_SKIPPED)
+    said = _continuity_line(
+        cfg, earlier, effective, choice, lineup, chip, gaffer, executed, clock
+    )
     report = render_report(
         _label(mode, drafting=solved.draft_mode),
         event,
@@ -691,6 +716,7 @@ def run_pipeline(
         calendar=calendar,
         executed=executed,
         cards=cards,
+        continuity=said,
     )
     # Asked for, and not there at all. Not the same as the kill switch, no key
     # or a draft — those are choices, and the invariant is that they render
@@ -795,6 +821,11 @@ def run_pipeline(
             chip_justification=gaffer.chip_justification,
             searches=gaffer.searches,
         )
+        if gaffer.change_reason:
+            decision["change_reason"] = gaffer.change_reason
+    # Which run this one's call was compared with, for a later reader.
+    if earlier is not None:
+        decision["earlier"] = [earlier.earlier.mode, earlier.earlier.ts.isoformat()]
 
     # The expensive part is over; before the phone, the other scheduler's
     # word. The store in hand said nothing had run when this tick began, and
@@ -901,6 +932,7 @@ def run_pipeline(
                             event, choice, lineup, effective.bootstrap, gaffer,
                             free_transfers=effective.free_transfers,
                             selling_prices=prices, executed=executed,
+                            continuity=said,
                         ).text(),
                         table=table,
                     ),
@@ -934,6 +966,7 @@ def run_pipeline(
             calendar=calendar,
             executed=executed,
             cards=cards,
+            continuity=said,
         )
         # The two lines the report carries that the renderer cannot know
         # about ride the digest too, under the same conditions: the accident
@@ -2006,6 +2039,7 @@ def _consult(
     news: LedgerView | None = None,
     last_week: LastWeek | None = None,
     table: list[TeamRow] | None = None,
+    continuity: Continuity | None = None,
 ) -> "ManagerDecision | None":
     """Put the week to the manager, and come back with the week to enter.
 
@@ -2037,6 +2071,8 @@ def _consult(
     ``today`` is the run's one clock's date, for the briefing and for the
     manager's own checks on the quotes he records. ``news`` is the evaluated
     news ledger the briefing lays out under "What we already know".
+    ``continuity`` is the call made earlier this gameweek: its section goes in
+    the briefing and the loop holds him to it. None is neither.
     """
     if solved.draft_mode or not cfg.manager_enabled:
         return None
@@ -2115,9 +2151,11 @@ def _consult(
                 inputs, solved, projections, inputs.free_transfers,
                 today=today, xmins=xmins, ledger=news, budget=budget,
                 last_week=last_week, table=table,
+                earlier=None if continuity is None else continuity.section,
             ),
             resolver,
             today=today,
+            continuity=continuity,
         )
     except Exception as error:  # the gaffer is a luxury; the report is not
         decision = solver_view(f"unexpected {type(error).__name__}")
@@ -2153,6 +2191,143 @@ def _consult(
     else:
         print(f"{STOOD_DOWN}: {decision.source.partition(': ')[2]}")
     return decision
+
+
+def _continuity(
+    cfg: Config,
+    store: Store,
+    inputs: PipelineInputs,
+    solved: SolveResult,
+    projections: dict[int, PlayerProjection],
+    xmins: dict[int, float],
+    selling_prices: dict[int, int] | None,
+    news: LedgerView,
+    clock: datetime,
+) -> Continuity | None:
+    """The call made earlier this gameweek and all that is known about it, or
+    None. Never raises.
+
+    It runs before the gaffer is asked and outside his own net, so nothing in
+    it may escape: a record that cannot be used is a run with no earlier call,
+    which is every run as it was before this existed. What has changed since
+    has a net of its own inside that one, because a bad snapshot costs only
+    the facts and never the call.
+    """
+    if solved.draft_mode or inputs.squad is None:
+        return None
+    event = inputs.event.id
+    earlier = read_earlier(store, event)
+    if earlier is None:
+        return None
+    try:
+        facts: dict[int, list[tuple[str, str]]] | None = None
+        used: dict[int, float] = {}
+        try:
+            then = read_rows(cfg.state_dir, event, earlier)
+            now = player_rows(
+                bootstrap=inputs.bootstrap,
+                fixtures=inputs.fixtures,
+                projections=projections,
+                xmins=xmins,
+                ids=then,
+                selling_prices=selling_prices,
+            )
+            facts = since(then, now)
+            used = {pid: float(row["xm"]) for pid, row in then.items()}
+        except Exception as error:  # the facts, not the call
+            facts, used = None, {}
+            print(FACTS_SKIPPED.format(reason=type(error).__name__))
+        used.update(earlier.minutes)
+
+        def name(pid: int) -> str:
+            player = inputs.players.get(pid)
+            return player.web_name if player is not None else f"player {pid}"
+
+        executed = inputs.executed
+        stamps = [] if executed is None else [
+            datetime.fromisoformat(ts) for _, ts in executed.verdicts
+        ]
+        panel = asdict(solved.chips) if solved.chips is not None else {}
+        before, after = earlier.chip_evs.get(earlier.chip), panel.get(earlier.chip)
+        return Continuity(
+            earlier=earlier,
+            since=facts,
+            used=used,
+            known={pid: judged.entry for pid, judged in news.entries.items()},
+            chip_kept=held_for(held_by_rules(inputs), earlier.chip, event) is not None,
+            chip_moved=(
+                before is None or after is None or abs(after - before) >= NOISE_POINTS
+            ),
+            section=earlier_section(
+                earlier,
+                facts,
+                now=clock,
+                name=name,
+                plan_id=next(
+                    (
+                        number
+                        for number, plan in enumerate(solved.plans)
+                        if fielded(plan, earlier.chip) == earlier.squad
+                    ),
+                    None,
+                ),
+                entered=earlier.ts in stamps,
+                relevant=set().union(*(
+                    {*plan.squad, *plan.transfers_out} for plan in solved.plans
+                )) | earlier.squad,
+            ),
+        )
+    except Exception as error:  # memory, not the week
+        print(EARLIER_UNREADABLE.format(reason=type(error).__name__))
+        return None
+
+
+def _continuity_line(
+    cfg: Config,
+    context: Continuity | None,
+    inputs: PipelineInputs,
+    choice: Plan,
+    lineup: Lineup,
+    chip: str,
+    gaffer: "ManagerDecision | None",
+    executed: Executed | None,
+    clock: datetime,
+) -> str | None:
+    """The line that opens "Do this", or None. Never raises.
+
+    Read off the decision as it will be entered, with the chip already
+    settled and the eleven that plays it, so it cannot say anything the
+    checklist under it does not. The words after "because" are the gaffer's on
+    a week he decided; on a week he was asked and did not, they say whose pick
+    it is; with no manager configured there is nothing to add.
+    """
+    if context is None:
+        return None
+    try:
+        temporary, _ = _freehit_team(chip, choice, executed)
+        if gaffer is not None and gaffer.source == BY_MANAGER:
+            reason = gaffer.change_reason
+        else:
+            reason = SOLVERS_PICK if cfg.manager_enabled else None
+
+        def name(pid: int) -> str:
+            player = inputs.players.get(pid)
+            return player.web_name if player is not None else f"player {pid}"
+
+        return report_line(
+            context.earlier,
+            Call(
+                frozenset(temporary or choice.squad), chip, lineup.captain, lineup.vice
+            ),
+            transfers_out=choice.transfers_out,
+            transfers_in=choice.transfers_in,
+            name=name,
+            reason=reason,
+            now=clock,
+        )
+    except Exception as error:  # a line, not the report
+        print(LINE_SKIPPED.format(reason=type(error).__name__))
+        return None
 
 
 def _undecided(
@@ -2716,8 +2891,8 @@ def _baseline_label(solved: SolveResult) -> str | None:
 
 def _label(mode: str, drafting: bool) -> str:
     """The mode as the report header says it. A draft is not the week's
-    transfer decision and must not be read as one; the early scout is the
-    scout and says so."""
+    transfer decision and must not be read as one; the early run goes by a
+    name with no "scout" in it, so that it is never taken for the scout."""
     name = MODE_LABELS.get(mode, mode)
     return f"{name} — {DRAFT_LABEL}" if drafting else name
 

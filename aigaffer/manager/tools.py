@@ -152,6 +152,16 @@ the noise in the projection, and a hit has to beat it by four points more than \
 that. "The solver has it a point ahead" is not a reason to move; "he is \
 injured and the solver does not know" is.
 
+Keep your word. The briefing may carry the call you made earlier this \
+gameweek: the owner has read it and may have acted on it. A new run is not a \
+reason to change it, and neither is being unsure of it again: the same numbers \
+a few tenths apart are the same numbers. Change it when something is new — an \
+injury, a manager's word, minutes, a price or a fixture that has moved — and \
+then change it without hesitating; news always outranks an earlier call. When \
+you do, change_reason is the one line he reads about it, and change_player_id \
+names the player the new evidence is about. When you keep the call, both are \
+null.
+
 Be honest in the rationale. It is read by the person whose team this is, after \
 the gameweek has been played, next to the score. Say what you did, what you \
 learned that made you do it, and what you were unsure about.
@@ -386,6 +396,27 @@ TOOLS: list[dict] = [
                         " what you were unsure about."
                     ),
                 },
+                # Null for the usual week, for the reason chip_justification
+                # is: a field with nothing to say has a value to say it with.
+                "change_reason": {
+                    "anyOf": [{"type": "string"}, {"type": "null"}],
+                    "description": (
+                        "Only when this changes the earlier call in the briefing:"
+                        " why, in plain words under 80 characters, finishing"
+                        " the sentence 'because …'. It is printed above the"
+                        " checklist. null when there is no earlier call or you"
+                        " keep it."
+                    ),
+                },
+                "change_player_id": {
+                    "anyOf": [{"type": "integer"}, {"type": "null"}],
+                    "description": (
+                        "The player the new evidence for the change is about:"
+                        " one you recorded new news on this run with"
+                        " adjust_players, or one the API has changed since the"
+                        " earlier call. null otherwise."
+                    ),
+                },
             },
             "required": [
                 "plan_id",
@@ -394,6 +425,8 @@ TOOLS: list[dict] = [
                 "chip",
                 "chip_justification",
                 "rationale",
+                "change_reason",
+                "change_player_id",
             ],
             "additionalProperties": False,
         },

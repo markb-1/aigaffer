@@ -105,9 +105,9 @@ down there. The remaining gaps are small:
   withheld alert;
 - a fetch that fails, which lets the tick carry on rather than silence it.
 
-The early scout is the one report the gate never wakes for, because its
+The early look is the one report the gate never wakes for, because its
 evening is days from the deadline. So only your own box sends it. If the box
-is down that evening, the early scout is skipped and Thursday's scout is the
+is down that evening, the early look is skipped and Thursday's scout is the
 first word.
 
 GitHub drops scheduled runs under load, sometimes for whole days. That's why
@@ -324,7 +324,7 @@ decides in three turns costs cents. A bad one (a dozen searches, two
 re-solves, twelve turns each re-reading everything before it) costs an order
 of magnitude more.
 
-There are three decision runs a gameweek: the early scout, the scout and the
+There are three decision runs a gameweek: the early look, the scout and the
 deadline report. The reminder never wakes the gaffer. That's on the order of
 $3–12 a week and $75–300 a season, weighted to the low end because most weeks
 are quiet.

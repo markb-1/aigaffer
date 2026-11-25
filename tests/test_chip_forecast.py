@@ -300,7 +300,7 @@ def test_a_record_from_last_gameweek_names_itself_and_is_not_this_week():
 def test_the_early_scout_is_named_as_such():
     text = render(record(calendar_=calendar()), held=(), mode="early")
 
-    assert text.splitlines()[0] == "🗓 Chip forecast — as of Wednesday's early scout (GW7)"
+    assert text.splitlines()[0] == "🗓 Chip forecast — as of Wednesday's early look (GW7)"
 
 
 def test_no_chips_in_the_current_set_says_so_and_still_lists_the_rest():

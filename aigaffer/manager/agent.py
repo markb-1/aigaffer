@@ -37,14 +37,19 @@ from typing import TYPE_CHECKING, Any
 
 import anthropic
 
+from aigaffer.chips import FREE_HIT
 from aigaffer.config import Config
+from aigaffer.continuity import Call, Continuity, clean_reason, fielded
+from aigaffer.executed import NO_CHIP as NOTHING_ENTERED
 from aigaffer.manager.briefing import format_plans, initial_plan_ids
+from aigaffer.manager.keep_call import check_call
 from aigaffer.manager.search_health import call_pending, examine
 from aigaffer.manager.tools import (
     MAX_SEARCHES,
     NO_CHIP,
     SYSTEM_PROMPT,
     TOOLS,
+    Finalized,
     ToolError,
     validate_adjustments,
     validate_finalize,
@@ -101,6 +106,17 @@ EFFORT = {"effort": "medium"}
 
 MANAGER = "manager"
 FALLBACK = "solver-fallback"
+
+# How often a decision that changes the earlier call may be sent back for want
+# of a reason or of new evidence, and how much of the budget has to be left to
+# send one back at all. Unlike an illegal plan or captain, this is a decision
+# that could be entered as it stands, so it is never worth the week: past
+# either limit, and on the last turn, it is accepted as it is.
+MAX_CONTINUITY_REFUSALS = 2
+INSIST_FLOOR_SECONDS = 240
+CHANGE_ACCEPTED = "earlier call changed without new evidence: accepted ({refusals} refusals)"
+CHANGE_UNCHECKED = "earlier call: the change could not be checked ({reason}) — accepted"
+HELD = "the decision sent back for its reason stands: {reason}"
 
 # The refresh clause first, because the live GW3 scout showed what happens
 # without it: the gaffer ended a turn exactly as the prompt tells it to —
@@ -242,6 +258,9 @@ class ManagerDecision:
     # the decision record and the report never do.
     record: list[dict] = field(default_factory=list)
     registry: dict[int, Plan] = field(default_factory=dict)
+    # Why it is not the earlier call, as the report prints it after "because".
+    # None for a week that keeps it, has none, or is the solver's.
+    change_reason: str | None = None
 
 
 def run_manager(
@@ -254,6 +273,7 @@ def run_manager(
     resolver: Resolver,
     *,
     today: date | None = None,
+    continuity: Continuity | None = None,
 ) -> ManagerDecision:
     """Put the week to the manager and come back with a decision, always.
 
@@ -278,6 +298,10 @@ def run_manager(
 
     ``today`` is the briefing's own date, so that a quote the briefing allows
     is never refused; it defaults to the current UTC date.
+
+    ``continuity`` is the call made earlier this gameweek, which a decision is
+    held to unless something is new (:mod:`aigaffer.manager.keep_call`). None,
+    the default, holds it to nothing.
     """
     conversation = None
     try:
@@ -290,6 +314,7 @@ def run_manager(
             briefing,
             resolver,
             today or datetime.now(UTC).date(),
+            continuity,
         )
         return conversation.run()
     except (
@@ -320,7 +345,18 @@ def _abandoned(
     same reason: this is the solver's own week, and the caller is holding the
     projections it was solved on. The searches stay: they happened, and they
     were paid for.
+
+    Unless he had decided. A decision sent back only for changing the earlier
+    call was legal and complete, and whatever stopped the conversation after
+    that is no reason to lose it: it stands, and it is his.
     """
+    if conversation is not None and conversation.held is not None:
+        print(HELD.format(reason=reason))
+        return replace(
+            conversation.held,
+            searches=conversation.searches,
+            record=[dict(r) for r in conversation.record],
+        )
     lineup = solve0.lineup
     return ManagerDecision(
         plan=solve0.choice,
@@ -359,8 +395,14 @@ class _Conversation:
         briefing: str,
         resolver: Resolver,
         today: date,
+        continuity: Continuity | None = None,
     ) -> None:
         self.today = today
+        self.continuity = continuity
+        # A legal decision sent back for changing the earlier call, the latest
+        # of them, and how many there have been.
+        self.held: ManagerDecision | None = None
+        self.refusals = 0
         self.client = client
         self.cfg = cfg
         self.inputs = inputs
@@ -370,6 +412,9 @@ class _Conversation:
 
         # The ids the briefing printed, minted in the one place that mints them.
         self.registry: dict[int, Plan] = dict(initial_plan_ids(solve0))
+        # Which solve each plan came from, the briefing's being the first: two
+        # plans' nets are comparable only inside one.
+        self.solve_of: dict[int, int] = dict.fromkeys(self.registry, 0)
         # The briefing is the longest thing in the conversation and never
         # changes once written, so it is cached with the system prompt: the
         # loop is up to a dozen turns and every one of them resends it.
@@ -730,6 +775,7 @@ class _Conversation:
         first = len(self.registry)
         fresh = [(first + offset, plan) for offset, plan in enumerate(solved.plans)]
         self.registry.update(fresh)
+        self.solve_of.update(dict.fromkeys(dict(fresh), max(self.solve_of.values(), default=0) + 1))
         pick = next((pid for pid, plan in fresh if plan is solved.choice), None)
 
         return "\n\n".join(
@@ -757,7 +803,7 @@ class _Conversation:
         )
         lineup = self._lineup(final.plan)
         applied, unapplied = self._split()
-        return ManagerDecision(
+        decision = ManagerDecision(
             plan=final.plan,
             lineup=replace(lineup, captain=final.captain, vice=final.vice),
             captain=final.captain,
@@ -776,6 +822,53 @@ class _Conversation:
             projections=self.projections,
             # A copy: the ids he chose among, frozen at the moment he chose.
             registry=dict(self.registry),
+        )
+        return replace(decision, change_reason=self._kept(args, final, decision))
+
+    def _kept(self, args: dict, final: Finalized, decision: ManagerDecision) -> str | None:
+        """The reason this decision changes the earlier call, if it does; or
+        the correction that asks for one, with the decision kept meanwhile.
+
+        A week the owner has entered a free hit in has nothing left to change,
+        and a chip he has entered is the week's whatever is finalized."""
+        if self.continuity is None:
+            return None
+        executed = self.inputs.executed
+        chip = executed.chip if executed is not None else NOTHING_ENTERED
+        if chip == FREE_HIT:
+            return None
+        if chip == NOTHING_ENTERED:
+            chip = final.chip
+        event = self.inputs.event.id
+        try:
+            return check_call(
+                self.continuity,
+                Call(fielded(final.plan, chip), chip, final.captain, final.vice),
+                plan_id=final.plan_id,
+                registry=self.registry,
+                solve_of=self.solve_of,
+                xi=decision.lineup.xi,
+                gw_xp={pid: p.per_gw.get(event, 0.0) for pid, p in self.projections.items()},
+                record=self.record,
+                reason=args.get("change_reason"),
+                player_id=args.get("change_player_id"),
+            )
+        except ToolError:
+            if self._may_insist():
+                self.refusals += 1
+                self.held = decision
+                raise
+            print(CHANGE_ACCEPTED.format(refusals=self.refusals))
+        except Exception as error:  # a bug in the check is not worth his week
+            print(CHANGE_UNCHECKED.format(reason=type(error).__name__))
+        return clean_reason(args.get("change_reason"))
+
+    def _may_insist(self) -> bool:
+        """Is there room to send a legal decision back and still get another?"""
+        return (
+            self.refusals < MAX_CONTINUITY_REFUSALS
+            and self.turn < MAX_TURNS
+            and monotonic() - self.started < TIME_BUDGET_SECONDS - INSIST_FLOOR_SECONDS
         )
 
     def _split(self) -> tuple[list[dict], list[dict]]:

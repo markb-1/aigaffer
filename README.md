@@ -26,7 +26,7 @@ against the round just played:
 Each report is sent once, by the first scheduled tick inside its window. A
 window stays open until the next report's begins, so a tick the scheduler
 dropped is made up late rather than lost. When a round ends close to the next
-deadline, as a midweek one does, there is one scout and no early scout.
+deadline, as a midweek one does, there is one scout and no early look.
 
 **On Telegram** you get a digest, not the document. It opens with one line on
 where the season stands (points, overall rank, team value, bank, free
@@ -39,7 +39,7 @@ line.
 
 **Where things live:**
 
-- `GW{n}.md`, at the repo root: the verdict for each gameweek. The early scout
+- `GW{n}.md`, at the repo root: the verdict for each gameweek. The early look
   writes it first, the scout rewrites it and the deadline run overwrites it.
   Once the week's points are final it gains a **Looking back** review: what
   went well, what went wrong, and the lessons the next week's gaffer reads.

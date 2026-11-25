@@ -307,7 +307,7 @@ def test_the_echo_names_the_early_scout_and_the_free_hit_team():
 
     text = echo(row, verdict("early", SCOUT_TS), PLAYERS)
 
-    assert text.startswith("Recorded for GW2 (from Tuesday's early scout verdict):")
+    assert text.startswith("Recorded for GW2 (from Tuesday's early look verdict):")
     assert "No transfers; Free Hit played. Ferrer (C), Reyes (V)." in text
     assert "Free Hit team: GKP Alvez, Jarvis · DEF" in text
     assert "Bank £2.8m · 1 free transfer left" in text
