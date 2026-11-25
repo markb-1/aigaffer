@@ -220,9 +220,10 @@ def test_what_the_api_changed_is_seen_without_being_told(facts, about, enough):
     assert accepted(about=about, context=held_to(since=facts)) is enough
 
 
-def test_not_knowing_what_changed_is_never_a_reason_to_refuse():
+def test_not_knowing_what_changed_is_never_a_reason_to_refuse(capsys):
     assert accepted(about=7, context=held_to(since=None))
     assert not accepted(about=None, context=held_to(since=None))
+    assert "could not be checked" not in capsys.readouterr().out
 
 
 def test_minutes_nobody_remembers_count_as_news():
@@ -233,19 +234,23 @@ def test_minutes_nobody_remembers_count_as_news():
 # --- gaps ----------------------------------------------------------------------------
 
 
-def test_the_gap_is_only_ever_inside_one_solve():
-    # The re-solve has the earlier call as plan 2 (FRESH); the chosen plan is
-    # its own, so the gap is FRESH's. A plan of the first solve is never
-    # measured against it.
-    other = replace(loop.FRESH_HIT, objective=FRESH.objective + 2.0)
+def test_the_gap_is_measured_inside_the_chosen_plans_own_solve():
+    # 0.5 on FRESH, the earlier call in the re-solve; 2.5 on SWAP, the same
+    # squad in the first solve, which is another projection's number.
+    other = replace(loop.FRESH_HIT, objective=FRESH.objective + 0.5)
     resolver = FakeResolver(solved=replace(loop.SOLVE1, plans=[FRESH, other]))
     client, decision = decide(
-        [use("resolve", {})], done(plan_id=3, why="two are out"), resolver=resolver
+        [use("resolve", {})], done(plan_id=3, why="two are out"), done(plan_id=2), resolver=resolver
     )
-    assert len(client.requests) == 2 and decision.plan is other
+    assert "+0.5 net against plan 2" in only_result(client.requests[2])["content"]
+    assert decision.plan is FRESH
 
-    away = FakeResolver(solved=replace(loop.SOLVE1, plans=[other], choice=other))
-    client, decision = decide([use("resolve", {})], done(plan_id=2, why="two are out"), resolver=away)
+
+def test_a_solve_without_the_earlier_call_has_no_gap_to_measure():
+    # A point behind SWAP on the first solve's numbers, which is no gap at all.
+    other = replace(loop.FRESH_HIT, objective=SWAP.objective - 1.0)
+    resolver = FakeResolver(solved=replace(loop.SOLVE1, plans=[other], choice=other))
+    client, decision = decide([use("resolve", {})], done(plan_id=2, why="two are out"), resolver=resolver)
     assert len(client.requests) == 2 and decision.plan is other
 
 
@@ -355,6 +360,8 @@ def test_he_is_never_sent_back_on_the_last_turn():
     talk = [reply(text(), stop="end_turn") for _ in range(MAX_TURNS - 1)]
     client, decision = decide(*talk, done(**ROLLS))
     assert len(client.requests) == MAX_TURNS and decision.plan is CLOSE
+    # Accepted as it was given, not held and handed back: the reason is his.
+    assert decision.change_reason == "his minutes are unclear"
 
 
 @pytest.mark.parametrize("left, sent_back", [(INSIST_FLOOR_SECONDS - 1, False), (INSIST_FLOOR_SECONDS + 1, True)])
