@@ -356,6 +356,16 @@ detailed report: for each transfer, the captain, the chip, the plan over the
 others, and each player passed over. If that fails,
 those slots say "reason unavailable" and nothing else is lost.
 
+**The earlier call.** A run is shown what the last run of the same gameweek
+decided, and why. If it decides something else it has to say so in a line the
+report opens with: *Changed from Tuesday's early look: now roll, because …*. If
+it agrees, the line says *Same call as Tuesday's early look.* A change inside
+the noise (under 1.5 net over the window, or 0.5 xP for the captain) also needs
+new evidence: news the earlier run was not costed on, or a flag, a price or a
+fixture that moved. News always gets through, and so does a wider gap. A
+decision is sent back for this twice at most, and one that has been sent back
+still stands if the conversation then fails.
+
 ## The fallback doctrine
 
 A deadline is never silently missed, and a gaffer who can't be reached is no
@@ -389,7 +399,7 @@ first. Then the labelled solver report goes out and counts, so the reminder
 still has a verdict to check the news against.
 
 A dry run withholds nothing and alerts nobody. A forced run (`--force`, or the
-workflow's button) takes whatever answer it got. The early scout is the one
+workflow's button) takes whatever answer it got. The early look is the one
 exception: it is held until the scout's window opens, and past the retry limit
 it is written down but not sent, because the scout is hours away.
 

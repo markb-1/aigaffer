@@ -212,6 +212,7 @@ def _handle(
     if not snapshots:
         return NO_SNAPSHOT
     snapshot = snapshots[-1]
+    previous = snapshots[-2] if len(snapshots) > 1 else None
     report_md = render_detailed(snapshots, snapshot.get("deadline") or NO_DEADLINE)
 
     thread = book.thread(snapshot["gw"])[-THREAD_KEEP:]
@@ -228,7 +229,7 @@ def _handle(
     text = None
     for _ in range(ATTEMPTS):
         try:
-            text = ask_writer.answer(cfg, snapshot, report_md, thread, raw, budget, max_words)
+            text = ask_writer.answer(cfg, snapshot, report_md, thread, raw, budget, max_words, previous)
             break
         except Exception as error:  # an API error, an invalid answer, a fault: retried once
             reason = str(error) if isinstance(error, AskUnavailable) else type(error).__name__

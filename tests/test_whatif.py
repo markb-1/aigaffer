@@ -526,7 +526,7 @@ def test_an_early_scout_is_named_in_full(tmp_path: Path):
     overrides, label, _ = verdict_minutes(store, 6)
 
     assert overrides == {}
-    assert label.endswith("'s early scout")
+    assert label.endswith("'s early look")
 
 
 def test_no_verdict_means_base_minutes(tmp_path: Path):

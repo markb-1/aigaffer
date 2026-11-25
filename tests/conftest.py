@@ -116,6 +116,7 @@ SOLVER_CACHE_MODULES = frozenset(
         "tests.test_orchestrator",
         "tests.test_manager_retry",
         "tests.test_peer",
+        "tests.test_continuity_run",
         "tests.test_early_scout",
         "tests.test_whatif",
     }

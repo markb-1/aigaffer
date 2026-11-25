@@ -55,11 +55,13 @@ from typing import Any
 import anthropic
 
 from aigaffer.config import Config
+from aigaffer.continuity import WHY_CHARS, flat, why
 from aigaffer.data.table import table_lines
 from aigaffer.detailed.render import moves, name
 from aigaffer.inbox import normalise
-from aigaffer.manager.agent import EFFORT, MAX_RESUMPTIONS, MAX_TOKENS, _cached, _result, _rolling, _text
+from aigaffer.manager.agent import EFFORT, FALLBACK, MAX_RESUMPTIONS, MAX_TOKENS, _cached, _result, _rolling, _text
 from aigaffer.manager.tools import MARKUP, ToolError
+from aigaffer.recording import MODE_NAMES
 from aigaffer.report.render import price
 
 PLAYER = "player"
@@ -97,7 +99,9 @@ SYSTEM_PROMPT = (
     " it for where a team stands or how it is playing, and never say you lack"
     " the table when it is there. When he asks which of his own players to"
     " start or bench, judge on the coming gameweek only: the window totals"
-    " are for transfers. Not every"
+    " are for transfers. When he asks why the advice changed, explain it from"
+    " the Earlier call block: what the run before told him, why, and what this"
+    " run changed. Not every"
     " text is a question: if his is not one — thanks, or news such as \"I made"
     " the transfers\" — say briefly that it is not a question for you, and"
     " still name the gameweek; you cannot record transfers or play chips, so"
@@ -331,7 +335,51 @@ def validate_answer(text: Any, gw: int, max_words: int = WORD_LIMIT) -> str:
 # --- the briefing ----------------------------------------------------------------
 
 
-def ask_briefing(snapshot: dict, report_md: str) -> str:
+EARLIER_HEADING = "## Earlier call this gameweek"
+
+
+def earlier_block(previous: dict | None, snapshot: dict) -> list[str]:
+    """What the run before this one told the owner, or nothing.
+
+    Nothing when there was none, when it was an early run the gaffer never
+    decided (shelved, so never sent), and when its snapshot is any shape but
+    the one a run writes: a question is answered without it.
+    """
+    try:
+        if previous is None or previous["gw"] != snapshot["gw"]:
+            return []
+        decision = previous["decision"]
+        source = str(decision.get("source") or "")
+        if previous["mode"] == "early" and source.startswith(FALLBACK):
+            return []
+        out, came = moves(previous)
+        sold = ", ".join(name(previous, pid) for pid in out)
+        bought = ", ".join(name(previous, pid) for pid in came)
+        chip = decision.get("chip") or "none"
+        run = MODE_NAMES.get(previous["mode"], previous["mode"])
+        lines = [
+            "",
+            f"{EARLIER_HEADING} (GW{previous['gw']})",
+            "",
+            f"The {run} run ({previous['ts']}) told him: "
+            + (f"sell {sold}; buy {bought}" if out or came else "roll")
+            + f"; captain {name(previous, previous.get('captain'))}, vice"
+            f" {name(previous, previous.get('vice'))}; chip {chip}.",
+        ]
+        reason = flat(decision.get("change_reason") or why(decision.get("rationale")), WHY_CHARS)
+        if reason:
+            lines.append(f"Why, then: {reason}")
+        now = snapshot["decision"].get("change_reason")
+        lines.append(
+            "What differs now is under What changed above."
+            + (f" Why it changed: {flat(now, WHY_CHARS)}" if now else "")
+        )
+        return lines
+    except Exception:  # context for an answer, never the answer
+        return []
+
+
+def ask_briefing(snapshot: dict, report_md: str, previous: dict | None = None) -> str:
     """The cached block: which week, then the report as the owner can read it,
     then the league table when the run kept one.
 
@@ -341,6 +389,9 @@ def ask_briefing(snapshot: dict, report_md: str) -> str:
     cannot be forgotten. It is the lines the weekly gaffer reads
     (:func:`~aigaffer.data.table.table_lines`), with no club flagged — the
     squad is in the report already.
+
+    ``previous`` is the gameweek's run before this one, if it had one, for a
+    question about why the advice changed (:func:`earlier_block`).
     """
     lines = [
         f"# This week's plan: GW{snapshot['gw']}",
@@ -349,6 +400,7 @@ def ask_briefing(snapshot: dict, report_md: str) -> str:
         f" {snapshot['mode']} run. Here is the detailed report he can read:",
         "",
         report_md,
+        *earlier_block(previous, snapshot),
     ]
     table = snapshot.get("table")
     if table:
@@ -399,16 +451,16 @@ def _changed(snapshot: dict, thread: list[dict]) -> bool:
 
 def answer(
     cfg: Config, snapshot: dict, report_md: str, thread: list[dict], question: str, client: Any,
-    max_words: int = WORD_LIMIT,
+    max_words: int = WORD_LIMIT, previous: dict | None = None,
 ) -> str:
     """The gaffer's answer to ``question``, or AskUnavailable.
 
     ``thread`` is the earlier exchanges this gameweek, already capped by the
     handler; ``client`` is the handler's, built lazily there.
     ``max_words`` is the answer's exclusive word limit, lower than :data:`WORD_LIMIT` when the
-    handler will add a prefix.
+    handler will add a prefix. ``previous`` is the run before this one.
     """
-    conversation = _Conversation(client, cfg, snapshot, report_md, thread, question, max_words)
+    conversation = _Conversation(client, cfg, snapshot, report_md, thread, question, max_words, previous)
     try:
         return conversation.run()
     except anthropic.AnthropicError as error:
@@ -422,6 +474,7 @@ class _Conversation:
     def __init__(
         self, client: Any, cfg: Config, snapshot: dict, report_md: str,
         thread: list[dict], question: str, max_words: int = WORD_LIMIT,
+        previous: dict | None = None,
     ) -> None:
         self.max_words = max_words
         self.client = client
@@ -430,7 +483,7 @@ class _Conversation:
         self.messages: list[dict] = [{
             "role": "user",
             "content": [
-                _cached(ask_briefing(snapshot, report_md)),
+                _cached(ask_briefing(snapshot, report_md, previous)),
                 _text(question_block(snapshot, thread, question)),
             ],
         }]

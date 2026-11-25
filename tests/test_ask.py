@@ -59,6 +59,7 @@ from aigaffer.manager.ask_writer import (
     AskUnavailable,
     answer,
     ask_briefing,
+    earlier_block,
     find_player,
     validate_answer,
 )
@@ -815,3 +816,51 @@ def test_the_system_prompt_judges_starting_and_benching_on_the_coming_week():
     assert "start or bench" in prompt
     assert "coming gameweek only" in prompt
     assert "window totals are for transfers" in prompt
+
+
+# --- the earlier call -----------------------------------------------------------
+
+
+def before(**changes) -> dict:
+    """The gameweek's early run: the same board, rolled."""
+    earlier = board()
+    earlier["mode"] = "early"
+    earlier["plans"] = {k: dict(v) for k, v in earlier["plans"].items()}
+    earlier["plans"][earlier["chosen"]].update({"in": [], "out": []})
+    earlier["decision"] = {**earlier["decision"], "rationale": "WHY THIS PLAN\nNobody is better.", "source": "manager"}
+    return {**earlier, **changes}
+
+
+def test_the_briefing_says_what_the_run_before_told_him():
+    now = board()
+    now["decision"] = {**now["decision"], "change_reason": "Justin blanks"}
+    text = ask_briefing(now, "REPORT", before())
+    assert "## Earlier call this gameweek (GW8)" in text
+    assert "The early look run" in text and "told him: roll; captain" in text
+    assert "Why, then: Nobody is better." in text
+    assert "Why it changed: Justin blanks" in text
+
+
+def test_with_no_run_before_the_briefing_is_as_it_was():
+    assert ask_briefing(board(), "REPORT", None) == ask_briefing(board(), "REPORT")
+    assert "Earlier call" not in ask_briefing(board(), "REPORT")
+
+
+@pytest.mark.parametrize("previous", [
+    before(gw=7),
+    before(decision={"source": "solver-fallback: refusal", "chip": "none"}),
+    {}, {"gw": 8}, before(plans=None), before(decision=None), before(chosen=99), before(players=[]), "x",
+])
+def test_a_run_before_that_was_not_sent_or_cannot_be_read_adds_nothing(previous):
+    assert earlier_block(previous, board()) == []
+
+
+def test_the_handler_hands_the_run_before_to_the_gaffer(tmp_path):
+    cfg, inbox = setup(tmp_path, before(), board())
+    client = FakeClient([answered()])
+    assert ask(cfg, inbox, client)[0] == GOOD
+    assert "## Earlier call this gameweek" in request_text(client.requests[0])
+
+
+def test_the_prompt_says_where_to_explain_a_change_from():
+    assert "why the advice changed" in SYSTEM_PROMPT

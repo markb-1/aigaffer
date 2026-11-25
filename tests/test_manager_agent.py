@@ -483,6 +483,8 @@ def finalize(
     chip: str = "none",
     justification: str = "",
     rationale: str = RATIONALE,
+    why: str | None = None,
+    about: int | None = None,
 ) -> dict:
     return {
         "plan_id": plan_id,
@@ -491,14 +493,18 @@ def finalize(
         "chip": chip,
         "chip_justification": justification,
         "rationale": rationale,
+        "change_reason": why,
+        "change_player_id": about,
     }
 
 
-def converse(script: list[Any], resolver: FakeResolver | None = None):
+def converse(
+    script: list[Any], resolver: FakeResolver | None = None, *, inputs=INPUTS, **kwargs
+):
     """Run the loop over ``script``; hand back the client and the decision."""
     client = FakeClient(script)
     decision = run_manager(
-        client, CFG, INPUTS, SOLVE0, XP, BRIEFING, resolver or FakeResolver()
+        client, CFG, inputs, SOLVE0, XP, BRIEFING, resolver or FakeResolver(), **kwargs
     )
     # Every conversation any test runs must alternate: two user turns running
     # is a request the API is not promised to take.
@@ -1140,6 +1146,8 @@ def test_finalize_takes_every_field_the_decision_needs():
 
     assert sorted(schema["properties"]) == [
         "captain_id",
+        "change_player_id",
+        "change_reason",
         "chip",
         "chip_justification",
         "plan_id",

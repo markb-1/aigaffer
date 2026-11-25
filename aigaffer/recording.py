@@ -44,8 +44,9 @@ from aigaffer.whatif_log import WhatIfLog
 # never a verdict of its own.
 VERDICT_MODES = ("early", "scout", "deadline")
 
-# The report as the echo names it; the early scout is the scout and says so.
-MODE_NAMES = {"early": "early scout", "scout": "scout", "deadline": "deadline"}
+# The report as the echo names it. The early run is an "early look": two reports
+# with "scout" in their names read as two scouts.
+MODE_NAMES = {"early": "early look", "scout": "scout", "deadline": "deadline"}
 
 RECORDED = "Recorded for GW{gw} (from {day}'s {mode} verdict):"
 LATER_RUNS = "Later runs this gameweek work from this squad."

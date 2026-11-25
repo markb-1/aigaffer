@@ -232,6 +232,12 @@ def build_snapshot(
             "chip": decision.get("chip"),
             "chip_justification": decision.get("chip_justification", ""),
             "source": decision.get("decision_source", SOLVER),
+            # Why it is not the earlier call, on the runs that changed one.
+            **(
+                {"change_reason": decision["change_reason"]}
+                if decision.get("change_reason")
+                else {}
+            ),
         },
         "chip_evs": dict(chip_evs),
         "calendar": list(calendar_lines),
