@@ -39,7 +39,9 @@ import anthropic
 
 from aigaffer.config import Config
 from aigaffer.manager.briefing import format_plans, initial_plan_ids
+from aigaffer.manager.search_health import examine
 from aigaffer.manager.tools import (
+    MAX_SEARCHES,
     NO_CHIP,
     SYSTEM_PROMPT,
     TOOLS,
@@ -135,6 +137,38 @@ FINALIZE_NOW = (
     " have settled on none), your captain and vice from that plan's eleven, a"
     " chip (or 'none'), and the rationale."
 )
+
+# What he is told when his searches did not all come back, inside the result of
+# the tool he called beside them. The search tool runs on the server and a
+# refused search reads to him like a broken tool: the GW12 scout wrote that it
+# "stopped working", carried on, and never used the next turn's allowance.
+#
+# The allowance is called fresh only where the docs say it is, which is after
+# searches run from code. The retry is his to make because the searches are run
+# on the server and the loop has nothing it could send again.
+#
+# Each is said once a conversation: a second cap of eight is already past the
+# run's budget of fifteen. And neither is said once the clock is half gone, or
+# on the last two turns, because a worse-researched week on time beats a better
+# one that ran out of time and gave the week back to the solver.
+SPENT_NOTE = (
+    f"Search allowance: you used all {MAX_SEARCHES} of this turn's searches, so"
+    " any further one was refused. That is the cap, not a broken tool."
+)
+FRESH_NOTE = (
+    " The allowance is fresh now: if a player you would buy, captain or start"
+    " is still unchecked, search for him before you finalize, within the run's"
+    " search budget. If a search still fails, say so and decide."
+)
+NOT_FRESH_NOTE = (
+    " A further search may be refused: decide on what you have, and say who"
+    " went unchecked."
+)
+RETRY_NOTE = (
+    "Some searches failed on the server's side. Try those once more; if they"
+    " fail again, go on without them and say so."
+)
+NOTES_UNTIL_SECONDS = TIME_BUDGET_SECONDS / 2
 
 # What the report says when there was no managerial view to print. The reason
 # lives in ``source``; this is the sentence beside it, and it never carries the
@@ -347,6 +381,12 @@ class _Conversation:
         self.spent: dict[int, float] = {}
         self.record: list[dict] = []
         self.searches = 0
+        # What this turn's searches said about themselves, reset every turn,
+        # and which notes have been given, which is not.
+        self.turn = 0
+        self.spent_caps: list[bool] = []
+        self.transient = False
+        self.noted: set[str] = set()
         # The server-side container his searches ran in, once there has been
         # one. The web_search tool this loop declares filters its results by
         # running code on Anthropic's servers, so a turn that searches comes
@@ -382,6 +422,9 @@ class _Conversation:
         nudged = False
 
         for turn in range(1, MAX_TURNS + 1):
+            self.turn = turn
+            self.spent_caps = []
+            self.transient = False
             if self._expired():
                 return self.fallback(OUT_OF_TIME)
             if turn == MAX_TURNS:
@@ -405,6 +448,9 @@ class _Conversation:
                 # A turn cut off mid-sentence is a turn that never happened: its
                 # half-written tool call cannot be answered, so it is dropped
                 # rather than sent back, and the next turn asks for the decision.
+                # Its searches go uncounted, as they always have, but a search
+                # that failed in it still reaches the journal.
+                self._observe(response)
                 self._ask_for_decision()
                 continue
 
@@ -413,6 +459,7 @@ class _Conversation:
                 return decision
             if results:
                 self._append(response)
+                self._annotate(results)
                 self.messages.append({"role": "user", "content": results})
                 # Real work buys back the right to pause: the prompt tells him
                 # a turn boundary refreshes his search allowance, so a bare
@@ -746,6 +793,50 @@ class _Conversation:
         for block in getattr(response, "content", None) or []:
             if getattr(block, "type", None) == "web_search_tool_result":
                 self.searches += 1
+        self._observe(response)
+
+    def _observe(self, response: Any) -> None:
+        """Put one response's search errors in the journal, a line each.
+
+        Codes and counts and nothing else: see :mod:`.search_health` for what
+        is never printed. Whatever goes wrong in here stays here, because an
+        exception would reach :func:`run_manager` and cost the whole decision.
+        """
+        try:
+            health = examine(response, MAX_SEARCHES)
+            for line in health.lines:
+                print(line)
+            if health.spent:
+                self.spent_caps.append(health.fresh_next)
+            self.transient = self.transient or health.transient
+        except Exception as error:  # a log line is not worth the week
+            print(f"search note: tally skipped: {type(error).__name__}")
+
+    def _annotate(self, results: list[dict]) -> None:
+        """Tell him what became of this turn's searches, if it needs saying.
+
+        Inside the last result's content and never as a block of its own: while
+        a search is pending, a message with anything but tool results in it is
+        a request the API refuses.
+        """
+        if not (self.spent_caps or self.transient):
+            return
+        if self.turn >= MAX_TURNS - 1:
+            return
+        if monotonic() - self.started > NOTES_UNTIL_SECONDS:
+            return
+        notes = []
+        if self.spent_caps and "spent" not in self.noted:
+            self.noted.add("spent")
+            notes.append(
+                SPENT_NOTE + (FRESH_NOTE if all(self.spent_caps) else NOT_FRESH_NOTE)
+            )
+        if self.transient and "transient" not in self.noted:
+            self.noted.add("transient")
+            notes.append(RETRY_NOTE)
+        if notes:
+            last = results[-1]
+            results[-1] = {**last, "content": "\n\n".join([last["content"], *notes])}
 
     def _note_container(self, response: Any) -> None:
         """Keep the container his searches ran in, if this turn opened one.
