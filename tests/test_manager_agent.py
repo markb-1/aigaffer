@@ -1095,6 +1095,23 @@ def test_the_prompt_says_the_search_allowance_is_per_turn():
     assert "never a reason to finalize unverified" in SYSTEM_PROMPT
 
 
+def test_the_prompt_names_the_cap_the_tool_enforces():
+    # The only number he was ever shown was the run's budget of fifteen, so he
+    # planned for fifteen and the tool stopped answering at eight.
+    words = {5: "five", 6: "six", 8: "eight", 10: "ten"}
+    cap = words[agent.MAX_SEARCHES]
+
+    assert f"{cap} searches a turn" in SYSTEM_PROMPT
+
+
+def test_the_prompt_dates_the_query_and_keeps_old_injury_news():
+    # Undated club queries brought back earlier seasons' press conferences. But
+    # a page older than the last match still says who is out until January.
+    assert "<club> v <opponent> team news press conference <month> <year>" in SYSTEM_PROMPT
+    assert "page_age" in SYSTEM_PROMPT
+    assert "An injury, a ban or a return date on it still counts" in SYSTEM_PROMPT
+
+
 def test_the_tools_are_the_four_the_plan_names():
     names = [tool.get("name") for tool in TOOLS]
 
@@ -1920,6 +1937,271 @@ def test_a_decision_on_the_last_turn_still_counts():
 
     assert decision.source == "manager"
     assert decision.plan is ROLL
+
+
+# --- searches that did not come back ----------------------------------------
+
+
+def found(caller: str | None = "code_execution_20260120") -> Block:
+    """A search result as the live API tags it: run from code, or not."""
+    block = searched()
+    if caller is not None:
+        block.caller = Block(type=caller)
+    return block
+
+
+def missed(code: str, caller: str = "code_execution_20260120") -> Block:
+    return Block(
+        type="web_search_tool_result",
+        tool_use_id="srvtoolu_1",
+        caller=Block(type=caller),
+        content=Block(type="web_search_tool_result_error", error_code=code),
+    )
+
+
+def crashed() -> Block:
+    """The code run the docs say a ninth search ends, as it would come back."""
+    return Block(
+        type="code_execution_tool_result",
+        tool_use_id="srv_0",
+        content=Block(
+            type="encrypted_code_execution_result",
+            return_code=1,
+            stderr="Traceback: query was 'Gale injury'",
+            encrypted_stdout="xyz",
+        ),
+    )
+
+
+def capped_turn(**kwargs: Any) -> Response:
+    """The GW12 scout's shape: eight came back, then the run died."""
+    return reply(
+        Block(type="server_tool_use", id="srv_0", name="code_execution", input={}),
+        *[found()] * 8,
+        crashed(),
+        use("adjust_players", adjust()),
+        container=opened(),
+        **kwargs,
+    )
+
+
+DONE = reply(use("finalize_decision", finalize()))
+NOT_BROKEN = "That is the cap, not a broken tool"
+
+
+def test_a_spent_allowance_is_said_in_the_result_he_reads_next(capsys):
+    client, decision = converse([capped_turn(), DONE])
+    result = only_result(client.requests[1])
+
+    assert result["content"].startswith("Recorded: id 7 at 0 minutes.")
+    assert NOT_BROKEN in result["content"]
+    assert "fresh" in result["content"]
+    assert decision.source == "manager"
+    assert decision.searches == 8, "the count the report prints is untouched"
+    assert capsys.readouterr().out.splitlines() == [
+        "search note: code_execution exit 1",
+        "search note: allowance spent (8 in one request, code_execution)",
+    ]
+
+
+def test_the_note_rides_inside_the_last_result_and_never_beside_it():
+    # A text block after the results is a 400 while a search is pending, so the
+    # message has to stay what the docs ask for: tool results and nothing else.
+    turn = capped_turn()
+    turn.content += [use("adjust_players", adjust(4, 60.0), block_id="a2")]
+    client, _ = converse([turn, DONE])
+    results = sent_results(client.requests[1])
+
+    assert [block["type"] for block in results] == ["tool_result", "tool_result"]
+    assert NOT_BROKEN not in results[0]["content"]
+    assert NOT_BROKEN in results[1]["content"]
+
+
+def test_the_note_leaves_a_refusal_a_refusal():
+    turn = reply(*[found()] * 8, use("adjust_players", adjust(4242)))
+    client, _ = converse([turn, DONE])
+    result = only_result(client.requests[1])
+
+    assert result["is_error"] is True
+    assert "4242" in result["content"] and NOT_BROKEN in result["content"]
+
+
+@pytest.mark.parametrize("caller", ["direct", "something_new", None])
+def test_a_fresh_allowance_is_promised_only_for_searches_run_from_code(caller):
+    turn = reply(*[found(caller)] * 8, use("adjust_players", adjust()))
+    client, _ = converse([turn, DONE])
+    content = only_result(client.requests[1])["content"]
+
+    assert NOT_BROKEN in content
+    assert "fresh" not in content
+    assert "may be refused" in content
+
+
+def test_max_uses_exceeded_is_the_same_cap():
+    turn = reply(
+        found(), missed("max_uses_exceeded"), use("adjust_players", adjust())
+    )
+    client, _ = converse([turn, DONE])
+
+    assert NOT_BROKEN in only_result(client.requests[1])["content"]
+
+
+@pytest.mark.parametrize("code", ["unavailable", "too_many_requests"])
+def test_a_transient_failure_is_worth_one_more_try(code, capsys):
+    turn = reply(found(), missed(code), use("adjust_players", adjust()))
+    client, decision = converse([turn, DONE])
+    content = only_result(client.requests[1])["content"]
+
+    assert "Try those once more" in content
+    assert NOT_BROKEN not in content
+    assert decision.source == "manager"
+    assert capsys.readouterr().out == f"search error: {code}\n"
+
+
+def test_each_note_is_given_once_a_conversation():
+    turns = [capped_turn(), capped_turn()]
+    for turn in turns:
+        turn.content.insert(0, missed("unavailable"))
+    client, _ = converse([*turns, DONE])
+    first, second = (only_result(r)["content"] for r in client.requests[1:])
+
+    assert NOT_BROKEN in first and "Try those once more" in first
+    assert NOT_BROKEN not in second and "Try those once more" not in second
+
+
+def test_a_note_says_what_this_turn_did_and_not_the_one_before():
+    # The cap fell in a turn that only talked, which the nudge answers. What
+    # he does next was not capped, so there is nothing to say about it.
+    client, _ = converse(
+        [
+            reply(*[found()] * 8, text(), stop="end_turn"),
+            reply(found(), use("adjust_players", adjust())),
+            DONE,
+        ]
+    )
+
+    assert NOT_BROKEN not in only_result(client.requests[2])["content"]
+
+
+def test_a_transient_failure_is_not_carried_into_a_later_turn():
+    client, _ = converse(
+        [
+            reply(missed("unavailable"), text(), stop="end_turn"),
+            reply(found(), use("adjust_players", adjust())),
+            DONE,
+        ]
+    )
+
+    assert "Try those once more" not in only_result(client.requests[2])["content"]
+
+
+def test_one_capped_response_run_directly_loses_the_turn_its_promise():
+    # A pause makes one turn of two responses. One of them was direct, and the
+    # searches in it still count against the cap on the next request.
+    client, _ = converse(
+        [
+            reply(*[found("direct")] * 8, stop="pause_turn"),
+            reply(*[found()] * 8, use("adjust_players", adjust())),
+            DONE,
+        ]
+    )
+    content = only_result(client.requests[2])["content"]
+
+    assert NOT_BROKEN in content
+    assert "fresh" not in content and "may be refused" in content
+
+
+def test_a_paused_turns_searches_are_read_with_the_turn_they_belong_to():
+    client, _ = converse(
+        [
+            reply(*[found()] * 8, stop="pause_turn"),
+            reply(use("adjust_players", adjust())),
+            DONE,
+        ]
+    )
+
+    assert NOT_BROKEN in only_result(client.requests[2])["content"]
+
+
+def test_a_clean_turn_sends_exactly_what_it_always_sent():
+    client, _ = converse([reply(found(), use("adjust_players", adjust())), DONE])
+
+    assert _bare(client.requests[1]["messages"][-1]) == {
+        "role": "user",
+        "content": [
+            {
+                "type": "tool_result",
+                "tool_use_id": "tu_1",
+                "content": (
+                    "Recorded: id 7 at 0 minutes.\nIn force for the next resolve:"
+                    " id 7 at 0 minutes.\nNothing has changed yet — call resolve"
+                    " to re-project and re-solve with these."
+                ),
+            }
+        ],
+    }
+
+
+def test_no_note_sends_him_searching_once_half_the_clock_is_gone(monkeypatch):
+    late = agent.TIME_BUDGET_SECONDS / 2 + 1
+    monkeypatch.setattr(agent, "monotonic", Clock(0.0, 1.0, late))
+    client, _ = converse([capped_turn(), DONE])
+
+    assert NOT_BROKEN not in only_result(client.requests[1])["content"]
+
+
+@pytest.mark.parametrize("turn, noted", [(10, True), (11, False)])
+def test_no_note_sends_him_searching_on_the_last_two_turns(turn, noted):
+    # The turn after the eleventh is asked to decide and to search nothing.
+    script = [reply(use("adjust_players", adjust()))] * (turn - 1)
+    client, decision = converse([*script, capped_turn(), DONE])
+    results = client.requests[turn]["messages"][-1]["content"]
+    said = [NOT_BROKEN in block.get("content", "") for block in results]
+
+    assert any(said) is noted
+    assert decision.source == "manager"
+
+
+def test_a_turn_cut_off_at_max_tokens_is_logged_but_not_counted(capsys):
+    cut = reply(found(), missed("unavailable"), stop="max_tokens")
+    _, decision = converse([cut, DONE])
+
+    assert capsys.readouterr().out == "search error: unavailable\n"
+    assert decision.searches == 0, "a dropped turn's searches never were counted"
+
+
+def test_reading_the_searches_can_never_cost_the_decision(monkeypatch, capsys):
+    def broken(*_args: Any, **_kwargs: Any) -> None:
+        raise RuntimeError("Gale injury")
+
+    monkeypatch.setattr(agent, "examine", broken)
+    _, decision = converse([capped_turn(), DONE])
+
+    assert decision.source == "manager"
+    assert decision.searches == 8
+    # A line for each of the two responses read, and not a word of the error.
+    assert capsys.readouterr().out.splitlines() == [
+        "search note: tally skipped: RuntimeError"
+    ] * 2
+
+
+def test_a_deadline_weeks_worth_of_failed_searches_still_ends_in_a_decision(capsys):
+    client, decision = converse(
+        [
+            reply(
+                missed("query_too_long"), missed("unavailable"), crashed(),
+                use("adjust_players", adjust()),
+            ),
+            capped_turn(),
+            reply(use("resolve", {})),
+            reply(use("finalize_decision", finalize(plan_id=3))),
+        ]
+    )
+
+    assert decision.source == "manager" and decision.plan is FRESH_HIT
+    out = capsys.readouterr().out
+    assert "search error: query_too_long" in out
+    assert "Gale" not in out and "query was" not in out
 
 
 # --- the clock -------------------------------------------------------------

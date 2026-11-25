@@ -138,6 +138,13 @@ KNOWN_LINE = (
 )
 KNOWN_FRESH = "fresh"
 KNOWN_RECHECK = "re-check — {reason}"
+# Beside today's date, because undated club queries brought back earlier
+# seasons' press conferences. A briefing line and not a prompt one: the prompt
+# is byte-stable and names no year.
+SEASON_LINE = (
+    "Season: {season} (put today's month and year in every search; without"
+    " them, earlier seasons' pages can rank first)"
+)
 BUDGET_LINE = (
     "Search budget this run: {budget} searches across all turns (the per-turn"
     " allowance refreshing does not reset it) — spend them on the re-check"
@@ -515,6 +522,12 @@ def relevant_players(solve: "SolveResult") -> list[int]:
     return sorted(pool)
 
 
+def season_of(day: date) -> str:
+    """``2025/26`` for any day of that season, which turns over on 1 July."""
+    start = day.year if day.month >= 7 else day.year - 1
+    return f"{start}/{(start + 1) % 100:02d}"
+
+
 def _situation(
     inputs: "PipelineInputs",
     board: _Board,
@@ -578,6 +591,7 @@ def _situation(
         f"# AI Gaffer — manager briefing: GW{event.id}{draft_label}",
         "",
         f"Today: {today.strftime(DATE_FORMAT)}",
+        SEASON_LINE.format(season=season_of(event.deadline_time.date())),
         f"Deadline: {deadline(event)}",
         money,
         *([] if entered is None else [entered]),

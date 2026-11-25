@@ -69,11 +69,23 @@ relevant who have no entry — first the players the plan you are minded to \
 finalize would buy or sell — a transfer entered on an unverified target is \
 the one mistake this job exists to prevent — then your own likely starters, \
 then the rest. \
-Search per club, not per player: one "<club> team news press conference" \
-search covers everyone you care about at that club. Check the date on every \
+Search per club, not per player: one "<club> v <opponent> team news press \
+conference <month> <year>" search covers everyone you care about at that club. \
+The month and year are today's, from the briefing: without them earlier \
+seasons' pages can come back first. In a double gameweek name each opponent; \
+in a blank leave the opponent out. Look at each result's page_age first. Drop \
+pages from earlier seasons. A page older than the club's last match says \
+nothing about line-ups or fitness for this game. An injury, a ban or a return \
+date on it still counts. A recent page_age proves nothing by itself: check the \
+date on every \
 report against the date in the briefing, and record the day the quote was \
 given, not the date of the article — aggregator pages recycle old quotes. \
-Social media and unverified claims may prompt a search but never set anything. Your search allowance is per turn, not for the whole job: when \
+Social media and unverified claims may prompt a search but never set anything. \
+The tool allows eight searches a turn and refuses the rest, and code that asks \
+for a ninth fails: ask for no more than eight, and print the title, the \
+page_age and the line that matters as each search returns, so a failure later \
+cannot lose the ones that worked. \
+Your search allowance is per turn, not for the whole job: when \
 the tool stops answering mid-turn, end the turn — carrying any adjust_players \
 calls for what you have already learned, rather than bare prose — and the \
 allowance comes back fresh on the next one, so running dry is never a reason \

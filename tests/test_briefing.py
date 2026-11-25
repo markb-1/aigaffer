@@ -70,6 +70,7 @@ from aigaffer.manager.briefing import (
     format_plans,
     initial_plan_ids,
     relevant_players,
+    season_of,
 )
 from aigaffer.model.xp import PlayerProjection
 from aigaffer.orchestrator import PipelineInputs, SolveResult
@@ -1151,6 +1152,23 @@ def known(pid: int, fresh: bool, reason: str | None = None, *, category: str = "
 
 def ledger_briefing(view: LedgerView, budget: int | None = None) -> str:
     return build_briefing(pipeline_inputs(), solved(), XP, 1, today=TODAY, ledger=view, budget=budget)
+
+
+def test_the_briefing_names_the_season_to_search_in():
+    lines = briefing().split("## ")[0].splitlines()
+    today = lines.index("Today: Thu 21 Aug 2025")
+
+    assert lines[today + 1].startswith("Season: 2025/26 ")
+    assert "month and year" in lines[today + 1]
+
+
+@pytest.mark.parametrize(
+    "month, day, year, season",
+    [(8, 21, 2025, "2025/26"), (1, 3, 2026, "2025/26"), (5, 24, 2026, "2025/26"),
+     (8, 15, 2099, "2099/00"), (7, 1, 2026, "2026/27"), (6, 30, 2026, "2025/26")],
+)
+def test_the_season_turns_over_in_the_summer(month, day, year, season):
+    assert season_of(date(year, month, day)) == season
 
 
 def test_an_empty_or_absent_ledger_changes_nothing():
