@@ -20,7 +20,7 @@
   },
   "13": {
     "category": "nailed",
-    "checked_at": "2026-11-20T17:35:03.507492+00:00",
+    "checked_at": "2026-11-27T00:35:03.196251+00:00",
     "expected_minutes": 87.0,
     "fpl": {
       "chance_of_playing_next_round": 100,
@@ -28,14 +28,14 @@
       "news_added": "2026-10-28T00:00:08.477333Z",
       "status": "a"
     },
-    "gw": 11,
-    "note": "With Zubimendi out for a few weeks with a hamstring injury, Rice is certain to start in midfield. Predicted XI.",
+    "gw": 12,
+    "note": "In Evening Standard predicted Arsenal XI v Man City (Thu 26 Nov), no fitness issue reported.",
     "player_id": 13,
-    "quote_date": "2026-11-20",
+    "quote_date": "2026-11-26",
     "return_gw": null,
     "run": "deadline",
-    "source": "AOL/Standard Arsenal preview",
-    "tier": 2
+    "source": "Evening Standard predicted XI via Yahoo Sports",
+    "tier": 3
   },
   "165": {
     "category": "injured",
@@ -58,7 +58,7 @@
   },
   "166": {
     "category": "nailed",
-    "checked_at": "2026-11-25T06:35:03.934896+00:00",
+    "checked_at": "2026-11-27T00:35:03.196251+00:00",
     "expected_minutes": 85.0,
     "fpl": {
       "chance_of_playing_next_round": null,
@@ -67,11 +67,11 @@
       "status": "a"
     },
     "gw": 12,
-    "note": "Carried from earlier run (fresh): nailed starter.",
+    "note": "Carried fresh entry: nailed starter for Villa.",
     "player_id": 166,
     "quote_date": "2026-11-21",
     "return_gw": null,
-    "run": "scout",
+    "run": "deadline",
     "source": "earlier run",
     "tier": 2
   },
@@ -96,8 +96,8 @@
   },
   "31": {
     "category": "rotation",
-    "checked_at": "2026-11-25T06:35:03.934896+00:00",
-    "expected_minutes": 75.0,
+    "checked_at": "2026-11-27T00:35:03.196251+00:00",
+    "expected_minutes": 78.0,
     "fpl": {
       "chance_of_playing_next_round": 100,
       "news": "",
@@ -105,17 +105,17 @@
       "status": "a"
     },
     "gw": 12,
-    "note": "Carried from earlier run (fresh): rotation risk, ~75 mins.",
+    "note": "Named in Evening Standard predicted Arsenal XI v Man City (26 Nov) alongside Gabriel; earlier rotation concern keeps a margin below 90.",
     "player_id": 31,
-    "quote_date": "2026-11-21",
+    "quote_date": "2026-11-26",
     "return_gw": null,
-    "run": "scout",
-    "source": "earlier run",
-    "tier": 2
+    "run": "deadline",
+    "source": "Evening Standard predicted XI via Yahoo Sports",
+    "tier": 3
   },
   "346": {
     "category": "nailed",
-    "checked_at": "2026-11-20T17:35:03.507492+00:00",
+    "checked_at": "2026-11-27T00:35:03.196251+00:00",
     "expected_minutes": 88.0,
     "fpl": {
       "chance_of_playing_next_round": 100,
@@ -123,18 +123,18 @@
       "news_added": "2026-11-05T18:30:07.960444Z",
       "status": "a"
     },
-    "gw": 11,
-    "note": "Leeds official site and Farke: Calvert-Lewin came back from England duty fully fit and is available for Chelsea.",
+    "gw": 12,
+    "note": "Farke 26 Nov presser: everyone available, no injuries to report; Calvert-Lewin leads the line v Coventry.",
     "player_id": 346,
-    "quote_date": "2026-11-20",
+    "quote_date": "2026-11-26",
     "return_gw": null,
     "run": "deadline",
-    "source": "leedsunited.com preview; Goal",
+    "source": "leedsunited.com / Yorkshire Evening Post",
     "tier": 1
   },
   "388": {
     "category": "nailed",
-    "checked_at": "2026-11-25T06:35:03.934896+00:00",
+    "checked_at": "2026-11-27T00:35:03.196251+00:00",
     "expected_minutes": 80.0,
     "fpl": {
       "chance_of_playing_next_round": 100,
@@ -143,11 +143,11 @@
       "status": "a"
     },
     "gw": 12,
-    "note": "Carried from earlier run (fresh): nailed, ~80 mins; model's 54 understates him.",
+    "note": "Carried fresh entry: nailed for Man City per earlier run; projection's 54 is too low.",
     "player_id": 388,
     "quote_date": "2026-11-21",
     "return_gw": null,
-    "run": "scout",
+    "run": "deadline",
     "source": "earlier run",
     "tier": 2
   },
@@ -191,7 +191,7 @@
   },
   "572": {
     "category": "nailed",
-    "checked_at": "2026-11-20T17:35:03.507492+00:00",
+    "checked_at": "2026-11-27T00:35:03.196251+00:00",
     "expected_minutes": 90.0,
     "fpl": {
       "chance_of_playing_next_round": null,
@@ -199,33 +199,33 @@
       "news_added": null,
       "status": "a"
     },
-    "gw": 11,
-    "note": "Named in goal in every Hull v Brighton predicted XI. No rival keeper mentioned.",
+    "gw": 12,
+    "note": "Started and kept a clean sheet in the 2-0 win over Brighton on Sun 22 Nov; in Squawka predicted XI at Palace. No injury reported.",
     "player_id": 572,
-    "quote_date": "2026-11-20",
+    "quote_date": "2026-11-22",
     "return_gw": null,
     "run": "deadline",
-    "source": "Sports Mole / Soccernet previews",
+    "source": "Rotowire / Squawka predicted line-up",
     "tier": 3
   },
   "68": {
     "category": "nailed",
-    "checked_at": "2026-11-20T17:35:03.507492+00:00",
-    "expected_minutes": 85.0,
+    "checked_at": "2026-11-27T00:35:03.196251+00:00",
+    "expected_minutes": 86.0,
     "fpl": {
       "chance_of_playing_next_round": null,
       "news": "",
       "news_added": null,
       "status": "a"
     },
-    "gw": 11,
-    "note": "Rose: all internationals came back healthy and 'everyone is fit'. Tavernier is in the predicted XI.",
+    "gw": 12,
+    "note": "No Bournemouth absentee reported beyond Lecomte (Forebet injury list 24 Nov); Tavernier tipped as a scorer in previews. No presser quote found.",
     "player_id": 68,
-    "quote_date": "2026-11-19",
+    "quote_date": "2026-11-26",
     "return_gw": null,
     "run": "deadline",
-    "source": "thefalse9 / Sports Mole BOU v NFO team news",
-    "tier": 1
+    "source": "Forebet / previews",
+    "tier": 3
   },
   "8": {
     "category": "doubt",

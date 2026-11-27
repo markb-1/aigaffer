@@ -9,7 +9,7 @@ ever made for you, and the final tap in the app is yours.
 
 📋 **Latest verdict: [GW12](GW12.md)** <!-- latest-verdict -->
 
-🏆 **After GW11:** 696 pts · world rank 649,208 · Ireland rank 22,873 <!-- season-standing -->
+🏆 **After GW11:** 696 pts · world rank 649,203 · Ireland rank 22,870 <!-- season-standing -->
 
 ## What you get, and when
 

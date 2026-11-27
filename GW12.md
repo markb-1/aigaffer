@@ -1,9 +1,10 @@
-# AI Gaffer — GW12 scout
+# AI Gaffer — GW12 deadline
 
 Deadline: Fri 27 Nov 2026 18:30 UTC
 
 ## Do this
 
+Same call as Wednesday's scout.
 ⏰ Make these by Fri 27 Nov 2026 18:30 UTC — GW12
 No transfers — roll (1 free transfer now, 2 next week).
 CAPTAIN Calvert-Lewin · VICE Haaland
@@ -15,40 +16,30 @@ Roll the transfer.
 ## The Gaffer's view
 
 WHAT I DID
-No transfer this week. I'm rolling, so we have 2 free transfers for GW13. No chip. Calvert-Lewin (home to COV) is captain and Haaland (away at ARS) is vice.
+I rolled the free transfer, so you have 2 next week. Calvert-Lewin (Leeds v Coventry at home) is captain and Haaland (Man City away at Arsenal) is vice. No chip. This is the same call as Wednesday.
 
 WHAT I LEARNED
-Not much, which is why I held. My club searches mostly brought back old pages: earlier seasons' press conferences for Arsenal, Brighton, Man Utd and Brentford. Nothing I found was current team news for Rice, Tavernier, Calvert-Lewin, Tzolakis, Hill, Ødegaard or Rudoni. The search tool then stopped working partway through my second round of searches.
-
-The one useful item was a report from about four days ago. Bournemouth are now coached by Marco Rose, they have a Europa League game against Celta Vigo before the FUL away match, and Rose is bringing Alex Scott back into the side. That means Bournemouth have a midweek game and there is some rotation risk around Hill, the player the solver wanted to buy. It is not proof that Hill will be rested.
-
-I changed three players' expected minutes, all carried over unchanged from the previous run:
-- Konsa: 90 down to 75, because he's a rotation risk.
-- Guéhi: 54 up to 80, because he's a nailed starter.
-- N.Jackson: 84 up to 85.
-
-Still unsure:
-- Whether Calvert-Lewin, Tavernier and Rice came through their last games cleanly.
-- Hill's minutes with the European game in midweek.
+- Leeds: Daniel Farke said on Thu 26 Nov that the whole squad is available, with no injuries to report. Calvert-Lewin starts v Coventry. I kept him at 88 minutes.
+- Arsenal: The Evening Standard's predicted XI for Sunday (26 Nov) has Gabriel, Konsa and Rice starting against City. I put Rice at 87 minutes (was 82). I put Konsa at 78 (was 90). He is in the predicted XI, but our earlier rotation worry and last week's lesson say we should keep some margin. Raya is the Arsenal fitness story, not any of our players.
+- Hull: Tzolakis kept a clean sheet with seven saves in the 2-0 win over Brighton on 22 Nov, and he is in the predicted XI at Palace. Kept at 90.
+- Bournemouth: The only Bournemouth absentee I found was Lecomte, a goalkeeper. They have won nine in a row. I found no press-conference quote from Iraola, so Tavernier (86 minutes) and Hill are not confirmed by the manager. Nothing suggests either is injured.
+- Carried over from earlier runs: Guéhi is nailed at 80 minutes (the model had 54) and N.Jackson at 85.
+- Man City: City's press conference was due Friday afternoon and I could not read it. Haaland and Guéhi rest on last weekend's reports.
 
 WHY THIS PLAN
-After my changes, the solver's pick (plan 4: Guéhi out, Hill in) was only 0.6 points ahead of rolling over six weeks. That is well within the noise in the projection. The buy would also have been a Bournemouth defender I couldn't check, in a week with a European game.
-
-Guéhi is now projected at 80 minutes, so he no longer needs urgent replacing. Rolling also costs us nothing: the solver's own rolling path makes the Hill and Ødegaard moves next week with 2 free transfers. By then I should have current Bournemouth and Arsenal news.
-
-Plans 6 and 7 take a 4-point hit and come out 2.6 and 6.1 points behind rolling, so I rejected both.
-
-Triple captain is worth +5.3 this week against a bar of 7.0, so I kept it for GW19. Bench boost isn't available to us this week.
-
-Captain choice: Calvert-Lewin had the top projection for this week (5.3) at home to COV, who have the weakest defence rating in the briefing (1.34). His last confirmed status was nailed (20 Nov), but Leeds have played since. If he doesn't play, the armband passes to Haaland.
+After my changes, the solver still prefers Guéhi out, Hill in, but only by 0.5 over six weeks. That is noise. Raising Guéhi's minutes shrank the case for selling him, and Hill was the one buy I couldn't confirm from his manager. Both plans that take hits (Ødegaard and/or Rudoni) come out 2.8 and 6.3 points behind rolling. Rolling also keeps the solver's own path open: it does Hill for Guéhi and Ødegaard for Rice next week with 2 free transfers. Triple captain (+5.3) is below its 7.0 bar and is better saved for GW19. Free hit and wildcard don't clear their bars either.
 
 Minutes he overruled:
 
-- Set Konsa to 75 mins — Carried from earlier run (fresh): rotation risk, ~75 mins.
-- Set N.Jackson to 85 mins — Carried from earlier run (fresh): nailed starter.
-- Set Guéhi to 80 mins — Carried from earlier run (fresh): nailed, ~80 mins; model's 54 understates him.
+- Set N.Jackson to 85 mins — Carried fresh entry: nailed starter for Villa.
+- Set Guéhi to 80 mins — Carried fresh entry: nailed for Man City per earlier run; projection's 54 is too low.
+- Set Rice to 87 mins — In Evening Standard predicted Arsenal XI v Man City (Thu 26 Nov), no fitness issue reported.
+- Set Konsa to 78 mins — Named in Evening Standard predicted Arsenal XI v Man City (26 Nov) alongside Gabriel; earlier rotation concern keeps a margin below 90.
+- Set Calvert-Lewin to 88 mins — Farke 26 Nov presser: everyone available, no injuries to report; Calvert-Lewin leads the line v Coventry.
+- Set Tzolakis to 90 mins — Started and kept a clean sheet in the 2-0 win over Brighton on Sun 22 Nov; in Squawka predicted XI at Palace. No injury reported.
+- Set Tavernier to 86 mins — No Bournemouth absentee reported beyond Lecomte (Forebet injury list 24 Nov); Tavernier tipped as a scorer in previews. No presser quote found.
 
-8 web searches. Decided by the gaffer.
+11 web searches. Decided by the gaffer.
 
 ## Starting XI (3-4-3)
 
@@ -62,8 +53,8 @@ Minutes he overruled:
 
 xP and net are the whole window, decayed and with the armband in; net is after hits, any bench-buy charge and a small cost a transfer, plus a credit for free transfers kept; transfers and hits shown are this week's unless the row says otherwise.
 
-- 0 transfers | 0 hits | 256.1 xP | 256.4 net  <- recommended (re-solved on the gaffer's minutes)
-- 1 transfer | 0 hits | 257.1 xP | 257.3 net
+- 0 transfers | 0 hits | 256.2 xP | 256.5 net  <- recommended (re-solved on the gaffer's minutes)
+- 1 transfer | 0 hits | 257.0 xP | 257.3 net
 - 0 transfers | 0 hits | 256.5 xP | 256.8 net  (same moves, before his changes)
 - 2 transfers | 1 hit | 257.8 xP | 253.8 net
 - 3 transfers | 2 hits | 257.8 xP | 250.3 net
@@ -72,7 +63,7 @@ xP and net are the whole window, decayed and with the armband in; net is after h
 
 - GW13: out Rice (£7.5m), Guéhi (£5.9m), in Ødegaard (£6.7m), Hill (£5.7m) — 2 FTs, no hit
 - GW14: out Verbruggen (£4.7m), in Trafford (£5.1m) — 1 FT, no hit
-- GW15: out Muharemović (£5.1m), in De Cuyper (£5.5m) — 1 FT, no hit
+- GW15: out Muharemović (£5.2m), in De Cuyper (£5.6m) — 1 FT, no hit
 
 Advisory — re-planned every run; only this week's moves are ever made.
 
@@ -95,8 +86,8 @@ The first set expires after GW19.
 
 ## Watchlist
 
-- De Cuyper (DEF, BHA, £5.5m) — 28.9 xP
+- De Cuyper (DEF, BHA, £5.6m) — 28.9 xP
 - Ødegaard (MID, ARS, £6.7m) — 28.5 xP
-- Isak (FWD, LIV, £9.3m) — 28.4 xP
+- Isak (FWD, LIV, £9.4m) — 28.4 xP
 - Hill (DEF, BOU, £5.7m) — 28.0 xP
 - E.Le Fée (MID, SUN, £5.7m) — 27.4 xP
